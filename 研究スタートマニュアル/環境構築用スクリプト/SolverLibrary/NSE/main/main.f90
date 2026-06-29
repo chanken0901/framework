@@ -1,7 +1,9 @@
 program main
-  Use module_mpi
+  use module_mpi
+  use mod_precision, only : dp
+  use mod_constants, only : pi
   implicit none
-  integer, parameter :: dp = kind(1.0d0)
+  !integer, parameter :: dp = kind(1.0d0)
   integer, parameter :: nv = 5
 
   ! ------------------------------
@@ -13,7 +15,7 @@ program main
   integer, parameter :: nghost = 3         ! WENO5 needs 3 ghosts
   !integer, parameter :: mode = 0           ! mode=0:constant temperature,  mode=1:constant density
 
-  real(dp), parameter :: pi = acos(-1.0_dp)
+  !real(dp), parameter :: pi = acos(-1.0_dp)
   real(dp), parameter :: x_min = 0.0_dp
   real(dp), parameter :: x_max = 2.0_dp*pi
   real(dp), parameter :: x_center = (x_max-x_min)/2.0_dp
