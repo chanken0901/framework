@@ -55,6 +55,24 @@ case.yaml から input.dat, README.md, meta.json を一括生成するスクリ�
     python scripts/generate_case_docs_tool_v3.py --case cases/case0001 --dry-run
 """
 
+"""
+generate_case_docs_tool_v4.py
+
+case.yaml から input.dat, README.md, meta.json を一括生成するスクリプト。
+case_index.csv を用いて既存ケースとの重複チェックも行う。
+
+v4 の主な変更点
+----------------
+- case.yaml の新設計に対応:
+    physics.model
+    physics.nse.*
+    flow.type
+    solver.type
+- input.dat 生成レイアウトを共通 / 物理モデル固有 / flow 固有に分離。
+- NSE と TGV をまず正式対応。
+- 将来 GPE を追加しやすい構造に変更。
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -67,7 +85,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 
-INPUT_LAYOUT = [
+# ============================================================
+# input.dat layout definitions
+# ============================================================
+
+COMMON_INPUT_LAYOUT = [
     ("case", [
         ("case_id", "case_id"),
         ("case_label", "case_label"),
@@ -75,14 +97,6 @@ INPUT_LAYOUT = [
         ("flow_type", "flow.type"),
         ("solver_type", "solver.type"),
     ]),
-
-    ("physics", [
-        ("gamma", "physics.nse.gamma"),
-        ("mach_number", "physics.nse.mach_number"),
-        ("reynolds_number", "physics.nse.reynolds_number"),
-        ("prandtl_number", "physics.nse.prandtl_number"),
-    ]),
-
     ("grid", [
         ("nx", "grid.nx"),
         ("ny", "grid.ny"),
@@ -94,67 +108,112 @@ INPUT_LAYOUT = [
         ("z_min", "grid.z_min"),
         ("z_max", "grid.z_max"),
     ]),
-
     ("time", [
         ("cfl", "time.cfl"),
         ("t_max", "time.t_max"),
         ("dt", "time.dt"),
         ("output_frequency", "time.output_frequency"),
+        ("save_interval", "time.save_interval"),
     ]),
-
     ("numerics", [
-        ("scheme", "numerics.scheme"),
+        ("flux", "numerics.flux"),
         ("reconstruction", "numerics.reconstruction"),
         ("time_integration", "numerics.time_integration"),
-        ("flux", "numerics.flux"),
     ]),
-
     ("storage", [
         ("output_location", "storage.output_location"),
         ("restart_location", "storage.restart_location"),
     ]),
 ]
 
+NSE_INPUT_LAYOUT = [
+    ("physics_nse", [
+        ("gamma", "physics.nse.gamma"),
+        ("rho_0", "physics.nse.rho_0"),
+        ("mach_number", "physics.nse.mach_number"),
+        ("reynolds_number", "physics.nse.reynolds_number"),
+        ("prandtl_number", "physics.nse.prandtl_number"),
+    ]),
+]
 
-# case.yaml 内のパスと case_index.csv の列名の対応
+GPE_INPUT_LAYOUT = [
+    ("physics_gpe", [
+        ("hbar", "physics.gpe.hbar"),
+        ("mass", "physics.gpe.mass"),
+        ("interaction_strength", "physics.gpe.interaction_strength"),
+        ("density0", "physics.gpe.density0"),
+        ("chemical_potential", "physics.gpe.chemical_potential"),
+        ("damping", "physics.gpe.damping"),
+    ]),
+]
+
+TGV_INPUT_LAYOUT = [
+    ("flow_tgv", [
+        ("tgv_amplitude", "flow.tgv.amplitude"),
+        ("tgv_mode_x", "flow.tgv.mode_x"),
+        ("tgv_mode_y", "flow.tgv.mode_y"),
+        ("tgv_mode_z", "flow.tgv.mode_z"),
+    ]),
+]
+
+HIT_INPUT_LAYOUT = [
+    ("flow_hit", [
+        ("hit_reynolds_lambda", "flow.hit.reynolds_lambda"),
+        ("hit_turbulent_mach_number", "flow.hit.turbulent_mach_number"),
+        ("hit_integral_length", "flow.hit.integral_length"),
+        ("hit_random_seed", "flow.hit.random_seed"),
+    ]),
+]
+
+
+# ============================================================
+# case_index.csv mapping
+# ============================================================
+
 INDEX_FIELD_MAP = {
     "case_id": "case_id",
     "case_label": "case_label",
     "status": "status",
     "description": "description",
+
     "physics_model": "physics.model",
-    "flow_type":"flow.type",
-    "solver_type":"solver.type",
-    "mach_number":"physics.nse.mach_number",
-    "reynolds_number":"physics.nse.reynolds_number",
-    "prandtl_number":"physics.nse.prandtl_number",
+    "flow_type": "flow.type",
+    "solver_type": "solver.type",
+
+    "mach_number": "physics.nse.mach_number",
+    "reynolds_number": "physics.nse.reynolds_number",
+    "prandtl_number": "physics.nse.prandtl_number",
+
     "nx": "grid.nx",
     "ny": "grid.ny",
     "nz": "grid.nz",
-    "scheme": "numerics.scheme",
+
+    "flux": "numerics.flux",
     "reconstruction": "numerics.reconstruction",
     "time_integration": "numerics.time_integration",
+
     "raw_data_location": "storage.raw_data_location",
 }
-
 
 DEFAULT_DUPLICATE_KEYS = [
     "physics_model",
     "flow_type",
     "solver_type",
-
     "mach_number",
     "reynolds_number",
-
+    "prandtl_number",
     "nx",
     "ny",
     "nz",
-
     "flux",
     "reconstruction",
     "time_integration",
 ]
 
+
+# ============================================================
+# small YAML parser
+# ============================================================
 
 def strip_comment(line: str) -> str:
     if "#" in line:
@@ -220,16 +279,6 @@ def parse_simple_yaml(path: Path) -> Dict[str, Any]:
             raise ValueError(f"Parent is not dictionary near line {i+1}")
 
         if value == "":
-            # YAML の ``key:`` は、後続行がより深くインデントされている場合だけ
-            # dict/list の開始とみなす。次の有効行が同じ深さ以下なら空のスカラー値。
-            #
-            # 旧実装はインデントを確認していなかったため、例えば
-            #
-            #   reynolds_number:
-            #   reynolds_lambda:
-            #
-            # の reynolds_number を {} と誤認していた。case_index.csv 側は空欄なので、
-            # {} != "" となり、同一条件でも重複判定が失敗していた。
             next_content = ""
             next_indent = -1
             for later in lines[i + 1:]:
@@ -272,24 +321,12 @@ def input_value(value: Any) -> str:
 
 
 def normalize_for_compare(value: Any) -> str:
-    """
-    重複チェック用に値を正規化する。
-
-    - 空白を除去
-    - 数値は可能な限り float 化して同じ表記にする
-      例: 1.0e5 と 100000.0 を同じとみなす
-    - 文字列は小文字化
-    """
     if value is None:
         return ""
-
-    # 空の dict/list は、空欄の YAML を旧版パーサーが誤って解釈した場合にも
-    # 空文字と同じものとして扱う。新規データだけでなく既存データにも防御的に対応する。
     if isinstance(value, (dict, list, tuple, set)) and len(value) == 0:
         return ""
 
     text = str(value).strip()
-
     if text == "":
         return ""
 
@@ -299,6 +336,10 @@ def normalize_for_compare(value: Any) -> str:
     except ValueError:
         return text.lower()
 
+
+# ============================================================
+# git helpers
+# ============================================================
 
 def git_commit_hash() -> str:
     try:
@@ -318,10 +359,42 @@ def git_is_dirty() -> bool:
         return False
 
 
+# ============================================================
+# layout selector
+# ============================================================
+
+def normalized_name(value: Any) -> str:
+    return str(value).strip().lower()
+
+
+def build_input_layout(data: Dict[str, Any]) -> List[Tuple[str, List[Tuple[str, str]]]]:
+    physics_model = normalized_name(get(data, "physics.model"))
+    flow_type = normalized_name(get(data, "flow.type"))
+
+    layout: List[Tuple[str, List[Tuple[str, str]]]] = []
+    layout.extend(COMMON_INPUT_LAYOUT)
+
+    if physics_model in {"nse", "navier_stokes", "compressible_nse", "compressible_euler"}:
+        layout.extend(NSE_INPUT_LAYOUT)
+    elif physics_model == "gpe":
+        layout.extend(GPE_INPUT_LAYOUT)
+    else:
+        # 未対応モデルでも共通部分だけは出力し、後段で気付けるようにする。
+        print(f"[WARNING] Unknown physics.model: {get(data, 'physics.model')}")
+
+    if flow_type == "tgv":
+        layout.extend(TGV_INPUT_LAYOUT)
+    elif flow_type == "hit":
+        layout.extend(HIT_INPUT_LAYOUT)
+
+    return layout
+
+
+# ============================================================
+# case_index.csv helpers
+# ============================================================
+
 def case_index_path_from_case_dir(case_dir: Path) -> Path:
-    """
-    cases/case0001 から cases/case_index.csv を推定する。
-    """
     return case_dir.parent / "case_index.csv"
 
 
@@ -335,25 +408,18 @@ def read_case_index(case_index: Path) -> List[Dict[str, str]]:
 
 def yaml_to_index_values(data: Dict[str, Any]) -> Dict[str, str]:
     values: Dict[str, str] = {}
-
     for index_key, yaml_path in INDEX_FIELD_MAP.items():
         values[index_key] = input_value(get(data, yaml_path, ""))
-
     return values
 
 
-def update_current_case_in_index(
-    data: Dict[str, Any],
-    case_index: Path,
-) -> None:
-    """case.yaml の最新条件で、case_index.csv の自分自身の行を更新する。"""
+def update_current_case_in_index(data: Dict[str, Any], case_index: Path) -> None:
     rows = read_case_index(case_index)
     current = yaml_to_index_values(data)
     current_case_id = current.get("case_id", "").strip()
 
     if not current_case_id:
         raise ValueError("case_id is empty in case.yaml")
-
     if not case_index.exists():
         raise FileNotFoundError(f"case_index.csv not found: {case_index}")
 
@@ -399,16 +465,7 @@ def update_current_case_in_index(
     temporary.replace(case_index)
 
 
-def check_duplicate_case(
-    data: Dict[str, Any],
-    case_index: Path,
-    duplicate_keys: List[str],
-) -> List[Dict[str, str]]:
-    """
-    case_index.csv に同じ条件のケースがあるか調べる。
-
-    自分自身の case_id は比較対象から除外する。
-    """
+def check_duplicate_case(data: Dict[str, Any], case_index: Path, duplicate_keys: List[str]) -> List[Dict[str, str]]:
     rows = read_case_index(case_index)
     if not rows:
         return []
@@ -417,11 +474,8 @@ def check_duplicate_case(
     current_case_id = current.get("case_id", "")
 
     duplicates: List[Dict[str, str]] = []
-
     for row in rows:
         row_case_id = row.get("case_id", "")
-
-        # 自分自身は除外
         if current_case_id and row_case_id == current_case_id:
             continue
 
@@ -429,7 +483,6 @@ def check_duplicate_case(
         for key in duplicate_keys:
             current_value = normalize_for_compare(current.get(key, ""))
             row_value = normalize_for_compare(row.get(key, ""))
-
             if current_value != row_value:
                 is_same = False
                 break
@@ -440,11 +493,7 @@ def check_duplicate_case(
     return duplicates
 
 
-def print_duplicate_error(
-    duplicates: List[Dict[str, str]],
-    duplicate_keys: List[str],
-    data: Dict[str, Any],
-) -> None:
+def print_duplicate_error(duplicates: List[Dict[str, str]], duplicate_keys: List[str], data: Dict[str, Any]) -> None:
     current = yaml_to_index_values(data)
 
     print("[ERROR] Duplicate case detected.")
@@ -470,8 +519,12 @@ def print_duplicate_error(
     print("  --skip-duplicate-check")
     print("")
     print("Or change the comparison keys using:")
-    print("  --duplicate-keys physics_model mach_number nx ny nz scheme time_integration")
+    print("  --duplicate-keys physics_model flow_type solver_type mach_number nx ny nz flux time_integration")
 
+
+# ============================================================
+# document generators
+# ============================================================
 
 def generate_input_dat(data: Dict[str, Any], source: Path) -> str:
     lines: List[str] = [
@@ -483,7 +536,7 @@ def generate_input_dat(data: Dict[str, Any], source: Path) -> str:
         "",
     ]
 
-    for section, items in INPUT_LAYOUT:
+    for section, items in build_input_layout(data):
         section_lines = []
         for output_key, yaml_path in items:
             value = get(data, yaml_path, "")
@@ -517,6 +570,10 @@ def generate_readme(data: Dict[str, Any]) -> str:
     else:
         used_text = "- "
 
+    physics_model = get(data, "physics.model")
+    flow_type = get(data, "flow.type")
+    solver_type = get(data, "solver.type")
+
     return f"""# {case_id}: {case_label}
 
 ## 1. Case overview
@@ -528,46 +585,62 @@ def generate_readme(data: Dict[str, Any]) -> str:
 - Project: {get(data, "project.name")}
 - Author: {get(data, "project.author")}
 
-## 2. Physical model
+## 2. Model / flow / solver
 
-- Model: `{get(data, "physics.model")}`
-- Gamma: {get(data,"physics.nse.gamma")}
-- Mach number: {get(data, "physics.mach_number")}
-- Reference density: {get(data, "physics.rho_0")}
-- Reynolds number: {get(data, "physics.reynolds_number")}
-- Reynolds lambda: {get(data, "physics.reynolds_lambda")}
-- Turbulent Mach number: {get(data, "physics.turbulent_mach_number")}
+- Physics model: `{physics_model}`
+- Flow type: `{flow_type}`
+- Solver type: `{solver_type}`
 
-## 3. Grid
+## 3. NSE parameters
+
+- Gamma: {get(data, "physics.nse.gamma")}
+- Reference density: {get(data, "physics.nse.rho_0")}
+- Mach number: {get(data, "physics.nse.mach_number")}
+- Reynolds number: {get(data, "physics.nse.reynolds_number")}
+- Prandtl number: {get(data, "physics.nse.prandtl_number")}
+
+## 4. Flow parameters
+
+- TGV amplitude: {get(data, "flow.tgv.amplitude")}
+- TGV mode x: {get(data, "flow.tgv.mode_x")}
+- TGV mode y: {get(data, "flow.tgv.mode_y")}
+- TGV mode z: {get(data, "flow.tgv.mode_z")}
+- HIT Reynolds lambda: {get(data, "flow.hit.reynolds_lambda")}
+- HIT turbulent Mach number: {get(data, "flow.hit.turbulent_mach_number")}
+
+## 5. Grid
 
 - nx: {get(data, "grid.nx")}
 - ny: {get(data, "grid.ny")}
 - nz: {get(data, "grid.nz")}
+- x range: {get(data, "grid.x_min")} to {get(data, "grid.x_max")}
+- y range: {get(data, "grid.y_min")} to {get(data, "grid.y_max")}
+- z range: {get(data, "grid.z_min")} to {get(data, "grid.z_max")}
 
-## 4. Numerical method
+## 6. Numerical method
 
-- Scheme: `{get(data, "numerics.scheme")}`
+- Flux: `{get(data, "numerics.flux")}`
 - Reconstruction: `{get(data, "numerics.reconstruction")}`
 - Time integration: `{get(data, "numerics.time_integration")}`
-- Flux: `{get(data, "numerics.flux")}`
 
-## 5. Time settings
+## 7. Time settings
 
 - CFL: {get(data, "time.cfl")}
+- dt: {get(data, "time.dt")}
 - t_max: {get(data, "time.t_max")}
 - output_frequency: {get(data, "time.output_frequency")}
 
-## 6. Data location
+## 8. Data location
 
 ```text
 {get(data, "storage.raw_data_location")}
 ```
 
-## 7. Used in
+## 9. Used in
 
 {used_text}
 
-## 8. Notes
+## 10. Notes
 
 Detailed notes should be written in `notes.md`.
 
@@ -579,7 +652,7 @@ This README was automatically generated from `case.yaml`.
 
 def generate_meta_json(data: Dict[str, Any], source: Path) -> str:
     payload = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "source": str(source),
         "case": {
@@ -591,6 +664,8 @@ def generate_meta_json(data: Dict[str, Any], source: Path) -> str:
         },
         "project": get(data, "project", {}),
         "physics": get(data, "physics", {}),
+        "flow": get(data, "flow", {}),
+        "solver": get(data, "solver", {}),
         "grid": get(data, "grid", {}),
         "time": get(data, "time", {}),
         "numerics": get(data, "numerics", {}),
@@ -619,6 +694,10 @@ def write(path: Path, text: str, overwrite: bool, dry_run: bool) -> None:
     print(f"[OK] Wrote {path}")
 
 
+# ============================================================
+# CLI
+# ============================================================
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate input.dat, README.md, meta.json from case.yaml with duplicate check."
@@ -645,7 +724,7 @@ def parse_args() -> argparse.Namespace:
         "--duplicate-keys",
         nargs="+",
         default=DEFAULT_DUPLICATE_KEYS,
-        help="Keys used for duplicate check. Default: physics/numerics/grid keys.",
+        help="Keys used for duplicate check.",
     )
 
     return parser.parse_args()
@@ -710,8 +789,6 @@ def main() -> int:
         print(f"[ERROR] {exc}")
         return 1
 
-    # dry-run ではファイルも index も変更しない。
-    # 通常実行では、重複がないことを確認した後に case_index.csv を最新化する。
     if not args.dry_run:
         try:
             update_current_case_in_index(data, case_index)
