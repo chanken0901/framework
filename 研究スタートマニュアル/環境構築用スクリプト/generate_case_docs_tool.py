@@ -71,15 +71,9 @@ INPUT_LAYOUT = [
     ("case", [
         ("case_id", "case_id"),
         ("case_label", "case_label"),
-        ("status", "status"),
-        ("description", "description"),
-    ]),
-    ("project", [
-        ("project_name", "project.name"),
-        ("author", "project.author"),
+        ("physics_model", "physics.model"),
     ]),
     ("physics", [
-        ("physics_model", "physics.model"),
         ("gamma", "physics.gamma"),
         ("mach_number", "physics.mach_number"),
         ("rho_0", "physics.rho_0"),
@@ -104,7 +98,6 @@ INPUT_LAYOUT = [
         ("t_max", "time.t_max"),
         ("dt", "time.dt"),
         ("output_frequency", "time.output_frequency"),
-        ("save_interval", "time.save_interval"),
     ]),
     ("numerics", [
         ("scheme", "numerics.scheme"),
@@ -113,7 +106,6 @@ INPUT_LAYOUT = [
         ("flux", "numerics.flux"),
     ]),
     ("storage", [
-        ("raw_data_location", "storage.raw_data_location"),
         ("output_location", "storage.output_location"),
         ("restart_location", "storage.restart_location"),
     ]),
