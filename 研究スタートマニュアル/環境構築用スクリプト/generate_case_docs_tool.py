@@ -180,35 +180,58 @@ INDEX_FIELD_MAP = {
     "flow_type": "flow.type",
     "solver_type": "solver.type",
 
-    "mach_number": "physics.nse.mach_number",
-    "reynolds_number": "physics.nse.reynolds_number",
-    "prandtl_number": "physics.nse.prandtl_number",
-
     "nx": "grid.nx",
     "ny": "grid.ny",
     "nz": "grid.nz",
+
+    "mach_number": "physics.nse.mach_number",
+    "reynolds_number": "physics.nse.reynolds_number",
+    "prandtl_number": "physics.nse.prandtl_number",
 
     "flux": "numerics.flux",
     "reconstruction": "numerics.reconstruction",
     "time_integration": "numerics.time_integration",
 
     "raw_data_location": "storage.raw_data_location",
+
+    # TGV固有
+    "tgv_amplitude": "flow.tgv.amplitude",
+    "tgv_mode_x": "flow.tgv.mode_x",
+    "tgv_mode_y": "flow.tgv.mode_y",
+    "tgv_mode_z": "flow.tgv.mode_z",
+
+    # HIT固有：必要になったら使う
+    "hit_reynolds_lambda": "flow.hit.reynolds_lambda",
+    "hit_turbulent_mach_number": "flow.hit.turbulent_mach_number",
 }
 
-DEFAULT_DUPLICATE_KEYS = [
+COMMON_DUPLICATE_KEYS = [
     "physics_model",
     "flow_type",
     "solver_type",
-    "mach_number",
-    "reynolds_number",
-    "prandtl_number",
     "nx",
     "ny",
     "nz",
+    "mach_number",
+    "reynolds_number",
+    "prandtl_number",
     "flux",
     "reconstruction",
     "time_integration",
 ]
+
+DUPLICATE_KEYS_BY_FLOW = {
+    "TGV": COMMON_DUPLICATE_KEYS + [
+        "tgv_amplitude",
+        "tgv_mode_x",
+        "tgv_mode_y",
+        "tgv_mode_z",
+    ],
+    "HIT": COMMON_DUPLICATE_KEYS + [
+        "hit_reynolds_lambda",
+        "hit_turbulent_mach_number",
+    ],
+}
 
 
 # ============================================================
@@ -723,10 +746,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--duplicate-keys",
         nargs="+",
-        default=DEFAULT_DUPLICATE_KEYS,
-        help="Keys used for duplicate check.",
+        default=None,
+        help="Keys used for duplicate check. Default: automatically selected by flow.type.",
     )
-
     return parser.parse_args()
 
 
@@ -762,7 +784,7 @@ def main() -> int:
 
         print(f"[INFO] Duplicate check index: {case_index.resolve()}")
 
-        invalid_keys = [k for k in args.duplicate_keys if k not in INDEX_FIELD_MAP]
+        invalid_keys = [k for k in duplicate_keys if k not in INDEX_FIELD_MAP]
         if invalid_keys:
             print("[ERROR] Invalid duplicate key(s):")
             for k in invalid_keys:
@@ -773,9 +795,16 @@ def main() -> int:
                 print(f"  - {k}")
             return 1
 
-        duplicates = check_duplicate_case(data, case_index, args.duplicate_keys)
+        flow_type = str(get(data, "flow.type", "")).strip()
+
+        if args.duplicate_keys:
+            duplicate_keys = args.duplicate_keys
+        else:
+            duplicate_keys = DUPLICATE_KEYS_BY_FLOW.get(flow_type, COMMON_DUPLICATE_KEYS)
+
+        duplicates = check_duplicate_case(data, case_index, duplicate_keys)
         if duplicates:
-            print_duplicate_error(duplicates, args.duplicate_keys, data)
+            print_duplicate_error(duplicates, duplicate_keys, data)
             return 1
 
     try:
