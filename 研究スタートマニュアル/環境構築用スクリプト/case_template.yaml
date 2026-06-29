@@ -1,0 +1,59 @@
+# case_template.yaml
+# このファイルは新規ケース作成時のテンプレートです。
+# template/ディレクトリに置く
+#
+# 重要:
+# - 普段編集するのは生成後の cases/caseXXXX/case.yaml です。
+# - このテンプレートは「新規ケースの初期値」を変えたいときだけ編集します。
+# - {{case_id}}, {{case_label}}, {{project_name}}, {{raw_data_location}} は
+#   create_case_from_template.py が自動置換します。
+
+case_id: {{case_id}}
+case_label: {{case_label}}
+status: planned
+description: {{description}}
+created_at: {{created_at}}
+
+project:
+  name: {{project_name}}
+  author: Kento Tanaka
+
+physics:
+  model: compressible_euler
+  gamma: 1.4
+  mach_number: 0.5
+  rho_0: 1.0
+  reynolds_number:
+  reynolds_lambda:
+  turbulent_mach_number:
+  prandtl_number: 0.72
+
+grid:
+  nx: 64
+  ny: 64
+  nz: 64
+  x_min: 0.0
+  x_max: 6.283185307179586
+  y_min: 0.0
+  y_max: 6.283185307179586
+  z_min: 0.0
+  z_max: 6.283185307179586
+
+time:
+  cfl: 0.5
+  t_max: 100.0
+  output_frequency: 10
+
+numerics:
+  scheme: KEEP
+  reconstruction:
+  time_integration: RK3
+  flux:
+
+storage:
+  raw_data_location: {{raw_data_location}}
+  output_location:
+  restart_location:
+
+outputs:
+  used_in:

@@ -1,0 +1,150 @@
+{
+"project": {
+"name": "Spherical Shock Wave Turbulence Interaction",
+"short_name": "SSW-HIT",
+"description": "Interaction between a spherical shock wave and homogeneous isotropic turbulence",
+"research_area": "Compressible Flow",
+"created_date": "2026-06-03",
+"last_updated": "2026-06-03"
+},
+
+"case": {
+"case_id": "case0001",
+"case_name": "case0001_Mt0146_ReLambda60",
+"case_description": "Baseline spherical shock wave case",
+"status": "completed",
+"tags": [
+"shock-wave",
+"turbulence",
+"DNS"
+]
+},
+
+"physics": {
+"equation": "Compressible Navier-Stokes",
+"gas_model": "Ideal Gas",
+"gamma": 1.4,
+"mach_number": 1.50,
+"reynolds_number": 100000,
+"turbulent_mach_number": 0.146,
+"reynolds_lambda": 60,
+"prandtl_number": 0.72
+},
+
+"numerics": {
+"grid": {
+"nx": 512,
+"ny": 512,
+"nz": 512
+},
+
+```
+"domain": {
+  "lx": 16.0,
+  "ly": 16.0,
+  "lz": 16.0
+},
+
+"scheme": {
+  "convective_flux": "Roe",
+  "reconstruction": "WENO-Z",
+  "time_integration": "TVD-RK3"
+},
+
+"boundary_condition": "Periodic"
+```
+
+},
+
+"execution": {
+"machine": "University HPC",
+"scheduler": "Slurm",
+
+```
+"nodes": 4,
+"mpi_processes": 128,
+"omp_threads": 1,
+
+"gpu": false,
+
+"walltime": "24:00:00"
+```
+
+},
+
+"software": {
+"compiler": "gfortran 13.2",
+"mpi": "OpenMPI 5.0",
+"python": "3.11",
+
+```
+"libraries": [
+  "numpy",
+  "scipy",
+  "matplotlib",
+  "h5py"
+]
+```
+
+},
+
+"storage": {
+"raw_data_location":
+"/mnt/storage/SSW-HIT/case0001/",
+
+```
+"figure_location":
+  "../../fig/spherical_shock/",
+
+"paper_location":
+  "../../paper/"
+```
+
+},
+
+"git": {
+"repository":
+"[git@github.com](mailto:git@github.com):user/project.git",
+
+```
+"branch": "main",
+
+"commit_hash":
+  "a1b2c3d4"
+```
+
+},
+
+"outputs": {
+"figures": [
+"fig_pressure_spectrum.pdf",
+"fig_shock_surface.png"
+],
+
+```
+"papers": [
+  "PoF_2026"
+]
+```
+
+},
+
+"authors": {
+"principal_investigator":
+"Kento Tanaka",
+
+```
+"contributors": [
+  "Student A",
+  "Student B"
+]
+```
+
+},
+
+"notes": [
+"Baseline case",
+"Used for Figure 3",
+"Referenced in PoF manuscript"
+]
+}
