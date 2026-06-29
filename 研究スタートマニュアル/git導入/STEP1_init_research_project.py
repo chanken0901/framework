@@ -63,6 +63,14 @@ CASE_INDEX_COLUMNS = [
     "updated_at",
     "git_commit_hash",
     "notes",
+
+    "tgv_amplitude",
+    "tgv_mode_x",
+    "tgv_mode_y",
+    "tgv_mode_z",
+    "hit_reynolds_lambda",
+    "hit_turbulent_mach_number",
+
 ]
 
 
