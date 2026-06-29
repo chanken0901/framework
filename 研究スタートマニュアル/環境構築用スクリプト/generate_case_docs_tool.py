@@ -72,16 +72,17 @@ INPUT_LAYOUT = [
         ("case_id", "case_id"),
         ("case_label", "case_label"),
         ("physics_model", "physics.model"),
+        ("flow_type", "flow.type"),
+        ("solver_type", "solver.type"),
     ]),
+
     ("physics", [
-        ("gamma", "physics.gamma"),
-        ("mach_number", "physics.mach_number"),
-        ("rho_0", "physics.rho_0"),
-        ("reynolds_number", "physics.reynolds_number"),
-        ("reynolds_lambda", "physics.reynolds_lambda"),
-        ("turbulent_mach_number", "physics.turbulent_mach_number"),
-        ("prandtl_number", "physics.prandtl_number"),
+        ("gamma", "physics.nse.gamma"),
+        ("mach_number", "physics.nse.mach_number"),
+        ("reynolds_number", "physics.nse.reynolds_number"),
+        ("prandtl_number", "physics.nse.prandtl_number"),
     ]),
+
     ("grid", [
         ("nx", "grid.nx"),
         ("ny", "grid.ny"),
@@ -93,18 +94,21 @@ INPUT_LAYOUT = [
         ("z_min", "grid.z_min"),
         ("z_max", "grid.z_max"),
     ]),
+
     ("time", [
         ("cfl", "time.cfl"),
         ("t_max", "time.t_max"),
         ("dt", "time.dt"),
         ("output_frequency", "time.output_frequency"),
     ]),
+
     ("numerics", [
         ("scheme", "numerics.scheme"),
         ("reconstruction", "numerics.reconstruction"),
         ("time_integration", "numerics.time_integration"),
         ("flux", "numerics.flux"),
     ]),
+
     ("storage", [
         ("output_location", "storage.output_location"),
         ("restart_location", "storage.restart_location"),
@@ -119,10 +123,11 @@ INDEX_FIELD_MAP = {
     "status": "status",
     "description": "description",
     "physics_model": "physics.model",
-    "mach_number": "physics.mach_number",
-    "reynolds_number": "physics.reynolds_number",
-    "reynolds_lambda": "physics.reynolds_lambda",
-    "turbulent_mach_number": "physics.turbulent_mach_number",
+    "flow_type":"flow.type",
+    "solver_type":"solver.type",
+    "mach_number":"physics.nse.mach_number",
+    "reynolds_number":"physics.nse.reynolds_number",
+    "prandtl_number":"physics.nse.prandtl_number",
     "nx": "grid.nx",
     "ny": "grid.ny",
     "nz": "grid.nz",
@@ -135,14 +140,17 @@ INDEX_FIELD_MAP = {
 
 DEFAULT_DUPLICATE_KEYS = [
     "physics_model",
+    "flow_type",
+    "solver_type",
+
     "mach_number",
     "reynolds_number",
-    "reynolds_lambda",
-    "turbulent_mach_number",
+
     "nx",
     "ny",
     "nz",
-    "scheme",
+
+    "flux",
     "reconstruction",
     "time_integration",
 ]
@@ -523,7 +531,7 @@ def generate_readme(data: Dict[str, Any]) -> str:
 ## 2. Physical model
 
 - Model: `{get(data, "physics.model")}`
-- Gamma: {get(data, "physics.gamma")}
+- Gamma: {get(data,"physics.nse.gamma")}
 - Mach number: {get(data, "physics.mach_number")}
 - Reference density: {get(data, "physics.rho_0")}
 - Reynolds number: {get(data, "physics.reynolds_number")}
