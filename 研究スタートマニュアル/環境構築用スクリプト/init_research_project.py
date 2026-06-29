@@ -41,15 +41,20 @@ CASE_INDEX_COLUMNS = [
     "case_label",
     "status",
     "description",
+
     "physics_model",
+    "flow_type",
+    "solver_type",
+
     "mach_number",
     "reynolds_number",
-    "reynolds_lambda",
-    "turbulent_mach_number",
+    "prandtl_number",
+
     "nx",
     "ny",
     "nz",
-    "scheme",
+
+    "flux",
     "reconstruction",
     "time_integration",
     "raw_data_location",
@@ -58,6 +63,14 @@ CASE_INDEX_COLUMNS = [
     "updated_at",
     "git_commit_hash",
     "notes",
+
+    "tgv_amplitude",
+    "tgv_mode_x",
+    "tgv_mode_y",
+    "tgv_mode_z",
+    "hit_reynolds_lambda",
+    "hit_turbulent_mach_number",
+
 ]
 
 
@@ -191,12 +204,23 @@ project:
   author: Kento Tanaka
 
 physics:
-  model: spherical_shock
-  mach_number: 2.0
-  reynolds_number: 1.0e5
-  reynolds_lambda:
-  turbulent_mach_number:
-  prandtl_number: 0.72
+  model: NSE
+  nse:
+    gamma: 1.4
+    mach_number: 0.5
+    reynolds_number: 1.0e5
+    prandtl_number: 0.72
+
+flow:
+  type: TGV
+  tgv:
+    amplitude: 1.0
+    mode_x: 1
+    mode_y: 1
+    mode_z: 1
+
+solver:
+  type: nse_fvm
 
 grid:
   nx: 512
@@ -204,7 +228,7 @@ grid:
   nz: 512
 
 numerics:
-  scheme: Roe
+  flux: Roe
   reconstruction: WENOZ
   time_integration: TVD_RK3
 
@@ -223,9 +247,12 @@ INPUT_TEMPLATE = """# input.dat
 
 case_id = case0001
 case_label = baseline
-physics_model = spherical_shock
+physics_model = NSE
+flow_type = TGV
+solver_type = nse_fvm
 
-mach_number = 2.0
+gamma = 1.4
+mach_number = 0.5
 reynolds_number = 1.0e5
 prandtl_number = 0.72
 
@@ -233,7 +260,7 @@ nx = 512
 ny = 512
 nz = 512
 
-scheme = Roe
+flux = Roe
 reconstruction = WENOZ
 time_integration = TVD_RK3
 
@@ -277,9 +304,16 @@ META_TEMPLATE = """{
     "status": "planned"
   },
   "physics": {
-    "model": "spherical_shock",
-    "mach_number": 2.0,
-    "reynolds_number": 100000.0
+    "model": "NSE",
+    "mach_number": 0.5,
+    "reynolds_number": 100000.0,
+    "prandtl_number": 0.72
+  },
+  "flow": {
+      "type": "TGV"
+  },
+  "solver": {
+      "type": "nse_fvm"
   },
   "grid": {
     "nx": 512,
@@ -328,12 +362,16 @@ def make_dirs(root: Path) -> None:
         "docs",
         "docs/references",
         "docs/meeting_notes",
+
         "src",
-        "src/solver",
+        "src/core",
         "src/physics",
-        "src/io",
+        "src/solver",
+        "src/numerics",
         "src/mpi",
-        "src/cuda",
+        "src/io",
+        "src/analysis",
+
         "scripts",
         "config",
         "templates",

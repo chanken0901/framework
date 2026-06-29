@@ -165,6 +165,19 @@ HIT_INPUT_LAYOUT = [
     ]),
 ]
 
+PHYSICS_LAYOUTS = {
+    "nse": NSE_INPUT_LAYOUT,
+    "navier_stokes": NSE_INPUT_LAYOUT,
+    "compressible_nse": NSE_INPUT_LAYOUT,
+    "compressible_euler": NSE_INPUT_LAYOUT,
+    "gpe": GPE_INPUT_LAYOUT,
+}
+
+FLOW_LAYOUTS = {
+    "tgv": TGV_INPUT_LAYOUT,
+    "hit": HIT_INPUT_LAYOUT,
+}
+
 
 # ============================================================
 # case_index.csv mapping
@@ -221,18 +234,17 @@ COMMON_DUPLICATE_KEYS = [
 ]
 
 DUPLICATE_KEYS_BY_FLOW = {
-    "TGV": COMMON_DUPLICATE_KEYS + [
+    "tgv": COMMON_DUPLICATE_KEYS + [
         "tgv_amplitude",
         "tgv_mode_x",
         "tgv_mode_y",
         "tgv_mode_z",
     ],
-    "HIT": COMMON_DUPLICATE_KEYS + [
+    "hit": COMMON_DUPLICATE_KEYS + [
         "hit_reynolds_lambda",
         "hit_turbulent_mach_number",
     ],
 }
-
 
 # ============================================================
 # small YAML parser
@@ -397,21 +409,19 @@ def build_input_layout(data: Dict[str, Any]) -> List[Tuple[str, List[Tuple[str, 
     layout: List[Tuple[str, List[Tuple[str, str]]]] = []
     layout.extend(COMMON_INPUT_LAYOUT)
 
-    if physics_model in {"nse", "navier_stokes", "compressible_nse", "compressible_euler"}:
-        layout.extend(NSE_INPUT_LAYOUT)
-    elif physics_model == "gpe":
-        layout.extend(GPE_INPUT_LAYOUT)
-    else:
-        # 未対応モデルでも共通部分だけは出力し、後段で気付けるようにする。
+    physics_layout = PHYSICS_LAYOUTS.get(physics_model)
+    if physics_layout is None:
         print(f"[WARNING] Unknown physics.model: {get(data, 'physics.model')}")
+    else:
+        layout.extend(physics_layout)
 
-    if flow_type == "tgv":
-        layout.extend(TGV_INPUT_LAYOUT)
-    elif flow_type == "hit":
-        layout.extend(HIT_INPUT_LAYOUT)
+    flow_layout = FLOW_LAYOUTS.get(flow_type)
+    if flow_layout is None:
+        print(f"[WARNING] Unknown flow.type: {get(data, 'flow.type')}")
+    else:
+        layout.extend(flow_layout)
 
     return layout
-
 
 # ============================================================
 # case_index.csv helpers
@@ -784,6 +794,13 @@ def main() -> int:
 
         print(f"[INFO] Duplicate check index: {case_index.resolve()}")
 
+        flow_type = normalized_name(get(data, "flow.type"))
+
+        if args.duplicate_keys:
+            duplicate_keys = args.duplicate_keys
+        else:
+            duplicate_keys = DUPLICATE_KEYS_BY_FLOW.get(flow_type, COMMON_DUPLICATE_KEYS)
+
         invalid_keys = [k for k in duplicate_keys if k not in INDEX_FIELD_MAP]
         if invalid_keys:
             print("[ERROR] Invalid duplicate key(s):")
@@ -795,12 +812,6 @@ def main() -> int:
                 print(f"  - {k}")
             return 1
 
-        flow_type = str(get(data, "flow.type", "")).strip()
-
-        if args.duplicate_keys:
-            duplicate_keys = args.duplicate_keys
-        else:
-            duplicate_keys = DUPLICATE_KEYS_BY_FLOW.get(flow_type, COMMON_DUPLICATE_KEYS)
 
         duplicates = check_duplicate_case(data, case_index, duplicate_keys)
         if duplicates:
