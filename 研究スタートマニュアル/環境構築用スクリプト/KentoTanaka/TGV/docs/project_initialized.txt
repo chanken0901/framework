@@ -1,0 +1,2 @@
+Project initialized at 2026-06-29T17:02:30
+Schema: G:\マイドライブ\研究\研究フレームワーク構築\研究スタートマニュアル\環境構築用スクリプト\KentoTanaka\project_schema.yaml

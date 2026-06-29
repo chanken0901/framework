@@ -1,0 +1,11 @@
+machine_name: local_linux_server
+paths:
+  repo_root: /mnt/repo_nas/Kento/ResearchRepo/ResearchProject
+  data_root: /mnt/data_nas/ResearchProject
+  scratch_root: /scratch/kento/ResearchProject
+compiler:
+  fortran: gfortran
+  mpi_fortran: mpif90
+  cuda_fortran: nvfortran
+scheduler:
+  type: slurm

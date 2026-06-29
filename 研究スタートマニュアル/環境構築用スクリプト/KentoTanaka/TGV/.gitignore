@@ -1,0 +1,62 @@
+# Build products
+*.o
+*.mod
+*.smod
+*.a
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+bin/
+build/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# LaTeX temporary files
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.run.xml
+*.synctex.gz
+*.toc
+
+# Large simulation data
+*.h5
+*.hdf5
+*.nc
+*.vtk
+*.vtu
+*.plt
+*.raw
+*.bin
+*.dat.bin
+
+# Case outputs
+cases/*/run_env/
+cases/*/output/
+cases/*/logs/
+cases/*/restart/
+cases/*/checkpoint/
+cases/*/tmp/
+
+# Local machine settings
+config/local.yaml
+config/machine.local.yaml
+config/machine.local.mk
+config/machine.local.sh
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,4 @@
+compiler:
+  fortran: gfortran
+  mpi_fortran: mpif90
+  cuda_fortran: nvfortran

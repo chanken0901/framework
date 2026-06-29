@@ -1,0 +1,4 @@
+paths:
+  repo_root: /mnt/repo_nas/Kento/ResearchRepo/ResearchProject
+  data_root: /mnt/data_nas/ResearchProject
+  scratch_root: /scratch/kento/ResearchProject

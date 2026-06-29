@@ -1,0 +1,43 @@
+case:
+- case_id
+- case_label
+- status
+- description
+project:
+- name
+- author
+model:
+- physics_model
+- flow_type
+- solver_type
+physics:
+- NSE
+flow:
+- TGV
+grid:
+- nx
+- ny
+- nz
+- x_min
+- x_max
+- y_min
+- y_max
+- z_min
+- z_max
+time:
+- cfl
+- dt
+- t_max
+- output_frequency
+- save_interval
+numerics:
+- flux
+- reconstruction
+- time_integration
+storage:
+- raw_data_location
+- output_location
+- restart_location
+git:
+  record_commit_hash: true
+  warn_if_dirty: true

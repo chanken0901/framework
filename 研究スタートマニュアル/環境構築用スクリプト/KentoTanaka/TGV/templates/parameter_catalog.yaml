@@ -1,0 +1,93 @@
+physics.NSE:
+  gamma:
+    default: 1.4
+    description: Ratio of specific heats
+  rho_0:
+    default: 1.0
+    description: Reference density
+  mach_number:
+    default: 0.5
+    description: Reference Mach number
+  reynolds_number:
+    default: 1.0e5
+    description: Reynolds number
+  prandtl_number:
+    default: 0.72
+    description: Prandtl number
+flow.TGV:
+  tgv_amplitude:
+    default: 1.0
+    description: Initial velocity amplitude
+  tgv_mode_x:
+    default: 1
+    description: Wavenumber in x direction
+  tgv_mode_y:
+    default: 1
+    description: Wavenumber in y direction
+  tgv_mode_z:
+    default: 1
+    description: Wavenumber in z direction
+grid:
+  nx:
+    default: 512
+    description: ''
+  ny:
+    default: 512
+    description: ''
+  nz:
+    default: 512
+    description: ''
+  x_min:
+    default: 0.0
+    description: ''
+  x_max:
+    default: 6.283185307179586
+    description: ''
+  y_min:
+    default: 0.0
+    description: ''
+  y_max:
+    default: 6.283185307179586
+    description: ''
+  z_min:
+    default: 0.0
+    description: ''
+  z_max:
+    default: 6.283185307179586
+    description: ''
+time:
+  cfl:
+    default: 0.5
+    description: ''
+  dt:
+    default: null
+    description: ''
+  t_max:
+    default: 100.0
+    description: ''
+  output_frequency:
+    default: 10
+    description: ''
+  save_interval:
+    default: null
+    description: ''
+numerics:
+  flux:
+    default: Roe
+    description: ''
+  reconstruction:
+    default: WENOZ
+    description: ''
+  time_integration:
+    default: TVD_RK3
+    description: ''
+storage:
+  raw_data_location:
+    default: /mnt/data_nas/ResearchProject/case0001
+    description: ''
+  output_location:
+    default: output
+    description: ''
+  restart_location:
+    default: restart
+    description: ''

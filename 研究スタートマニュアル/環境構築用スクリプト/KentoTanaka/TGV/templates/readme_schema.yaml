@@ -1,0 +1,28 @@
+title: '{case_id}'
+sections:
+- Case Information
+- Physical model
+- Flow/problem setting
+- Grid
+- Numerical methods
+- Storage
+- Outputs
+- Notes
+fields:
+  case:
+  - case_id
+  - case_label
+  - status
+  - description
+  model:
+  - physics_model
+  - flow_type
+  - solver_type
+  grid:
+  - nx
+  - ny
+  - nz
+  storage:
+  - raw_data_location
+  - output_location
+  - restart_location

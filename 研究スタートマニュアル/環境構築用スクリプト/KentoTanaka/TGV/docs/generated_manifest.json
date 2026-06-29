@@ -1,0 +1,23 @@
+{
+  "project_root": "G:\\マイドライブ\\研究\\研究フレームワーク構築\\研究スタートマニュアル\\環境構築用スクリプト\\KentoTanaka\\TGV",
+  "schema": "G:\\マイドライブ\\研究\\研究フレームワーク構築\\研究スタートマニュアル\\環境構築用スクリプト\\KentoTanaka\\project_schema.yaml",
+  "generated_at": "2026-06-29T17:02:30",
+  "generated_files": [
+    "README.md",
+    ".gitignore",
+    "Makefile",
+    "LICENSE",
+    "project_schema.yaml",
+    "cases/case_index.csv",
+    "templates/case_schema.yaml",
+    "templates/case_index_schema.yaml",
+    "templates/input_schema.yaml",
+    "templates/meta_schema.yaml",
+    "templates/readme_schema.yaml",
+    "templates/parameter_catalog.yaml",
+    "config/machine.yaml",
+    "config/compiler.yaml",
+    "config/paths.yaml",
+    "docs/project_initialized.txt"
+  ]
+}

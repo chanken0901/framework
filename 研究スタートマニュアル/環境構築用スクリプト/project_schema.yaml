@@ -1,0 +1,502 @@
+# ============================================================
+# project_schema.yaml
+#
+# 研究プロジェクト全体の設計書です。
+#
+# このファイルを編集することで，
+#
+#   - 使用する物理モデル
+#   - 使用する流れ場
+#   - 使用するソルバー
+#   - 生成するテンプレート
+#   - case_index.csv の設計
+#   - input.dat の設計
+#
+# を管理します。
+#
+# 基本方針:
+#   project_schema.yaml
+#       ↓
+#   STEP1_init_research_project.py
+#       ↓
+#   templates/case_schema.yaml
+#   templates/case_index_schema.yaml
+#   templates/input_schema.yaml
+#   templates/meta_schema.yaml
+#   templates/readme_schema.yaml
+#
+# つまり，このファイルをプロジェクト全体の Single Source of Truth
+# として扱います。
+# ============================================================
+
+version: 1.0
+
+# ============================================================
+# Project information
+# ============================================================
+
+project:
+  name: ResearchProject
+  author: Kento Tanaka
+  description: Numerical simulation research framework
+  default_case_label: baseline
+
+# ============================================================
+# Directory structure
+# ============================================================
+
+directories:
+
+  docs:
+    - docs
+    - docs/references
+    - docs/meeting_notes
+
+  source:
+    - src
+    - src/core
+    - src/physics
+    - src/solver
+    - src/numerics
+    - src/mpi
+    - src/io
+    - src/analysis
+
+  workflow:
+    - scripts
+    - config
+    - templates
+    - cases
+
+  analysis:
+    - analysis
+    - analysis/pod
+    - analysis/dmd
+    - analysis/information_theory
+    - analysis/visualization
+
+  writing:
+    - paper
+    - paper/manuscript
+    - paper/figures
+    - paper/tables
+    - paper/bibliography
+    - presentation
+    - presentation/conference
+    - presentation/seminar
+
+  tests:
+    - tests
+    - tests/unit
+    - tests/regression
+    - tests/benchmark
+
+# ============================================================
+# Physics models
+# ============================================================
+
+physics:
+
+  enabled:
+    - NSE
+    # - GPE
+
+  models:
+
+    NSE:
+      description: Compressible Navier-Stokes / Euler type equations
+      case_key: nse
+      input_section: physics_nse
+
+      parameters:
+        gamma:
+          default: 1.4
+          description: Ratio of specific heats
+
+        rho_0:
+          default: 1.0
+          description: Reference density
+
+        mach_number:
+          default: 0.5
+          description: Reference Mach number
+
+        reynolds_number:
+          default: 1.0e5
+          description: Reynolds number
+
+        prandtl_number:
+          default: 0.72
+          description: Prandtl number
+
+      duplicate_keys:
+        - mach_number
+        - reynolds_number
+        - prandtl_number
+
+    GPE:
+      description: Gross-Pitaevskii equation
+      case_key: gpe
+      input_section: physics_gpe
+
+      parameters:
+        hbar:
+          default: 1.0
+          description: Reduced Planck constant in nondimensional form
+
+        mass:
+          default: 1.0
+          description: Particle mass in nondimensional form
+
+        interaction_strength:
+          default: 1.0
+          description: Nonlinear interaction coefficient
+
+        density0:
+          default: 1.0
+          description: Reference density
+
+        chemical_potential:
+          default:
+          description: Chemical potential
+
+        damping:
+          default: 0.0
+          description: Damping coefficient
+
+      duplicate_keys:
+        - hbar
+        - mass
+        - interaction_strength
+        - density0
+        - chemical_potential
+        - damping
+
+# ============================================================
+# Flow / problem settings
+# ============================================================
+
+flow:
+
+  enabled:
+    # - TGV
+    - HIT
+    # - SBLI
+
+  types:
+
+    TGV:
+      description: Taylor-Green vortex
+      case_key: tgv
+      input_section: flow_tgv
+
+      parameters:
+        amplitude:
+          output_key: tgv_amplitude
+          default: 1.0
+          description: Initial velocity amplitude
+
+        mode_x:
+          output_key: tgv_mode_x
+          default: 1
+          description: Wavenumber in x direction
+
+        mode_y:
+          output_key: tgv_mode_y
+          default: 1
+          description: Wavenumber in y direction
+
+        mode_z:
+          output_key: tgv_mode_z
+          default: 1
+          description: Wavenumber in z direction
+
+      duplicate_keys:
+        - tgv_amplitude
+        - tgv_mode_x
+        - tgv_mode_y
+        - tgv_mode_z
+
+    HIT:
+      description: Homogeneous isotropic turbulence
+      case_key: hit
+      input_section: flow_hit
+
+      parameters:
+        reynolds_lambda:
+          output_key: hit_reynolds_lambda
+          default:
+          description: Taylor-microscale Reynolds number
+
+        turbulent_mach_number:
+          output_key: hit_turbulent_mach_number
+          default:
+          description: Turbulent Mach number
+
+        integral_length:
+          output_key: hit_integral_length
+          default:
+          description: Integral length scale
+
+        random_seed:
+          output_key: hit_random_seed
+          default: 0
+          description: Random seed for turbulence generation
+
+      duplicate_keys:
+        - hit_reynolds_lambda
+        - hit_turbulent_mach_number
+        - hit_integral_length
+        - hit_random_seed
+
+    SBLI:
+      description: Shock wave / boundary-layer interaction
+      case_key: sbli
+      input_section: flow_sbli
+
+      parameters:
+        inflow_mach:
+          output_key: inflow_mach
+          default:
+          description: Inflow Mach number
+
+        wall_temperature_ratio:
+          output_key: wall_temperature_ratio
+          default:
+          description: Wall-to-recovery or wall-to-freestream temperature ratio
+
+        shock_angle:
+          output_key: shock_angle
+          default:
+          description: Incident shock angle
+
+      duplicate_keys:
+        - inflow_mach
+        - wall_temperature_ratio
+        - shock_angle
+
+# ============================================================
+# Solvers
+# ============================================================
+
+solver:
+
+  enabled:
+    - nse_fvm
+    # - gpe_pseudospectral
+
+  types:
+
+    nse_fvm:
+      description: Finite-volume solver for compressible NSE/Euler
+      compatible_physics:
+        - NSE
+      compatible_flow:
+        - TGV
+        - HIT
+        - SBLI
+
+    gpe_pseudospectral:
+      description: Pseudo-spectral solver for GPE
+      compatible_physics:
+        - GPE
+      compatible_flow:
+        - TGV
+        - HIT
+
+# ============================================================
+# Grid
+# ============================================================
+
+grid:
+  parameters:
+    nx:
+      default: 512
+    ny:
+      default: 512
+    nz:
+      default: 512
+
+    x_min:
+      default: 0.0
+    x_max:
+      default: 6.283185307179586
+
+    y_min:
+      default: 0.0
+    y_max:
+      default: 6.283185307179586
+
+    z_min:
+      default: 0.0
+    z_max:
+      default: 6.283185307179586
+
+  duplicate_keys:
+    - nx
+    - ny
+    - nz
+
+# ============================================================
+# Time settings
+# ============================================================
+
+time:
+  parameters:
+    cfl:
+      default: 0.5
+    dt:
+      default:
+    t_max:
+      default: 100.0
+    output_frequency:
+      default: 10
+    save_interval:
+      default:
+
+# ============================================================
+# Numerical methods
+# ============================================================
+
+numerics:
+  parameters:
+    flux:
+      default: Roe
+    reconstruction:
+      default: WENOZ
+    time_integration:
+      default: TVD_RK3
+
+  duplicate_keys:
+    - flux
+    - reconstruction
+    - time_integration
+
+# ============================================================
+# Storage
+# ============================================================
+
+storage:
+  parameters:
+    raw_data_location:
+      default: /mnt/data_nas/ResearchProject/case0001
+    output_location:
+      default: output
+    restart_location:
+      default: restart
+
+# ============================================================
+# case_index.csv generation
+# ============================================================
+
+case_index:
+
+  columns:
+
+    case:
+      - case_id
+      - case_label
+      - status
+      - description
+
+    model:
+      - physics_model
+      - flow_type
+      - solver_type
+
+    physics:
+      NSE:
+        - mach_number
+        - reynolds_number
+        - prandtl_number
+
+      GPE:
+        - hbar
+        - mass
+        - interaction_strength
+        - density0
+        - chemical_potential
+        - damping
+
+    flow:
+      TGV:
+        - tgv_amplitude
+        - tgv_mode_x
+        - tgv_mode_y
+        - tgv_mode_z
+
+      HIT:
+        - hit_reynolds_lambda
+        - hit_turbulent_mach_number
+        - hit_integral_length
+        - hit_random_seed
+
+      SBLI:
+        - inflow_mach
+        - wall_temperature_ratio
+        - shock_angle
+
+    grid:
+      - nx
+      - ny
+      - nz
+
+    numerics:
+      - flux
+      - reconstruction
+      - time_integration
+
+    storage:
+      - raw_data_location
+
+    metadata:
+      - used_in
+      - created_at
+      - updated_at
+      - git_commit_hash
+      - notes
+
+  duplicate_check:
+
+    common:
+      - physics_model
+      - flow_type
+      - solver_type
+      - nx
+      - ny
+      - nz
+      - flux
+      - reconstruction
+      - time_integration
+
+    use_physics_duplicate_keys: true
+    use_flow_duplicate_keys: true
+
+  options:
+    auto_create_case_index: true
+    auto_add_missing_columns: true
+    keep_unknown_existing_columns: true
+
+# ============================================================
+# Template generation
+# ============================================================
+
+templates:
+
+  generate:
+    - case_schema.yaml
+    - case_index_schema.yaml
+    - input_schema.yaml
+    - meta_schema.yaml
+    - readme_schema.yaml
+
+  output_directory: templates
+
+# ============================================================
+# Git / reproducibility
+# ============================================================
+
+git:
+  require_clean_commit_before_run: false
+  record_commit_hash: true
+  warn_if_dirty: true
