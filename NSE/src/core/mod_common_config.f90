@@ -11,7 +11,7 @@ module mod_common_config
 
   type :: simulation_config
     ! --- model/case ---
-    character(len=32)  :: equation = 'NES'      ! GPE, NSE, LES, Euler, ...
+    character(len=32)  :: equation = 'NSE'      ! GPE, NSE, LES, Euler, ...
     character(len=256) :: case_name = 'case0001'
     character(len=256) :: input_file = 'input.dat'
     character(len=64)  :: initial_condition = 'default'
@@ -20,7 +20,7 @@ module mod_common_config
     integer :: nx = 64
     integer :: ny = 64
     integer :: nz = 64
-    integer :: nghost = 3
+    integer :: nghost = 0
 
     real(dp) :: x_min = 0.0_dp
     real(dp) :: x_max = 1.0_dp

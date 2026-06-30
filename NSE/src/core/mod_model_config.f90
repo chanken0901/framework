@@ -64,6 +64,8 @@ contains
     write(u,'(A,I10)') 'nghost = ', cfg%nghost
     write(u,'(A,ES16.8)') 'gamma  = ', cfg%gamma
     write(u,'(A,ES16.8)') 'mach   = ', cfg%mach
+    write(u,'(A,ES16.8)') 'reynolds   = ', cfg%reynolds
+    write(u,'(A,ES16.8)') 'prandtl   = ', cfg%prandtl
   end subroutine print_nse_config
 
 end module mod_model_config

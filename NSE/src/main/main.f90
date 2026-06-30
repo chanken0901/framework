@@ -1,37 +1,11 @@
 program main
   use module_mpi
   use mod_precision, only : dp
-  use mod_constants, only : pi
+  use mod_constants
+  use mod_common_config, only : simulation_config, init_simulation_config, print_simulation_config
+  use mod_model_config, only : nse_config, init_nse_config, print_nse_config
   implicit none
-  !integer, parameter :: dp = kind(1.0d0)
-  integer, parameter :: nv = 5
 
-  ! ------------------------------
-  ! Simulation parameters
-  ! ------------------------------
-  integer, parameter :: nx =  64
-  integer, parameter :: ny =  64
-  integer, parameter :: nz =  64
-  integer, parameter :: nghost = 3         ! WENO5 needs 3 ghosts
-  !integer, parameter :: mode = 0           ! mode=0:constant temperature,  mode=1:constant density
-
-  !real(dp), parameter :: pi = acos(-1.0_dp)
-  real(dp), parameter :: x_min = 0.0_dp
-  real(dp), parameter :: x_max = 2.0_dp*pi
-  real(dp), parameter :: x_center = (x_max-x_min)/2.0_dp
-  real(dp), parameter :: y_min = 0.0_dp
-  real(dp), parameter :: y_max = 2.0_dp*pi
-  real(dp), parameter :: y_center = (y_max-y_min)/2.0_dp
-  real(dp), parameter :: z_min = 0.0_dp
-  real(dp), parameter :: z_max = 2.0_dp*pi
-  real(dp), parameter :: z_center = (z_max-z_min)/2.0_dp
-
-  real(dp), parameter :: t_max = 100.0_dp
-  real(dp), parameter :: cfl   = 0.50_dp   ! a bit safer for sharper capture
-  real(dp), parameter :: gamma = 1.4_dp
-  real(dp), parameter :: small_rho = 1.0d-12
-  real(dp), parameter :: small_p   = 1.0d-12
-  integer, parameter :: output_frequency =  10 ! Output every 20 steps for Paraview
 
   ! ------------------------------
   ! Grid / geometry (3D)
