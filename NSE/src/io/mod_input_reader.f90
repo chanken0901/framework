@@ -39,11 +39,12 @@ contains
     case_name = cfg%case_name
     input_file = filename
     initial_condition = cfg%initial_condition
-    nx = cfg%nx; ny = cfg%ny; nz = cfg%nz; nghost = cfg%nghost
+    nx = cfg%nx; ny = cfg%ny; nz = cfg%nz
+    nghost = cfg%nghost
     x_min = cfg%x_min; x_max = cfg%x_max
     y_min = cfg%y_min; y_max = cfg%y_max
     z_min = cfg%z_min; z_max = cfg%z_max
-    dt = cfg%dt; t_max = cfg%t_max; nsteps = cfg%nsteps; cfl = cfg%cfl
+    dt = cfg%dt; t_max = cfg%t_max; nsteps = cfg%nsteps
     use_fixed_dt = cfg%use_fixed_dt
     output_frequency = cfg%output_frequency
     output_dir = cfg%output_dir
@@ -78,11 +79,12 @@ contains
     cfg%case_name = case_name
     cfg%input_file = input_file
     cfg%initial_condition = initial_condition
-    cfg%nx = nx; cfg%ny = ny; cfg%nz = nz; cfg%nghost = nghost
+    cfg%nx = nx; cfg%ny = ny; cfg%nz = nz
+    cfg%nghost = nghost
     cfg%x_min = x_min; cfg%x_max = x_max
     cfg%y_min = y_min; cfg%y_max = y_max
     cfg%z_min = z_min; cfg%z_max = z_max
-    cfg%dt = dt; cfg%t_max = t_max; cfg%nsteps = nsteps; cfg%cfl = cfl
+    cfg%dt = dt; cfg%t_max = t_max; cfg%nsteps = nsteps
     cfg%use_fixed_dt = use_fixed_dt
     cfg%output_frequency = output_frequency
     cfg%output_dir = output_dir
@@ -135,7 +137,7 @@ contains
     logical :: exists
     namelist /nse/ nv, nghost, gamma, small_rho, small_p, rho0, mach, reynolds, prandtl
 
-    nv = cfg%nv; nghost = cfg%nghost
+    nv = cfg%nv
     gamma = cfg%gamma; small_rho = cfg%small_rho; small_p = cfg%small_p
     rho0 = cfg%rho0; mach = cfg%mach; reynolds = cfg%reynolds; prandtl = cfg%prandtl
 
@@ -147,7 +149,7 @@ contains
     close(u)
     if (ios /= 0) return  ! /nse/ block is optional for non-NSE solver
 
-    cfg%nv = nv; cfg%nghost = nghost
+    cfg%nv = nv
     cfg%gamma = gamma; cfg%small_rho = small_rho; cfg%small_p = small_p
     cfg%rho0 = rho0; cfg%mach = mach; cfg%reynolds = reynolds; cfg%prandtl = prandtl
   end subroutine read_nse_input

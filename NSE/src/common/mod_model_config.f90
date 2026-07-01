@@ -19,8 +19,8 @@ module mod_model_config
 
   type :: nse_config
     integer :: nv = 5
-    integer :: nghost = 3
     real(dp) :: gamma = 1.4_dp
+    real(dp) :: cfl = 0.5_dp
     real(dp) :: small_rho = 1.0e-12_dp
     real(dp) :: small_p   = 1.0e-12_dp
     real(dp) :: rho0 = 1.0_dp
@@ -61,7 +61,6 @@ contains
     if (present(unit)) u = unit
     write(u,'(A)') '--- nse_config ---'
     write(u,'(A,I10)') 'nv     = ', cfg%nv
-    write(u,'(A,I10)') 'nghost = ', cfg%nghost
     write(u,'(A,ES16.8)') 'gamma  = ', cfg%gamma
     write(u,'(A,ES16.8)') 'mach   = ', cfg%mach
     write(u,'(A,ES16.8)') 'reynolds   = ', cfg%reynolds

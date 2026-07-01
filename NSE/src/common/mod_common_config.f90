@@ -20,7 +20,7 @@ module mod_common_config
     integer :: nx = 64
     integer :: ny = 64
     integer :: nz = 64
-    integer :: nghost = 0
+    integer :: nghost = 3
 
     real(dp) :: x_min = 0.0_dp
     real(dp) :: x_max = 1.0_dp
@@ -40,7 +40,6 @@ module mod_common_config
     real(dp) :: dt = 1.0e-4_dp
     real(dp) :: t_max = 1.0_dp
     integer  :: nsteps = 1000
-    real(dp) :: cfl = 0.5_dp
     logical  :: use_fixed_dt = .true.
 
     ! --- output ---
@@ -104,6 +103,7 @@ contains
     write(u,'(A,A)')    'equation          = ', trim(cfg%equation)
     write(u,'(A,A)')    'case_name         = ', trim(cfg%case_name)
     write(u,'(A,3I10)') 'nx, ny, nz        = ', cfg%nx, cfg%ny, cfg%nz
+    write(u,'(A,3I10)') 'nx, ny, nz        = ', cfg%nghost
     write(u,'(A,3ES16.8)') 'lx, ly, lz     = ', cfg%lx, cfg%ly, cfg%lz
     write(u,'(A,3ES16.8)') 'dx, dy, dz     = ', cfg%dx, cfg%dy, cfg%dz
     write(u,'(A,ES16.8)') 'dt               = ', cfg%dt
