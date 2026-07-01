@@ -50,50 +50,201 @@ contains
     end if
   end subroutine make_step_filename
 
-  subroutine write_meta_json(cfg, variable_names, filename, primary_variables_note)
+  !subroutine write_meta_json(cfg)
+  !  type(simulation_config), intent(in) :: cfg
+  !
+  !  integer :: u, i, nvar, ios
+  subroutine write_meta_json(cfg, filename, primary_variables_note, is, ie, js, je, ks, ke, use_cuda)
+    use omp_lib, only : omp_get_max_threads
     type(simulation_config), intent(in) :: cfg
-    character(len=*), intent(in), optional :: variable_names(:)
     character(len=*), intent(in), optional :: filename
     character(len=*), intent(in), optional :: primary_variables_note
-
-    integer :: u, i, nvar, ios
+    character(len=32), allocatable :: variable_names(:)
+    character(len=64) :: eq
+    integer, intent(in), optional :: is, ie, js, je, ks, ke
+    logical, intent(in), optional :: use_cuda
+  
+    integer :: u, i, nvar, ios, ierr, r
+    integer :: local_range(6)
+    integer, allocatable :: all_ranges(:,:)
+    integer :: omp_threads
+    logical :: cuda_enabled
     character(len=512) :: fname
 
     call ensure_directory(cfg%output_dir)
-    if (present(filename)) then
-      fname = filename
-    else
-      fname = trim(cfg%output_dir)//'/meta.json'
-    end if
+  
+    fname = trim(cfg%output_dir)//'/meta.json'
+    eq = adjustl(cfg%equation)
 
-    nvar = 0
-    if (present(variable_names)) nvar = size(variable_names)
+  ! local_range = [i_start, i_end, j_start, j_end, k_start, k_end]
+    !local_range = [1, cfg%nx, 1, cfg%ny, 1, cfg%nz]
+    !if (present(js)) local_range(3) = is
+    !if (present(je)) local_range(4) = ie
+    !if (present(js)) local_range(3) = js
+    !if (present(je)) local_range(4) = je
+    !if (present(ks)) local_range(5) = ks
+    !if (present(ke)) local_range(6) = ke
 
+local_range = [1, cfg%nx, 1, cfg%ny, 1, cfg%nz]
+
+if (present(is)) local_range(1) = is
+if (present(ie)) local_range(2) = ie
+if (present(js)) local_range(3) = js
+if (present(je)) local_range(4) = je
+if (present(ks)) local_range(5) = ks
+if (present(ke)) local_range(6) = ke
+  
+    if (my_rank == root) allocate(all_ranges(6,nprocs))
+    call MPI_Gather(local_range, 6, MPI_INTEGER, all_ranges, 6, MPI_INTEGER, root, MPI_COMM_WORLD, ierr)
+    if (my_rank /= root) return
+
+    cuda_enabled = .false.
+    if (present(use_cuda)) cuda_enabled = use_cuda
+    omp_threads = 1
+    if (cfg%use_openmp) omp_threads = omp_get_max_threads()
+
+  
+    select case (trim(eq))
+    case ('NSE','nse')
+      nvar = 5
+      allocate(variable_names(nvar))
+      variable_names = [character(len=32) :: &
+        'rho', 'rho_u', 'rho_v', 'rho_w', 'rho_E']
+  
+    case ('GPE','gpe')
+      nvar = 2
+      allocate(variable_names(nvar))
+      variable_names = [character(len=32) :: &
+        'psi_real', 'psi_imag']
+  
+    case default
+      nvar = 0
+      allocate(variable_names(0))
+    end select
+  
     open(newunit=u, file=trim(fname), status='replace', action='write', iostat=ios)
     if (ios /= 0) error stop 'ERROR: cannot write meta.json.'
-
+  
     write(u,'(A)') '{'
     write(u,'(A,A,A)') '  "equation": "', trim(cfg%equation), '",'
     write(u,'(A,A,A)') '  "case_name": "', trim(cfg%case_name), '",'
     write(u,'(A,I0,A,I0,A,I0,A)') '  "grid": [', cfg%nx, ', ', cfg%ny, ', ', cfg%nz, '],'
     write(u,'(A,ES24.16,A,ES24.16,A,ES24.16,A)') '  "domain_length": [', cfg%lx, ', ', cfg%ly, ', ', cfg%lz, '],'
     write(u,'(A,ES24.16,A,ES24.16,A,ES24.16,A)') '  "origin": [', cfg%x_min, ', ', cfg%y_min, ', ', cfg%z_min, '],'
+    write(u,'(A,ES24.16,A,ES24.16,A,ES24.16,A)') '  "spacing": [', cfg%dx, ', ', cfg%dy, ', ', cfg%dz, '],'
     write(u,'(A,A,A)') '  "precision": "', trim(cfg%precision_name), '",'
     write(u,'(A,A,A)') '  "format": "', trim(cfg%output_format), '",'
-    if (present(primary_variables_note)) then
-      write(u,'(A,A,A)') '  "primary_variables_note": "', trim(primary_variables_note), '",'
-    end if
+  
+    select case (trim(eq))
+    case ('NSE','nse')
+      write(u,'(A)') '  "primary_variables_note": "NSE output stores conservative variables only.",'
+    case ('GPE','gpe')
+      write(u,'(A)') '  "primary_variables_note": "GPE output stores psi_real and psi_imag only.",'
+    case default
+      write(u,'(A)') '  "primary_variables_note": "Primary variables depend on the solver.",'
+    end select
+  
+    write(u,'(A,I0,A)') '  "nvar": ', nvar, ','
     write(u,'(A)', advance='no') '  "variables": ['
-    if (nvar > 0) then
-      do i = 1, nvar
-        if (i > 1) write(u,'(A)', advance='no') ', '
-        write(u,'(A,A,A)', advance='no') '"', trim(variable_names(i)), '"'
-      end do
-    end if
-    write(u,'(A)') ']'
-    write(u,'(A)') '}'
+  
+    do i = 1, nvar
+      if (i > 1) write(u,'(A)', advance='no') ', '
+      write(u,'(A,A,A)', advance='no') '"', trim(variable_names(i)), '"'
+    end do
+  
+    write(u,'(A)') '],'
+
+    write(u,'(A)') '  "parallel": {'
+    write(u,'(A,A,A)') '    "mpi_enabled": ', json_bool(cfg%use_mpi), ','
+    write(u,'(A,I0,A)') '    "mpi_nprocs": ', nprocs, ','
+    write(u,'(A,A,A)') '    "openmp_enabled": ', json_bool(cfg%use_openmp), ','
+    write(u,'(A,I0,A)') '    "openmp_max_threads": ', omp_threads, ','
+    write(u,'(A,A,A)') '    "cuda_enabled": ', json_bool(cuda_enabled), ','
+    write(u,'(A)') '    "decomposition": "x-global_yz-block",'
+    write(u,'(A)') '    "rank_ranges": ['
+
+do r = 0, nprocs-1
+  write(u,'(A)') '      {'
+  write(u,'(A)') '        "rank": '    // trim(itoa(r)) // ','
+  write(u,'(A)') '        "i_start": ' // trim(itoa(all_ranges(1,r+1))) // ','
+  write(u,'(A)') '        "i_end": '   // trim(itoa(all_ranges(2,r+1))) // ','
+  write(u,'(A)') '        "j_start": ' // trim(itoa(all_ranges(3,r+1))) // ','
+  write(u,'(A)') '        "j_end": '   // trim(itoa(all_ranges(4,r+1))) // ','
+  write(u,'(A)') '        "k_start": ' // trim(itoa(all_ranges(5,r+1))) // ','
+  write(u,'(A)') '        "k_end": '   // trim(itoa(all_ranges(6,r+1)))
+
+  if (r < nprocs-1) then
+    write(u,'(A)') '      },'
+  else
+    write(u,'(A)') '      }'
+  end if
+end do
+
+write(u,'(A)') '    ]'
+write(u,'(A)') '  }'
+write(u,'(A)') '}'
     close(u)
+
+    if (allocated(variable_names)) deallocate(variable_names)
+
   end subroutine write_meta_json
+
+  !subroutine write_meta_json(sim)
+  !  use mod_model_config, only : nse_config, gpe_config
+  !  type(simulation_config), intent(in) :: sim
+  !  character(len=*), intent(in), optional :: filename
+  !  character(len=*), intent(in), optional :: primary_variables_note
+
+  !  integer :: u, i, nvar, ios
+  !  character(len=512) :: fname
+
+  !  call ensure_directory(cfg%output_dir)
+  !  if (present(filename)) then
+  !    fname = filename
+  !  else
+  !    fname = trim(cfg%output_dir)//'/meta.json'
+  !  end if
+
+  !  nvar = 0
+  !  if (present(variable_names)) nvar = size(variable_names)
+
+  !  open(newunit=u, file=trim(fname), status='replace', action='write', iostat=ios)
+  !  if (ios /= 0) error stop 'ERROR: cannot write meta.json.'
+
+  !  write(u,'(A)') '{'
+  !  write(u,'(A,A,A)') '  "equation": "', trim(cfg%equation), '",'
+  !  write(u,'(A,A,A)') '  "case_name": "', trim(cfg%case_name), '",'
+  !  write(u,'(A,I0,A,I0,A,I0,A)') '  "grid": [', cfg%nx, ', ', cfg%ny, ', ', cfg%nz, '],'
+  !  write(u,'(A,ES24.16,A,ES24.16,A,ES24.16,A)') '  "domain_length": [', cfg%lx, ', ', cfg%ly, ', ', cfg%lz, '],'
+  !  write(u,'(A,ES24.16,A,ES24.16,A,ES24.16,A)') '  "origin": [', cfg%x_min, ', ', cfg%y_min, ', ', cfg%z_min, '],'
+  !  write(u,'(A,A,A)') '  "precision": "', trim(cfg%precision_name), '",'
+  !  write(u,'(A,A,A)') '  "format": "', trim(cfg%output_format), '",'
+  !  if (present(primary_variables_note)) then
+  !    write(u,'(A,A,A)') '  "primary_variables_note": "', trim(primary_variables_note), '",'
+  !  end if
+  !  write(unit,'(A)') '  "variables": ['
+  !  
+  !  select case(trim(sim%equation))
+  !  
+  !  case("NSE")
+  !  
+  !      write(u,'(A)') '    "rho",'
+  !      write(u,'(A)') '    "rho_u",'
+  !      write(u,'(A)') '    "rho_v",'
+  !      write(u,'(A)') '    "rho_w",'
+  !      write(u,'(A)') '    "rho_E"'
+  !  
+  !  case("GPE")
+  !  
+  !      write(u,'(A)') '    "psi_real",'
+  !      write(u,'(A)') '    "psi_imag"'
+  !  
+  !  end select
+  !  
+  !  write(u,'(A)') '  ],'    
+  !  write(u,'(A)') '}'
+  !  close(u)
+  !end subroutine write_meta_json
 
   subroutine write_header(u, cfg, step, time, nvar, shape3, rank, varnames, dtype_code_in)
     integer, intent(in) :: u
@@ -266,5 +417,24 @@ contains
 
     call write_field_complex3_slf(cfg, step, time, psi, rank)
   end subroutine write_gpe_psi_slf
+
+  pure function itoa(i) result(str)
+    integer, intent(in) :: i
+    character(len=32) :: str
+  
+    write(str,'(I0)') i
+    str = adjustl(str)
+  end function itoa
+
+  pure function json_bool(flag) result(str)
+    logical, intent(in) :: flag
+    character(len=5) :: str
+  
+    if (flag) then
+      str = 'true '
+    else
+      str = 'false'
+    end if
+  end function json_bool
 
 end module mod_slf_output

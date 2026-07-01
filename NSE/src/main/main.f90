@@ -5,7 +5,7 @@ program main
   use mod_common_config, only : simulation_config, init_simulation_config, print_simulation_config
   use mod_model_config, only : nse_config, init_nse_config, print_nse_config
   use mod_input_reader, only : read_all_inputs
-  use mod_slf_output, only : write_nse_conserved_slf
+  use mod_slf_output, only : write_nse_conserved_slf,write_meta_json
 
   implicit none
 
@@ -220,6 +220,7 @@ contains
     call apply_bc(Q)
 
     !call write_bin_data(0, my_rank, Q(1:sim%nx,js:je,ks:ke,:), 0.0_dp) ! 3D VTKデータを出力
+    call write_meta_json(sim, is=1, ie=sim%nx, js=js, je=je, ks=ks, ke=ke, use_cuda=.false.)
     call write_nse_conserved_slf(sim, 0, 0.0_dp, Q, rank=my_rank)
 
   end subroutine initialize_Sym
