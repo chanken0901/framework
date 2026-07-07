@@ -7,16 +7,6 @@ module mod_model_config
   public :: init_gpe_config, init_nse_config
   public :: print_gpe_config, print_nse_config
 
-  type :: gpe_config
-    real(dp) :: g = 50.0_dp
-    real(dp) :: sigma0 = 1.0_dp
-    real(dp) :: wx = 1.0_dp
-    real(dp) :: wy = 1.0_dp
-    real(dp) :: wz = 1.0_dp
-    real(dp) :: hbar = 1.0_dp
-    real(dp) :: mass = 1.0_dp
-  end type gpe_config
-
   type :: nse_config
     integer :: nv = 5
     real(dp) :: gamma = 1.4_dp
@@ -28,6 +18,16 @@ module mod_model_config
     real(dp) :: reynolds = 0.0_dp
     real(dp) :: prandtl = 0.72_dp
   end type nse_config
+
+  type :: gpe_config
+    real(dp) :: g = 50.0_dp
+    real(dp) :: sigma0 = 1.0_dp
+    real(dp) :: wx = 1.0_dp
+    real(dp) :: wy = 1.0_dp
+    real(dp) :: wz = 1.0_dp
+    real(dp) :: hbar = 1.0_dp
+    real(dp) :: mass = 1.0_dp
+  end type gpe_config
 
 contains
 
