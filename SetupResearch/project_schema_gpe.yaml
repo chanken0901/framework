@@ -1,0 +1,308 @@
+# GPE研究プロジェクトのSingle Source of Truth。
+# STEP1でプロジェクト骨格、ケーススキーマ、実行用スクリプトを生成する。
+version: 1.0
+
+project:
+  name: GP3DResearch
+  author: Kento Tanaka
+  description: Three-dimensional Gross-Pitaevskii equation simulations
+  default_case_label: quantum_taylor_green
+
+directories:
+  docs:
+    - docs
+    - docs/references
+    - docs/meeting_notes
+  source:
+    - src
+  workflow:
+    - scripts
+    - config
+    - templates
+    - cases
+    - generated
+  analysis:
+    - analysis
+    - analysis/visualization
+    - analysis/statistics
+    - analysis/vortex
+  writing:
+    - paper
+    - paper/manuscript
+    - paper/figures
+    - presentation
+  tests:
+    - tests
+    - tests/regression
+    - tests/benchmark
+
+physics:
+  enabled:
+    - GPE
+  models:
+    GPE:
+      description: Gross-Pitaevskii equation
+      case_key: gpe
+      input_section: gpe
+      parameters:
+        use_dimensionless_parameters: {default: true, description: Use alpha and beta}
+        alpha: {default: 0.025, description: Dimensionless kinetic coefficient}
+        beta: {default: 80.0, description: Dimensionless nonlinear coefficient}
+        g: {default: 1.0, description: Interaction coefficient}
+        sigma0: {default: 1.0, description: Initial Gaussian width}
+        wx: {default: 0.0, description: Trap angular frequency in x}
+        wy: {default: 0.0, description: Trap angular frequency in y}
+        wz: {default: 0.0, description: Trap angular frequency in z}
+        hbar: {default: 1.0, description: Reduced Planck constant}
+        mass: {default: 1.0, description: Particle mass}
+        norm: {default: 1.0, description: Target wavefunction norm}
+        imaginary_time: {default: false, description: Use imaginary-time evolution}
+        mu: {default: 8.0, description: Chemical potential}
+        healing_length: {default: 0.25, description: Healing length}
+        vortex_charge: {default: 1, description: Vortex winding number}
+        vortex_x0: {default: 0.0, description: Vortex center x}
+        vortex_y0: {default: 0.0, description: Vortex center y}
+        ring_radius: {default: 1.0, description: Vortex-ring radius}
+        ring_z0: {default: 0.0, description: Vortex-ring center z}
+        phase_noise: {default: 0.0, description: Initial phase-noise amplitude}
+        tangle_nlines: {default: 12, description: Number of random vortex lines}
+        tangle_nrings: {default: 16, description: Number of random vortex rings}
+        ring_radius_min: {default: 0.35, description: Minimum random-ring radius}
+        ring_radius_max: {default: 1.2, description: Maximum random-ring radius}
+        random_seed: {default: 12345, description: Initial-condition random seed}
+        tg_velocity_amplitude: {default: 1.0, description: Taylor-Green velocity amplitude}
+        tg_winding: {default: 1, description: Taylor-Green phase winding}
+        tg_auto_winding: {default: true, description: Select Taylor-Green winding automatically}
+        argle_enabled: {default: true, description: Relax Taylor-Green seed with ARGLE}
+        argle_write_seed: {default: true, description: Save the relaxed ARGLE seed}
+        argle_steps: {default: 2000, description: Maximum ARGLE iterations}
+        argle_output_every: {default: 100, description: ARGLE progress interval}
+        argle_dtau: {default: 0.001, description: ARGLE pseudo-time step}
+        argle_tolerance: {default: 1.0e-8, description: ARGLE convergence tolerance}
+      duplicate_keys:
+        - alpha
+        - beta
+        - g
+        - mu
+        - healing_length
+        - random_seed
+
+flow:
+  enabled:
+    - quantum_taylor_green
+    - vortex_tangle
+    - ring_tangle
+    - uniform_vortex
+    - vortex_ring
+    - gaussian
+    - restart_slf
+  types:
+    quantum_taylor_green:
+      description: Periodic quantum Taylor-Green initial condition
+      case_key: quantum_taylor_green
+      input_section: flow_quantum_taylor_green
+      parameters: {}
+      duplicate_keys: []
+    vortex_tangle:
+      description: Random vortex-line tangle
+      case_key: vortex_tangle
+      input_section: flow_vortex_tangle
+      parameters: {}
+      duplicate_keys: []
+    ring_tangle:
+      description: Random vortex-ring tangle
+      case_key: ring_tangle
+      input_section: flow_ring_tangle
+      parameters: {}
+      duplicate_keys: []
+    uniform_vortex:
+      description: Straight vortex in a uniform condensate
+      case_key: uniform_vortex
+      input_section: flow_uniform_vortex
+      parameters: {}
+      duplicate_keys: []
+    vortex_ring:
+      description: Single vortex ring
+      case_key: vortex_ring
+      input_section: flow_vortex_ring
+      parameters: {}
+      duplicate_keys: []
+    gaussian:
+      description: Gaussian wavefunction
+      case_key: gaussian
+      input_section: flow_gaussian
+      parameters: {}
+      duplicate_keys: []
+    restart_slf:
+      description: Continue from an SLF checkpoint
+      case_key: restart_slf
+      input_section: flow_restart
+      parameters: {}
+      duplicate_keys: []
+
+solver:
+  enabled:
+    - gpe_pseudospectral
+  types:
+    gpe_pseudospectral:
+      description: Split-operator pseudo-spectral GP3D solver
+      compatible_physics: [GPE]
+      compatible_flow:
+        - quantum_taylor_green
+        - vortex_tangle
+        - ring_tangle
+        - uniform_vortex
+        - vortex_ring
+        - gaussian
+        - restart_slf
+
+solver_catalog:
+  gp3d:
+    physics_model: GPE
+    library_subpath: GPE/gp3d
+    manifest: solver_manifest.yaml
+
+paths:
+  cases: cases
+  generated_run_environments: generated
+  default_machine: config/machine.local.yaml
+
+grid:
+  parameters:
+    nx: {default: 64}
+    ny: {default: 64}
+    nz: {default: 64}
+    x_min: {default: -3.141592653589793}
+    x_max: {default: 3.141592653589793}
+    y_min: {default: -3.141592653589793}
+    y_max: {default: 3.141592653589793}
+    z_min: {default: -3.141592653589793}
+    z_max: {default: 3.141592653589793}
+  duplicate_keys: [nx, ny, nz]
+
+time:
+  parameters:
+    cfl: {default: 0.5}
+    dt: {default: 0.000625}
+    t_max: {default: 0.625}
+    nsteps: {default: 1000}
+    output_frequency: {default: 100}
+
+numerics:
+  parameters:
+    spatial_method: {default: pseudospectral}
+    time_integration: {default: split_operator_strang}
+  duplicate_keys: [spatial_method, time_integration]
+
+storage:
+  parameters:
+    raw_data_location: {default: /mnt/data_nas/GP3DResearch/case0001}
+    output_location: {default: output}
+    restart_location: {default: restart}
+
+case_defaults:
+  flow:
+    type: quantum_taylor_green
+  solver:
+    type: gpe_pseudospectral
+    implementation: gp3d
+    profile: cpu_serial_dft
+    processes: 1
+    cuda_device: 0
+    use_openmp: false
+    omp_threads: 1
+  output:
+    directory: output
+    format: slf
+    write_initial: true
+    write_meta: true
+    timing_enabled: true
+  restart:
+    file:
+  execution:
+    run: true
+
+case_index:
+  columns:
+    case: [case_id, case_label, status, description]
+    model: [physics_model, flow_type, solver_type]
+    physics:
+      GPE: [alpha, beta, g, mu, healing_length, random_seed]
+    flow:
+      quantum_taylor_green: []
+      vortex_tangle: []
+      ring_tangle: []
+      uniform_vortex: []
+      vortex_ring: []
+      gaussian: []
+      restart_slf: []
+    grid: [nx, ny, nz]
+    numerics: [spatial_method, time_integration]
+    storage: [raw_data_location]
+    metadata: [used_in, created_at, updated_at, git_commit_hash, notes]
+  column_paths:
+    solver_type: solver.profile
+  duplicate_check:
+    common: [physics_model, flow_type, solver_type, nx, ny, nz]
+    use_physics_duplicate_keys: true
+    use_flow_duplicate_keys: true
+  options:
+    auto_create_case_index: true
+    auto_add_missing_columns: true
+    keep_unknown_existing_columns: true
+
+templates:
+  generate:
+    - case_schema.yaml
+    - case_index_schema.yaml
+    - input_schema.yaml
+    - meta_schema.yaml
+    - readme_schema.yaml
+  output_directory: templates
+
+machine_defaults:
+  machine_id: windows_local
+  paths:
+    solver_library_root: ../../../SolverLibrary
+    repo_root: .
+    data_root: C:/ResearchData/GP3DResearch
+    scratch_root: C:/ResearchScratch/GP3DResearch
+  compiler:
+    fortran: gfortran
+    mpi_fortran: mpif90
+    cuda_fortran: nvfortran
+  cmake:
+    command: cmake
+    generator: Ninja
+    build_type: Release
+    fortran_compiler: gfortran
+    configure_fresh: true
+  tools:
+    ctest: ctest
+    mpi_launcher: mpiexec
+  libraries:
+    fftw_root:
+    mpi_root:
+    cuda_compiler:
+    cuda_toolkit_root:
+    cuda_architectures:
+    cufftmp_root:
+    nvshmem_root:
+    cufftmp_api: auto
+    nvshmem_symmetric_size: 8G
+  scheduler:
+    type: local
+
+scaffold:
+  copy_files:
+    ../SetupCase/yaml_support.py: scripts/yaml_support.py
+    ../SetupCase/case_registry.py: scripts/case_registry.py
+    ../SetupCase/gp3d_case.py: scripts/gp3d_case.py
+    ../SetupCase/create_case_from_schema.py: scripts/create_case.py
+    ../SetupCase/generate_gp3d_case_docs.py: scripts/generate_case_docs.py
+    ../SetupCase/run_env_builder.py: scripts/run_env_builder.py
+
+git:
+  require_clean_commit_before_run: false
+  record_commit_hash: true
+  warn_if_dirty: true

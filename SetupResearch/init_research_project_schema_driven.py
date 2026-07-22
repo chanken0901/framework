@@ -38,19 +38,22 @@ STEP1: project_schema.yaml を Single Source of Truth として読み込み，
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import json
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
 try:
     import yaml  # type: ignore
-except ImportError as exc:  # pragma: no cover
-    raise SystemExit(
-        "PyYAML が必要です。次を実行してください: python -m pip install pyyaml"
-    ) from exc
+except ImportError:  # pragma: no cover - exercised on minimal Python installations
+    yaml = None
+    setup_case_dir = Path(__file__).resolve().parents[1] / "SetupCase"
+    sys.path.insert(0, str(setup_case_dir))
+    from yaml_support import dump_yaml, load_yaml
 
 
 # -----------------------------------------------------------------------------
@@ -59,8 +62,11 @@ except ImportError as exc:  # pragma: no cover
 
 
 def read_yaml(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+    if yaml is None:
+        data = load_yaml(path)
+    else:
+        with path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
     if not isinstance(data, dict):
         raise ValueError(f"Schema root must be a mapping: {path}")
     return data
@@ -77,8 +83,11 @@ def write_yaml_if_needed(path: Path, data: dict[str, Any], overwrite: bool = Fal
     if path.exists() and not overwrite:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+    if yaml is None:
+        path.write_text(dump_yaml(data), encoding="utf-8")
+    else:
+        with path.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
 
 
 def flatten_directory_groups(directories: dict[str, Any]) -> list[str]:
@@ -129,6 +138,17 @@ def unique(seq: Iterable[str]) -> list[str]:
             seen.add(x)
             out.append(x)
     return out
+
+
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Return a recursive mapping merge without mutating either input."""
+    result = copy.deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
 
 
 # -----------------------------------------------------------------------------
@@ -346,7 +366,7 @@ def build_case_schema(schema: dict[str, Any]) -> dict[str, Any]:
         case_key = spec.get("case_key", name.lower())
         flow_block[case_key] = parameter_defaults(spec.get("parameters", {}) or {}, output_key=False)
 
-    return {
+    generated = {
         "case_id": "case0001",
         "case_label": project.get("default_case_label", "baseline"),
         "status": "planned",
@@ -365,6 +385,47 @@ def build_case_schema(schema: dict[str, Any]) -> dict[str, Any]:
         "outputs": {"used_in": []},
         "notes": "",
     }
+    case_defaults = schema.get("case_defaults", {}) or {}
+    if not isinstance(case_defaults, dict):
+        raise ValueError("case_defaults must be a mapping")
+    return deep_merge(generated, case_defaults)
+
+
+def build_case_index_column_paths(schema: dict[str, Any]) -> dict[str, str]:
+    paths = {
+        "case_id": "case_id",
+        "case_label": "case_label",
+        "status": "status",
+        "description": "description",
+        "physics_model": "physics.model",
+        "flow_type": "flow.type",
+        "solver_type": "solver.type",
+        "raw_data_location": "storage.raw_data_location",
+        "used_in": "outputs.used_in",
+    }
+
+    for name, spec in enabled_items(schema, "physics", "models").items():
+        case_key = str(spec.get("case_key", name.lower()))
+        for key, parameter in (spec.get("parameters", {}) or {}).items():
+            output_key = str((parameter or {}).get("output_key", key))
+            paths[output_key] = f"physics.{case_key}.{key}"
+
+    for name, spec in enabled_items(schema, "flow", "types").items():
+        case_key = str(spec.get("case_key", name.lower()))
+        for key, parameter in (spec.get("parameters", {}) or {}).items():
+            output_key = str((parameter or {}).get("output_key", key))
+            paths[output_key] = f"flow.{case_key}.{key}"
+
+    for section in ("grid", "time", "numerics", "storage"):
+        for key, parameter in (schema.get(section, {}).get("parameters", {}) or {}).items():
+            output_key = str((parameter or {}).get("output_key", key))
+            paths[output_key] = f"{section}.{key}"
+
+    explicit = schema.get("case_index", {}).get("column_paths", {}) or {}
+    if not isinstance(explicit, dict):
+        raise ValueError("case_index.column_paths must be a mapping")
+    paths.update({str(key): str(value) for key, value in explicit.items()})
+    return paths
 
 
 def build_case_index_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -383,6 +444,7 @@ def build_case_index_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "columns": build_case_index_columns(schema),
+        "column_paths": build_case_index_column_paths(schema),
         "duplicate_check_keys": unique(str(k) for k in duplicate_keys),
         "options": schema.get("case_index", {}).get("options", {}) or {},
     }
@@ -503,7 +565,7 @@ def create_config(root: Path, schema: dict[str, Any], overwrite: bool) -> None:
     project_name = (schema.get("project", {}) or {}).get("name", "ResearchProject")
     storage_defaults = parameter_defaults(schema.get("storage", {}).get("parameters", {}) or {})
 
-    machine = {
+    legacy_machine = {
         "machine_name": "local_linux_server",
         "paths": {
             "repo_root": f"/mnt/repo_nas/Kento/ResearchRepo/{project_name}",
@@ -519,9 +581,46 @@ def create_config(root: Path, schema: dict[str, Any], overwrite: bool) -> None:
         "scheduler": {"type": "slurm"},
     }
 
+    machine_defaults = schema.get("machine_defaults", {}) or {}
+    if not isinstance(machine_defaults, dict):
+        raise ValueError("machine_defaults must be a mapping")
+    machine = deep_merge(legacy_machine, machine_defaults)
+    default_machine = str(
+        (schema.get("paths", {}) or {}).get("default_machine", "config/machine.yaml")
+    )
+
     write_yaml_if_needed(root / "config" / "machine.yaml", machine, overwrite)
+    write_yaml_if_needed(root / default_machine, machine, overwrite)
     write_yaml_if_needed(root / "config" / "compiler.yaml", {"compiler": machine["compiler"]}, overwrite)
     write_yaml_if_needed(root / "config" / "paths.yaml", {"paths": machine["paths"]}, overwrite)
+
+
+def copy_scaffold_files(
+    root: Path, schema_path: Path, schema: dict[str, Any], overwrite: bool
+) -> list[str]:
+    """Copy schema-declared tools and templates into a generated project."""
+    mapping = (schema.get("scaffold", {}) or {}).get("copy_files", {}) or {}
+    if not isinstance(mapping, dict):
+        raise ValueError("scaffold.copy_files must be a source-to-destination mapping")
+
+    copied: list[str] = []
+    root_resolved = root.resolve()
+    for source_text, destination_text in mapping.items():
+        source = (schema_path.parent / str(source_text)).resolve()
+        destination = (root / str(destination_text)).resolve()
+        try:
+            destination.relative_to(root_resolved)
+        except ValueError as exc:
+            raise ValueError(f"scaffold destination escapes project root: {destination_text}") from exc
+        if not source.is_file():
+            raise FileNotFoundError(f"scaffold source not found: {source}")
+        if destination.exists() and not overwrite:
+            copied.append(destination.relative_to(root_resolved).as_posix())
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        copied.append(destination.relative_to(root_resolved).as_posix())
+    return copied
 
 
 def copy_schema(root: Path, schema_path: Path, overwrite: bool) -> None:
@@ -552,6 +651,7 @@ def init_project(root: Path, schema_path: Path, overwrite: bool = False) -> None
     create_case_index(root, schema, overwrite)
     create_templates(root, schema, overwrite)
     create_config(root, schema, overwrite)
+    scaffold_files = copy_scaffold_files(root, schema_path, schema, overwrite)
 
     stamp = root / "docs" / "project_initialized.txt"
     if overwrite or not stamp.exists():
@@ -582,7 +682,7 @@ def init_project(root: Path, schema_path: Path, overwrite: bool = False) -> None
             "config/compiler.yaml",
             "config/paths.yaml",
             "docs/project_initialized.txt",
-        ],
+        ] + scaffold_files,
     }
     write_text_if_needed(
         root / "docs" / "generated_manifest.json",
