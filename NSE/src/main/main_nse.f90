@@ -52,7 +52,7 @@ program main
   sim%t = 0.0_dp; sim%step = 0; sim%ttotal = 0.0_dp
 
   !$OMP parallel default(none)         &
-  !$OMP & shared(Q,Q0,QL,QR,Qw,RHS,F,  &
+  !$OMP & shared(Q,Q0,Qw,RHS,F,        &
   !$OMP &        ks,ke,js,je,          &
   !$OMP &        my_rank,              &
   !$OMP &        sim,nse               )
