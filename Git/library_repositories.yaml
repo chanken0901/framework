@@ -2,7 +2,7 @@
 # remote_urlが空の場合は、各リポジトリに設定済みのoriginを使用する。
 schema_version: 1
 
-framework_root: //Mozart/share/研究フレームワーク構築
+framework_root: //Mozart/share/FrameWork
 
 settings:
   git_command: git
@@ -22,7 +22,7 @@ repositories:
 
   SolverLibrary:
     enabled: true
-    path: "{framework_root}/研究スタートマニュアル/SolverLibrary"
+    path: "{framework_root}/SolverLibrary"
     branch: main
     remote: origin
-    remote_url:
+    remote_url: https://github.com/chanken0901/SolverLibrary.git

@@ -243,6 +243,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--description", default="")
     parser.add_argument("--project-name", default=None)
     parser.add_argument("--data-root", default="/mnt/data_nas")
+    parser.add_argument("--model", default="nse")
+    parser.add_argument("--solver-profile", default="cpu_mpi")
+    parser.add_argument("--processes", type=int, default=1)
+    parser.add_argument("--omp-threads", type=int, default=1)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
 
@@ -276,6 +280,10 @@ def main() -> int:
         "project_name": project_name,
         "raw_data_location": raw_data_location,
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "physics_model": args.model,
+        "solver_profile": args.solver_profile,
+        "processes": str(args.processes),
+        "omp_threads": str(args.omp_threads),
     }
 
     template_text = template_path.read_text(encoding="utf-8")
@@ -322,8 +330,7 @@ def main() -> int:
     print("")
     print("Next steps:")
     print(f"  1. Edit {case_yaml_path}")
-    print("  2. Generate input.dat from case.yaml")
-    print(f"     python scripts/generate_case_docs_tool.py --case {case_dir} --overwrite")
+    print("  2. Generate the model-specific solver input from case.yaml")
 
     return 0
 

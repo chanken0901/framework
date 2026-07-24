@@ -1,0 +1,90 @@
+case_id: {{case_id}}
+case_label: {{case_label}}
+status: planned
+description: {{description}}
+created_at: {{created_at}}
+
+project:
+  name: {{project_name}}
+  author: Kento Tanaka
+
+physics:
+  model: {{physics_model}}
+  gpe:
+    use_dimensionless_parameters: true
+    alpha: 0.05
+    beta: 40.0
+    g: 1.0
+    sigma0: 1.0
+    wx: 0.0
+    wy: 0.0
+    wz: 0.0
+    hbar: 1.0
+    mass: 1.0
+    norm: 248.05021344239853
+    imaginary_time: false
+    mu: 8.0
+    healing_length: 0.25
+    phase_noise: 0.0
+    random_seed: 12345
+    tg_velocity_amplitude: 1.0
+    tg_winding: 1
+    tg_auto_winding: true
+    argle_enabled: true
+    argle_write_seed: true
+    argle_steps: 200
+    argle_output_every: 20
+    argle_dtau: 0.001
+    argle_tolerance: 1.0e-8
+
+flow:
+  type: quantum_taylor_green
+
+grid:
+  nx: 64
+  ny: 64
+  nz: 64
+  nghost: 0
+  x_min: -3.141592653589793
+  x_max: 3.141592653589793
+  y_min: -3.141592653589793
+  y_max: 3.141592653589793
+  z_min: -3.141592653589793
+  z_max: 3.141592653589793
+
+time:
+  cfl: 0.0
+  dt: 1.0e-4
+  t_max: 0.1
+  nsteps: 1000
+  output_frequency: 100
+  use_fixed_dt: true
+
+solver:
+  type: gpe_pseudospectral
+  profile: {{solver_profile}}
+  processes: {{processes}}
+  use_openmp: false
+  omp_threads: {{omp_threads}}
+  cuda_device: 0
+
+numerics:
+  spatial_method: pseudospectral
+  time_integration: split_operator_strang
+
+output:
+  directory: output
+  format: slf
+  precision: float64
+  write_initial: true
+  write_meta: true
+  timing_enabled: true
+
+restart:
+  file:
+
+storage:
+  raw_data_location: {{raw_data_location}}
+
+outputs:
+  used_in:

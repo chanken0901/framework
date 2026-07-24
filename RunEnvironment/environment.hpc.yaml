@@ -1,0 +1,58 @@
+schema_version: 1
+environment_id: gpe_hpc_example
+
+# スパコンから参照できるマウント先、または事前に同期したローカルミラー。
+source:
+  framework_root: /mnt/framework/研究フレームワーク構築
+  model_catalog: ScriptLibrary/BuildSolver/model_catalog.yaml
+
+destination:
+  root: ${SCRATCH}/gpe_case0001
+
+model:
+  name: gpe
+  profile: cpu_mpi_fftw
+  include_tests: false
+
+target:
+  type: hpc_slurm
+  machine_profile: ScriptLibrary/RunEnvironment/machine_profiles/linux_hpc_slurm.yaml
+
+case:
+  create: true
+  template: ScriptLibrary/RunEnvironment/case_templates/gpe_quantum_taylor_green.yaml
+  id: case0001
+  label: qtgv_hpc
+  description: Quantum Taylor-Green production run
+  project_name: GPEResearch
+  data_root: results
+
+execution:
+  configuration: Release
+  processes: 8
+  omp_threads: 1
+  parallel_jobs: 8
+
+scheduler:
+  enabled: true
+  job_name: gpe-case0001
+  account:
+  partition:
+  nodes: 1
+  tasks_per_node: 8
+  cpus_per_task: 1
+  gpus_per_node:
+  time_limit: 01:00:00
+  output: slurm-%j.out
+  modules:
+    - gcc
+    - openmpi
+    - fftw
+  extra_directives: []
+  test: false
+
+# NASをスパコンからマウントできない場合は、ワークステーションでgztarを作成して転送する。
+archive:
+  enabled: false
+  format: gztar
+  output:

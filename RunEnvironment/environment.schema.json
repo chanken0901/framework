@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "External solver execution environment design",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "environment_id",
+    "source",
+    "destination",
+    "model",
+    "target",
+    "case",
+    "execution"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "environment_id": {"type": "string", "minLength": 1},
+    "source": {
+      "type": "object",
+      "required": ["framework_root"],
+      "properties": {
+        "framework_root": {"type": "string", "minLength": 1},
+        "model_catalog": {"type": "string"}
+      }
+    },
+    "destination": {
+      "type": "object",
+      "required": ["root"],
+      "properties": {"root": {"type": "string", "minLength": 1}}
+    },
+    "model": {
+      "type": "object",
+      "required": ["name", "profile"],
+      "properties": {
+        "name": {"enum": ["nse", "gpe"]},
+        "profile": {"type": "string", "minLength": 1},
+        "include_tests": {"type": "boolean"}
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": ["type", "machine_profile"],
+      "properties": {
+        "type": {"enum": ["workstation", "hpc_slurm"]},
+        "machine_profile": {"type": "string", "minLength": 1}
+      }
+    },
+    "case": {
+      "type": "object",
+      "required": ["create"],
+      "properties": {
+        "create": {"type": "boolean"},
+        "template": {"type": "string"},
+        "source": {"type": "string"},
+        "id": {"type": ["string", "null"]},
+        "label": {"type": "string"},
+        "description": {"type": "string"},
+        "project_name": {"type": "string"},
+        "data_root": {"type": "string"}
+      }
+    },
+    "execution": {
+      "type": "object",
+      "required": ["configuration", "processes", "omp_threads", "parallel_jobs"],
+      "properties": {
+        "configuration": {"enum": ["Debug", "Release", "RelWithDebInfo"]},
+        "processes": {"type": "integer", "minimum": 1},
+        "omp_threads": {"type": "integer", "minimum": 1},
+        "parallel_jobs": {"type": "integer", "minimum": 1}
+      }
+    },
+    "scheduler": {"type": "object"},
+    "archive": {"type": "object"}
+  }
+}
