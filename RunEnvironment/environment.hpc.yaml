@@ -3,7 +3,7 @@ environment_id: gpe_hpc_example
 
 # スパコンから参照できるマウント先、または事前に同期したローカルミラー。
 source:
-  framework_root: /mnt/framework/研究フレームワーク構築
+  framework_root: /mnt/framework/FrameWork
   model_catalog: ScriptLibrary/BuildSolver/model_catalog.yaml
 
 destination:
