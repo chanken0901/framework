@@ -1,0 +1,30 @@
+schema_version: 1
+catalog_id: laboratory_local
+description: Example choices maintained by a laboratory or computing site
+allow_override: false
+
+options:
+  source:
+    laboratory_nas:
+      label: Laboratory NAS
+      description: Example canonical framework location.
+      values:
+        framework_root: \\server\share\研究フレームワーク構築
+        model_catalog: ScriptLibrary/BuildSolver/model_catalog.yaml
+
+  destination:
+    workstation_ssd:
+      label: Workstation local SSD
+      description: Example fast local workspace.
+      values:
+        root: D:/ResearchRuns/gpe_case0001
+
+  execution:
+    mpi16_release:
+      label: Release sixteen MPI processes
+      description: Example larger workstation or cluster allocation.
+      values:
+        configuration: Release
+        processes: 16
+        omp_threads: 1
+        parallel_jobs: 16

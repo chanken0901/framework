@@ -1,6 +1,7 @@
 # ライブラリGit運用
 
-NAS上の`ScriptLibrary`と`SolverLibrary`を、それぞれ独立して安全に操作します。
+ローカルFrameWork上の`ScriptLibrary`と`SolverLibrary`を、それぞれ独立して
+安全に操作します。NASはGit操作後に同期するミラーであり、Gitの作業場所にはしません。
 設定形式と安全検査だけを`manage_library_repositories.py`で共有します。
 
 - `manage_scriptlibrary.py`: ScriptLibrary専用
@@ -8,7 +9,14 @@ NAS上の`ScriptLibrary`と`SolverLibrary`を、それぞれ独立して安全�
 
 ## 設定
 
-`library_repositories.yaml`のパスを実際の配置に合わせます。各リポジトリに
+`library_repositories.yaml`の`framework_root`をローカルFrameWorkの配置に合わせます。
+現在の標準値は次です。
+
+```yaml
+framework_root: C:/Users/Owner/Documents/Codex/FrameWork
+```
+
+各リポジトリに
 `origin`が設定済みなら`remote_url`は空で構いません。未設定の場合はGitHubのURLを指定します。
 
 ```yaml
@@ -43,7 +51,7 @@ python .\manage_solverlibrary.py connect
 python .\manage_solverlibrary.py connect --apply
 ```
 
-GitHub側に既存ファイルとコミットがあり、NAS側が`not a Git repository`の場合は、
+GitHub側に既存ファイルとコミットがあり、ローカル側が`not a Git repository`の場合は、
 `connect`ではなく`adopt`を使用します。
 
 ```powershell
@@ -51,8 +59,9 @@ python .\manage_scriptlibrary.py adopt
 python .\manage_scriptlibrary.py adopt --apply
 ```
 
-`adopt`はGitHubの履歴をNAS側へ関連付けます。既存NASファイルのSHA-256を前後で検証し、
-同名ファイルは上書きしません。GitHubにだけ存在するファイルはNAS側へ補完します。
+`adopt`はGitHubの履歴をローカル側へ関連付けます。既存ローカルファイルのSHA-256を
+前後で検証し、同名ファイルは上書きしません。GitHubにだけ存在するファイルは
+ローカル側へ補完します。
 処理後の差分はコミットせず、`status`で確認できる状態にします。
 
 DryRunで表示されたURLが既存の`origin`と異なる場合は自動変更しません。内容を確認後、
@@ -90,9 +99,10 @@ python .\manage_solverlibrary.py snapshot --message "GPEモジュールを更新
 - 既定で50 MiBを超える変更ファイルのコミットを拒否
 - 一方が失敗しても他方の結果を表示し、最後に失敗件数を返す
 
-NAS上の同じリポジトリを複数端末から同時に更新しないでください。作業前に`sync --apply`、
-作業後に`snapshot --apply`を行う運用を推奨します。
+複数端末で作業する場合は、各端末にローカルFrameWorkを置き、GitHubを介して同期します。
+作業前に`sync --apply`、作業後に`snapshot --apply`を行い、未コミット変更を残したまま
+NAS同期を実行しないでください。
 
-GitHub側に既存コミットがあるのにNAS側に`.git`履歴がない場合、`connect`後のsnapshotは
-停止します。この場合は既存GitHubリポジトリを別フォルダへcloneし、現在のNASファイルとの
+GitHub側に既存コミットがあるのにローカル側に`.git`履歴がない場合、`connect`後のsnapshotは
+停止します。この場合は既存GitHubリポジトリを別フォルダへcloneし、現在のローカルファイルとの
 差分を確認してからclone側へ変更を移してください。別履歴をforce pushしてはいけません。

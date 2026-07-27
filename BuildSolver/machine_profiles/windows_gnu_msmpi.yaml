@@ -37,10 +37,10 @@ openmp:
   enabled: true
 
 libraries:
-  fftw_root:
+  fftw_root: C:/msys64/ucrt64
   cuda_compiler:
   cuda_toolkit_root:
-  cuda_architectures:
+  cuda_architectures: 86
   cufftmp_root:
   nvshmem_root:
   cufftmp_api: auto

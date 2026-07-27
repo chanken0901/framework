@@ -17,6 +17,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -707,21 +708,48 @@ def _with_visual_studio(environment: dict[str, str], cwd: Path) -> dict[str, str
     if not vcvars.is_file():
         raise ModelBuildError(f"vcvars64.bat was not found: {vcvars}")
     comspec = environment.get("ComSpec") or os.environ.get("ComSpec") or "cmd.exe"
-    loaded = subprocess.run(
-        [comspec, "/d", "/s", "/c", f'call "{vcvars}" >nul && set'],
-        cwd=str(cwd),
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+    marker = "__BUILD_MODEL_VISUAL_STUDIO_ENV__"
+    with tempfile.NamedTemporaryFile(
+        mode="w",
         encoding="mbcs",
-        errors="replace",
-        check=False,
-    )
+        suffix=".cmd",
+        prefix="load-vs-env-",
+        dir=cwd,
+        delete=False,
+    ) as command_file:
+        command_file.write("@echo off\n")
+        command_file.write(f'call "{vcvars}"\n')
+        command_file.write("if errorlevel 1 exit /b %errorlevel%\n")
+        command_file.write(f"echo {marker}\n")
+        command_file.write("set\n")
+        command_path = Path(command_file.name)
+    try:
+        loaded = subprocess.run(
+            [comspec, "/d", "/s", "/c", command_path.name],
+            cwd=str(cwd),
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="mbcs",
+            errors="replace",
+            check=False,
+        )
+    finally:
+        command_path.unlink(missing_ok=True)
     if loaded.returncode != 0:
-        raise ModelBuildError("failed to initialize the Visual Studio x64 environment")
+        details = (loaded.stderr.strip() or loaded.stdout.strip())[-2000:]
+        suffix = f":\n{details}" if details else ""
+        raise ModelBuildError(
+            f"failed to initialize the Visual Studio x64 environment{suffix}"
+        )
+    if marker not in loaded.stdout:
+        raise ModelBuildError(
+            "Visual Studio environment initialized without returning environment variables"
+        )
     result = environment.copy()
-    for line in loaded.stdout.splitlines():
+    environment_text = loaded.stdout.split(marker, 1)[1]
+    for line in environment_text.splitlines():
         if "=" in line:
             name, value = line.split("=", 1)
             result[name] = value
@@ -904,10 +932,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--list-models", action="store_true")
     parser.add_argument("--list-profiles", action="store_true")
     parser.add_argument("--generate-only", action="store_true")
-    parser.add_argument("--configure", action="store_true")
-    parser.add_argument("--build", action="store_true")
-    parser.add_argument("--test", action="store_true")
-    parser.add_argument("--run", action="store_true")
+    parser.add_argument("--configure", action="store_true", help="Configure CMake only")
+    parser.add_argument("--build", action="store_true", help="Configure and build only")
+    parser.add_argument("--test", action="store_true", help="Build and run tests")
+    parser.add_argument(
+        "--run",
+        action="store_true",
+        help="Run an existing executable without configuring or building",
+    )
     parser.add_argument("--all", action="store_true", help="Configure, build, test, and run")
     parser.add_argument("--clean-first", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -960,6 +992,12 @@ def main(argv: list[str] | None = None) -> int:
             do_build = True
             run = _mapping(resolved.design.get("run", {}), "build design.run")
             do_run = bool(run.get("enabled", False))
+
+        run_only = do_run and not any([do_configure, do_build, do_test])
+        if run_only:
+            environment = _base_environment(resolved, args)
+            _run_solver(args, resolved, environment)
+            return 0
 
         build = _mapping(resolved.design["build"], "build design.build")
         fresh = bool(build.get("configure_fresh", True)) if args.fresh is None else args.fresh

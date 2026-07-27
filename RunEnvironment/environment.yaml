@@ -1,43 +1,24 @@
 schema_version: 1
 environment_id: gpe_workstation_example
 
-# NAS上の研究フレームワーク正本。環境変数や絶対パスでも指定できる。
-source:
-  framework_root: \\Mozart\share\FrameWork
-  model_catalog: ScriptLibrary/BuildSolver/model_catalog.yaml
+# 標準候補はenvironment_options.yamlから読み込まれる。
+# 研究室や計算機固有の候補を追加するときは、ここへ別カタログのパスを追加する。
+option_catalogs: []
 
-# ビルド、実行、出力を行うNAS外の作業領域。
-destination:
-  root: ${USERPROFILE}/ResearchRuns/gpe_case0001
+select:
+  source: local_framework
+  destination: windows_research_runs
+  model: gpe_cpu_mpi_fftw
+  target: windows_gnu_msmpi
+  case: gpe_quantum_taylor_green
+  execution: mpi8_release
+  scheduler: disabled
+  archive: none
 
-model:
-  name: gpe
-  profile: cpu_mpi_dft
-  include_tests: false
-
-target:
-  type: workstation
-  machine_profile: ScriptLibrary/BuildSolver/machine_profiles/windows_gnu_msmpi.yaml
-
+# 選択肢の値を変更したい部分だけを同名セクションに記述する。
+# ここではcaseの識別情報だけを上書きしている。
 case:
-  create: true
-  template: ScriptLibrary/RunEnvironment/case_templates/gpe_quantum_taylor_green.yaml
   id: case0001
   label: qtgv_baseline
   description: Quantum Taylor-Green baseline
   project_name: GPEResearch
-  data_root: results
-
-execution:
-  configuration: Release
-  processes: 4
-  omp_threads: 1
-  parallel_jobs: 8
-
-scheduler:
-  enabled: false
-
-archive:
-  enabled: false
-  format: zip
-  output:

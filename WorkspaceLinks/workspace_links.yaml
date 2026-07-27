@@ -1,0 +1,21 @@
+# 設計環境を実行環境のルートへ統合し、ライブラリ元へのリンクを作る設計書です。
+schema_version: 1
+
+# 生成済みcase、設計書、FrameWorkへのリンクをこの下にまとめます。
+execution_root: ${USERPROFILE}/ResearchRuns
+
+# Windowsではjunction、Linux/macOSではsymlinkを自動選択します。
+link_type: auto
+
+design_environment:
+  # 既存の設計書がある場合は、内容をintegrated_pathへ移動します。
+  legacy_path: C:/ResearchDesigns
+  integrated_path: ${USERPROFILE}/ResearchRuns/Designs
+
+  # 既存コマンドを壊さないため、移動後のlegacy_pathを互換リンクにします。
+  keep_legacy_link: true
+
+links:
+  framework:
+    name: FrameWork
+    target: ${USERPROFILE}/Documents/Codex/FrameWork

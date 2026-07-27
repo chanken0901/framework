@@ -2,22 +2,41 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "External solver execution environment design",
   "type": "object",
+  "allOf": [
+    {"anyOf": [{"required": ["source"]}, {"required": ["select"], "properties": {"select": {"required": ["source"]}}}]},
+    {"anyOf": [{"required": ["destination"]}, {"required": ["select"], "properties": {"select": {"required": ["destination"]}}}]},
+    {"anyOf": [{"required": ["model"]}, {"required": ["select"], "properties": {"select": {"required": ["model"]}}}]},
+    {"anyOf": [{"required": ["target"]}, {"required": ["select"], "properties": {"select": {"required": ["target"]}}}]},
+    {"anyOf": [{"required": ["case"]}, {"required": ["select"], "properties": {"select": {"required": ["case"]}}}]},
+    {"anyOf": [{"required": ["execution"]}, {"required": ["select"], "properties": {"select": {"required": ["execution"]}}}]}
+  ],
   "required": [
     "schema_version",
-    "environment_id",
-    "source",
-    "destination",
-    "model",
-    "target",
-    "case",
-    "execution"
+    "environment_id"
   ],
   "properties": {
     "schema_version": {"const": 1},
     "environment_id": {"type": "string", "minLength": 1},
+    "option_catalogs": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "select": {
+      "type": "object",
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "destination": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "target": {"type": "string", "minLength": 1},
+        "case": {"type": "string", "minLength": 1},
+        "execution": {"type": "string", "minLength": 1},
+        "scheduler": {"type": "string", "minLength": 1},
+        "archive": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "source": {
       "type": "object",
-      "required": ["framework_root"],
       "properties": {
         "framework_root": {"type": "string", "minLength": 1},
         "model_catalog": {"type": "string"}
@@ -25,29 +44,31 @@
     },
     "destination": {
       "type": "object",
-      "required": ["root"],
-      "properties": {"root": {"type": "string", "minLength": 1}}
+      "properties": {
+        "root": {"type": "string", "minLength": 1},
+        "case_index": {"type": "string", "minLength": 1},
+        "auto_case_number": {"type": "boolean"},
+        "case_number_width": {"type": "integer", "minimum": 1},
+        "case_number_start": {"type": "integer", "minimum": 1}
+      }
     },
     "model": {
       "type": "object",
-      "required": ["name", "profile"],
       "properties": {
-        "name": {"enum": ["nse", "gpe"]},
+        "name": {"type": "string", "minLength": 1},
         "profile": {"type": "string", "minLength": 1},
         "include_tests": {"type": "boolean"}
       }
     },
     "target": {
       "type": "object",
-      "required": ["type", "machine_profile"],
       "properties": {
-        "type": {"enum": ["workstation", "hpc_slurm"]},
+        "type": {"type": "string", "minLength": 1},
         "machine_profile": {"type": "string", "minLength": 1}
       }
     },
     "case": {
       "type": "object",
-      "required": ["create"],
       "properties": {
         "create": {"type": "boolean"},
         "template": {"type": "string"},
@@ -61,7 +82,6 @@
     },
     "execution": {
       "type": "object",
-      "required": ["configuration", "processes", "omp_threads", "parallel_jobs"],
       "properties": {
         "configuration": {"enum": ["Debug", "Release", "RelWithDebInfo"]},
         "processes": {"type": "integer", "minimum": 1},

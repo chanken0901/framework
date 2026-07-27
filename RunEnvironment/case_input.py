@@ -141,6 +141,31 @@ def _profile_settings(
     return profile, use_mpi, use_openmp, backend
 
 
+def _validate_solver_selection(
+    case: dict[str, Any], manifest: dict[str, Any], profile_name: str
+) -> None:
+    configured_profile = nested(case, "solver.profile")
+    if configured_profile not in {None, ""} and str(configured_profile) != profile_name:
+        raise CaseInputError(
+            f"case solver.profile {configured_profile!r} does not match requested "
+            f"profile {profile_name!r}; change the environment design and regenerate "
+            "the execution environment"
+        )
+
+    _, use_mpi, _, _ = _profile_settings(manifest, profile_name)
+    try:
+        processes = int(nested(case, "solver.processes", 1))
+    except (TypeError, ValueError) as exc:
+        raise CaseInputError("case solver.processes must be an integer") from exc
+    if processes < 1:
+        raise CaseInputError("case solver.processes must be positive")
+    if not use_mpi and processes != 1:
+        raise CaseInputError(
+            f"profile {profile_name!r} does not use MPI, so solver.processes "
+            "must be 1"
+        )
+
+
 def _common_values(
     case: dict[str, Any],
     equation: str,
@@ -250,6 +275,7 @@ def render_case_input(
         raise CaseInputError(
             f"case physics.model {actual_model!r} does not match selected model {model!r}"
         )
+    _validate_solver_selection(case, manifest, profile_name)
     input_cfg = _mapping(manifest.get("input"), "solver manifest.input")
     input_name = str(input_cfg.get("default_name") or "input.dat")
     if model.lower() == "nse":

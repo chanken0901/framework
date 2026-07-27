@@ -17,11 +17,22 @@ from pathlib import Path
 from typing import Any
 
 from case_input import CaseInputError, render_case_input
+from environment_options import (
+    OPTION_CATEGORIES,
+    OptionCatalogError,
+    catalog_as_json,
+    catalog_as_text,
+    load_option_catalogs,
+    resolve_design_options,
+    validate_design_selections,
+)
+from global_case_index import GlobalCaseIndexError, sync_environment_case
 from yaml_support import YamlFormatError, load_yaml
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_DESIGN = SCRIPT_DIR / "environment.yaml"
+DEFAULT_OPTION_CATALOG = SCRIPT_DIR / "environment_options.yaml"
 GENERATED_MARKER = ".generated_run_environment.json"
 FORTRAN_SUFFIXES = {".f90", ".f95", ".f03", ".f08"}
 MODULE_PATTERN = re.compile(
@@ -63,6 +74,64 @@ def _expand_path(value: str, base: Path, label: str) -> Path:
     if not path.is_absolute():
         path = base / path
     return path.resolve()
+
+
+def _numbered_case_destination(
+    root: Path,
+    model: str,
+    width: int = 4,
+    start: int = 1,
+) -> tuple[Path, str]:
+    if width < 1:
+        raise EnvironmentError("destination.case_number_width must be positive")
+    if start < 1:
+        raise EnvironmentError("destination.case_number_start must be positive")
+
+    model_name = re.sub(r"[^0-9A-Za-z_-]+", "_", model.strip().lower()).strip("_")
+    if not model_name:
+        raise EnvironmentError("model.name cannot form a case directory name")
+
+    number = start
+    while True:
+        case_id = f"case{number:0{width}d}"
+        output = root / f"{model_name}_{case_id}"
+        archive_candidates = (
+            Path(f"{output}.zip"),
+            Path(f"{output}.tar"),
+            Path(f"{output}.tar.gz"),
+            Path(f"{output}.tgz"),
+        )
+        if not output.exists() and not any(path.exists() for path in archive_candidates):
+            return output, case_id
+        number += 1
+
+
+def _global_case_index_path(
+    destination_cfg: dict[str, Any],
+    design_path: Path,
+    output: Path,
+) -> Path:
+    configured = destination_cfg.get("case_index")
+    if configured:
+        index_path = _expand_path(
+            str(configured), design_path.parent, "destination.case_index"
+        )
+    else:
+        index_path = output.parent / "case_index.csv"
+    try:
+        index_path.relative_to(output)
+    except ValueError:
+        return index_path
+    raise EnvironmentError(
+        "destination.case_index must be outside the generated execution environment"
+    )
+
+
+def _portable_path_reference(path: Path, root: Path) -> str:
+    try:
+        return os.path.relpath(path, root).replace("\\", "/")
+    except ValueError:
+        return str(path)
 
 
 def _safe_source(root: Path, relative: str, label: str) -> Path:
@@ -343,14 +412,10 @@ def _slurm_script(
     if modules:
         lines.append("module purge")
         lines.extend(f"module load {name}" for name in modules)
-    stage_arguments = ["--build"]
-    if include_tests and bool(scheduler.get("test", False)):
-        stage_arguments.append("--test")
-    stage_arguments.append("--run")
     lines.extend(
         [
             "",
-            "python3 tools/run_case.py " + " ".join(stage_arguments),
+            "python3 tools/run_case.py --run",
             "",
         ]
     )
@@ -366,10 +431,12 @@ the framework NAS.
 - Model: `{model}`
 - Solver profile: `{profile}`
 - Case: `{case_id}`
+- Shared case index: `../case_index.csv`
 
 ## Workstation
 
 ```powershell
+python .\\tools\\run_case.py --prepare
 python .\\tools\\run_case.py --validate-only
 python .\\tools\\run_case.py --build
 python .\\tools\\run_case.py --run
@@ -378,14 +445,18 @@ python .\\tools\\run_case.py --run
 ## Linux / HPC
 
 ```bash
+python3 tools/run_case.py --prepare
 python3 tools/run_case.py --validate-only
 python3 tools/run_case.py --build
 python3 tools/run_case.py --run
 ```
 
-When `submit.slurm` exists, submit it with `sbatch submit.slurm`. Calculation
-output is written below `cases/{case_id}/output` because the case directory is
-used as the run working directory.
+Build once before submitting production jobs. When `submit.slurm` exists, it
+runs the existing executable with `python3 tools/run_case.py --run`; submit it
+with `sbatch submit.slurm`. Calculation output is written below
+`cases/{case_id}/output` because the case directory is used as the run working
+directory. The shared index is outside this environment and is refreshed from
+`case.yaml` before prepare, validation, build, test, and run operations.
 """
 
 
@@ -429,7 +500,7 @@ def _create_case(
             "--cases-root",
             "cases",
             "--case-index",
-            "cases/case_index.csv",
+            ".case_index.build.csv",
             "--template",
             "templates/case_template.yaml",
             "--label",
@@ -454,6 +525,7 @@ def _create_case(
         result = subprocess.run(command, cwd=str(temporary), check=False)
         if result.returncode != 0:
             raise EnvironmentError("SetupCase/create_case_from_template.py failed")
+        (temporary / ".case_index.build.csv").unlink(missing_ok=True)
         case_id = _resolve_case_id(before, cases_root)
     else:
         source_text = str(case_cfg.get("source") or "")
@@ -510,12 +582,33 @@ def prepare(args: argparse.Namespace) -> Path:
     design_path = (
         Path(args.design).resolve() if args.design else DEFAULT_DESIGN.resolve()
     )
-    design = _mapping(load_yaml(design_path), "environment design")
-    if design.get("schema_version") != 1:
+    source_design = _mapping(load_yaml(design_path), "environment design")
+    if source_design.get("schema_version") != 1:
         raise EnvironmentError("environment design.schema_version must be 1")
+    design, option_state = resolve_design_options(
+        source_design, design_path, DEFAULT_OPTION_CATALOG
+    )
+
+    if args.framework_root:
+        _mapping(design.setdefault("source", {}), "source")[
+            "framework_root"
+        ] = args.framework_root
+    if args.output:
+        _mapping(design.setdefault("destination", {}), "destination")[
+            "root"
+        ] = args.output
+    if args.model:
+        _mapping(design.setdefault("model", {}), "model")[
+            "name"
+        ] = args.model
+    if args.profile:
+        _mapping(design.setdefault("model", {}), "model")[
+            "profile"
+        ] = args.profile
+    validate_design_selections(design, option_state)
 
     source_cfg = _mapping(design.get("source"), "source")
-    source_text = args.framework_root or source_cfg.get("framework_root")
+    source_text = source_cfg.get("framework_root")
     if not source_text:
         raise EnvironmentError("source.framework_root is required")
     framework_root = _expand_path(
@@ -525,8 +618,8 @@ def prepare(args: argparse.Namespace) -> Path:
         raise EnvironmentError(f"framework root not found: {framework_root}")
 
     model_cfg = _mapping(design.get("model"), "model")
-    model = str(args.model or model_cfg.get("name") or "").lower()
-    profile = str(args.profile or model_cfg.get("profile") or "")
+    model = str(model_cfg.get("name") or "").lower()
+    profile = str(model_cfg.get("profile") or "")
     include_tests = bool(model_cfg.get("include_tests", False))
     if not model or not profile:
         raise EnvironmentError("model.name and model.profile are required")
@@ -557,10 +650,30 @@ def prepare(args: argparse.Namespace) -> Path:
     dependencies = _inspect_dependencies(solver_root, manifest, selected_files)
 
     destination_cfg = _mapping(design.get("destination"), "destination")
-    destination_text = args.output or destination_cfg.get("root")
+    destination_text = destination_cfg.get("root")
     if not destination_text:
         raise EnvironmentError("destination.root is required")
-    output = _expand_path(str(destination_text), design_path.parent, "destination.root")
+    destination_root = _expand_path(
+        str(destination_text), design_path.parent, "destination.root"
+    )
+
+    case_cfg = _mapping(design.get("case"), "case")
+    auto_case_number = bool(destination_cfg.get("auto_case_number", False))
+    if args.output:
+        auto_case_number = False
+    if auto_case_number:
+        output, allocated_case_id = _numbered_case_destination(
+            destination_root,
+            model,
+            int(destination_cfg.get("case_number_width", 4)),
+            int(destination_cfg.get("case_number_start", 1)),
+        )
+        case_cfg["id"] = allocated_case_id
+    else:
+        output = destination_root
+    global_case_index = _global_case_index_path(
+        destination_cfg, design_path, output
+    )
 
     target_cfg = _mapping(design.get("target"), "target")
     machine_relative = str(target_cfg.get("machine_profile") or "")
@@ -569,7 +682,6 @@ def prepare(args: argparse.Namespace) -> Path:
     machine_path = _safe_source(
         framework_root, machine_relative, "target.machine_profile"
     )
-    case_cfg = _mapping(design.get("case"), "case")
     template_relative = str(case_cfg.get("template") or "")
     if bool(case_cfg.get("create", True)) and not template_relative:
         raise EnvironmentError("case.template is required when case.create is true")
@@ -583,8 +695,15 @@ def prepare(args: argparse.Namespace) -> Path:
 
     if args.dry_run:
         print("[DRY-RUN] Execution environment plan")
+        if option_state["selections"]:
+            selected_text = ", ".join(
+                f"{category}={record['id']}"
+                for category, record in option_state["selections"].items()
+            )
+            print(f"  selections:  {selected_text}")
         print(f"  source:      {framework_root}")
         print(f"  destination: {output}")
+        print(f"  case index:  {global_case_index}")
         print(f"  model:       {model}")
         print(f"  profile:     {profile}")
         print(f"  components:  {', '.join(components)}")
@@ -647,7 +766,12 @@ def prepare(args: argparse.Namespace) -> Path:
             framework_root,
             "case_tool",
         )
-        for name in ("run_case.py", "case_input.py", "yaml_support.py"):
+        for name in (
+            "run_case.py",
+            "case_input.py",
+            "global_case_index.py",
+            "yaml_support.py",
+        ):
             source = SCRIPT_DIR / name
             _copy_file(
                 source,
@@ -692,6 +816,7 @@ def prepare(args: argparse.Namespace) -> Path:
             local_design,
         )
         shutil.copy2(design_path, temporary / "environment.source.yaml")
+        _write_json(temporary / "environment.resolved.yaml", design)
         local_manifest = solver_destination / manifest_name
         effective_case_cfg = dict(case_cfg)
         effective_case_cfg.setdefault("processes", processes)
@@ -715,12 +840,22 @@ def prepare(args: argparse.Namespace) -> Path:
         lock = {
             "schema_version": 1,
             "generated_at_utc": generated_at,
+            "selections": {
+                category: {
+                    "id": record["id"],
+                    "catalog_id": record["catalog_id"],
+                }
+                for category, record in option_state["selections"].items()
+            },
             "model": model,
             "profile": profile,
             "include_tests": include_tests,
             "case_id": case_id,
             "case_directory": f"cases/{case_id}",
             "input_name": input_name,
+            "case_index_path": _portable_path_reference(
+                global_case_index, output
+            ),
             "processes": processes,
             "omp_threads": omp_threads,
         }
@@ -729,6 +864,20 @@ def prepare(args: argparse.Namespace) -> Path:
             "generated_at_utc": generated_at,
             "framework_root_at_generation": str(framework_root),
             "environment_design_sha256": _sha256(design_path),
+            "option_catalogs": [
+                {
+                    **record,
+                    "sha256": _sha256(Path(record["path"])),
+                }
+                for record in option_state["catalogs"]
+            ],
+            "selections": {
+                category: {
+                    "id": record["id"],
+                    "catalog_id": record["catalog_id"],
+                }
+                for category, record in option_state["selections"].items()
+            },
             "model_catalog_sha256": _sha256(catalog_path),
             "solver_manifest_sha256": _sha256(manifest_path),
             "solver_git": _git_state(solver_root),
@@ -747,6 +896,7 @@ def prepare(args: argparse.Namespace) -> Path:
             _generated_readme(model, profile, case_id), encoding="utf-8"
         )
         temporary.replace(output)
+        sync_environment_case(output, lock, global_case_index)
     except Exception:
         if temporary.exists():
             shutil.rmtree(temporary)
@@ -759,35 +909,77 @@ def prepare(args: argparse.Namespace) -> Path:
     print(f"[OK] Generated execution environment: {output}")
     print(f"     model/profile: {model}/{profile}")
     print(f"     case:          {case_id}")
+    print(f"     case index:    {global_case_index}")
     print(f"     solver files:  {len(selected_files)}")
     if archive:
         print(f"[OK] Portable archive: {archive}")
     return output
 
 
+def list_options(args: argparse.Namespace) -> None:
+    design_path = (
+        Path(args.design).resolve() if args.design else DEFAULT_DESIGN.resolve()
+    )
+    design = _mapping(load_yaml(design_path), "environment design")
+    if design.get("schema_version") != 1:
+        raise EnvironmentError("environment design.schema_version must be 1")
+    catalog = load_option_catalogs(
+        design, design_path, DEFAULT_OPTION_CATALOG
+    )
+    category = None if args.list_options == "all" else args.list_options
+    if category is not None and category not in OPTION_CATEGORIES:
+        raise EnvironmentError(
+            f"unknown option category {category!r}; "
+            f"available: {list(OPTION_CATEGORIES)}"
+        )
+    if args.options_format == "json":
+        print(catalog_as_json(catalog, category))
+    else:
+        print(catalog_as_text(catalog, category))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Copy selected NAS solver sources into an external run environment."
+        description="Copy selected framework sources into an external run environment."
     )
     parser.add_argument("design", nargs="?", help="Environment YAML")
     parser.add_argument("--framework-root", help="Override source.framework_root")
     parser.add_argument("--output", help="Override destination.root")
-    parser.add_argument("--model", choices=["nse", "gpe"])
+    parser.add_argument("--model", help="Override model.name")
     parser.add_argument("--profile")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--archive", action="store_true")
     parser.add_argument("--archive-format", choices=["zip", "gztar"])
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--list-options",
+        nargs="?",
+        const="all",
+        metavar="CATEGORY",
+        help="List all choices, or one category, without generating an environment",
+    )
+    parser.add_argument(
+        "--options-format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format used with --list-options",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     try:
-        prepare(parse_args())
+        args = parse_args()
+        if args.list_options is not None:
+            list_options(args)
+        else:
+            prepare(args)
         return 0
     except (
         CaseInputError,
         EnvironmentError,
+        GlobalCaseIndexError,
+        OptionCatalogError,
         OSError,
         ValueError,
         YamlFormatError,

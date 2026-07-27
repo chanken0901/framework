@@ -2,7 +2,7 @@
 # remote_urlが空の場合は、各リポジトリに設定済みのoriginを使用する。
 schema_version: 1
 
-framework_root: //Mozart/share/FrameWork
+framework_root: C:/Users/Owner/Documents/Codex/FrameWork
 
 settings:
   git_command: git

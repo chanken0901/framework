@@ -57,12 +57,15 @@ python .\build_model.py .\build.yaml --model gpe --list-profiles
 
 ## 3. ビルド
 
-WindowsではNASをドライブへ割り当ててから実行します。
+WindowsではローカルFrameWorkのBuildSolverから実行します。
 
 ```powershell
-New-PSDrive -Name R -PSProvider FileSystem -Root "\\Mozart\share" -Persist
-Set-Location "R:\研究フレームワーク構築\ScriptLibrary\BuildSolver"
+Set-Location "$env:USERPROFILE\Documents\Codex\FrameWork\ScriptLibrary\BuildSolver"
 ```
+
+NASの`\\Mozart\share\FrameWork`は同期ミラーであり、BuildSolverの直接実行場所には
+しません。通常の計算では、RunEnvironmentで生成した外部実行環境内の
+`ScriptLibrary\BuildSolver`を`run_case.py`から呼び出します。
 
 設計書の検証だけを行います。
 
@@ -93,6 +96,16 @@ python .\build_model.py .\build.yaml `
 ```
 
 ## 4. 実行
+
+既存の実行ファイルを再ビルドせずに起動する場合は、`--build`を付けず
+`--run`だけを指定します。`--run`ではCMake configure、build、Visual Studio
+ビルド環境の初期化を行いません。
+
+```powershell
+python .\build_model.py .\build.yaml `
+  --model gpe --profile cuda_single --run `
+  --input-file "C:\path\to\case\input.nml"
+```
 
 ### NSE
 
