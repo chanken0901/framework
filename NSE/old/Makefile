@@ -33,10 +33,12 @@ OBJS = \
 	$(OBJ_ROOT)/common/mod_constants.o \
 	$(OBJ_ROOT)/common/mod_common_config.o \
 	$(OBJ_ROOT)/common/mod_model_config.o \
+	$(OBJ_ROOT)/grid/mod_grid_fvm.o \
+	$(OBJ_ROOT)/field/mod_field_nse.o \
 	$(OBJ_ROOT)/io/mod_input_reader.o \
 	$(OBJ_ROOT)/io/mod_slf_output.o \
 	$(OBJ_ROOT)/mpi/module_mpi_TW_NEC.o \
-	$(OBJ_ROOT)/main/main.o
+	$(OBJ_ROOT)/main/main_nse.o
 
 .PHONY: all debug run clean dirs
 
@@ -54,6 +56,8 @@ dirs:
 	@if not exist "$(OBJ_ROOT)" mkdir "$(OBJ_ROOT)"
 	@if not exist "$(MOD_DIR)" mkdir "$(MOD_DIR)"
 	@if not exist "$(OBJ_ROOT)\common" mkdir "$(OBJ_ROOT)\common"
+	@if not exist "$(OBJ_ROOT)\grid" mkdir "$(OBJ_ROOT)\grid"
+	@if not exist "$(OBJ_ROOT)\field" mkdir "$(OBJ_ROOT)\field"
 	@if not exist "$(OBJ_ROOT)\io" mkdir "$(OBJ_ROOT)\io"
 	@if not exist "$(OBJ_ROOT)\mpi" mkdir "$(OBJ_ROOT)\mpi"
 	@if not exist "$(OBJ_ROOT)\main" mkdir "$(OBJ_ROOT)\main"
@@ -71,8 +75,17 @@ $(OBJ_ROOT)/common/mod_common_config.o: $(SRC_ROOT)/common/mod_common_config.f90
 $(OBJ_ROOT)/common/mod_model_config.o: $(SRC_ROOT)/common/mod_model_config.f90 $(OBJ_ROOT)/common/mod_precision.o | dirs
 	$(FC) -c $< $(INCLUDES) $(FFLAGS) -J$(MOD_DIR) -o $@
 
-# ---- MPI module ----
-$(OBJ_ROOT)/mpi/module_mpi_TW_NEC.o: $(SRC_ROOT)/mpi/module_mpi_TW_NEC.f90 | dirs
+# ---- Grid modules ----
+$(OBJ_ROOT)/grid/mod_grid_fvm.o: $(SRC_ROOT)/grid/mod_grid_fvm.f90 \
+	$(OBJ_ROOT)/common/mod_common_config.o \
+	$(OBJ_ROOT)/common/mod_precision.o | dirs
+	$(FC) -c $< $(INCLUDES) $(FFLAGS) -J$(MOD_DIR) -o $@
+
+# ---- Field modules ----
+$(OBJ_ROOT)/field/mod_field_nse.o: $(SRC_ROOT)/field/mod_field_nse.f90 \
+	$(OBJ_ROOT)/common/mod_precision.o \
+	$(OBJ_ROOT)/common/mod_model_config.o \
+	$(OBJ_ROOT)/common/mod_common_config.o | dirs
 	$(FC) -c $< $(INCLUDES) $(FFLAGS) -J$(MOD_DIR) -o $@
 
 
@@ -90,9 +103,13 @@ $(OBJ_ROOT)/io/mod_slf_output.o: $(SRC_ROOT)/io/mod_slf_output.f90 \
 	$(OBJ_ROOT)/mpi/module_mpi_TW_NEC.o | dirs
 	$(FC) -c $< $(INCLUDES) $(FFLAGS) -J$(MOD_DIR) -o $@
 
+# ---- MPI module ----
+$(OBJ_ROOT)/mpi/module_mpi_TW_NEC.o: $(SRC_ROOT)/mpi/module_mpi_TW_NEC.f90 | dirs
+	$(FC) -c $< $(INCLUDES) $(FFLAGS) -J$(MOD_DIR) -o $@
+
 
 # ---- Main program ----
-$(OBJ_ROOT)/main/main.o: $(SRC_ROOT)/main/main.f90 \
+$(OBJ_ROOT)/main/main_nse.o: $(SRC_ROOT)/main/main_nse.f90 \
 	$(OBJ_ROOT)/common/mod_precision.o \
 	$(OBJ_ROOT)/common/mod_constants.o \
 	$(OBJ_ROOT)/common/mod_common_config.o \
@@ -105,6 +122,7 @@ $(OBJ_ROOT)/main/main.o: $(SRC_ROOT)/main/main.f90 \
 # ---- Execution ----
 # Usage: make run NP=4
 NP ?= 4
+OMP ?= 8
 run: all
 	mpiexec -n $(NP) $(EXE)
 

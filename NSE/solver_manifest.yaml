@@ -1,0 +1,48 @@
+# NSEを共通モデルビルドランナーへ公開するソルバーマニフェスト。
+schema_version: 1
+solver_id: nse
+solver_api_version: 1
+model: nse
+build_adapter: nse_cmake_v1
+cmake_file: CMakeLists.txt
+
+input:
+  default_name: input.dat
+  pass_as_argument: false
+
+distribution:
+  required_files:
+    - CMakeLists.txt
+    - cmake/NSEMPI.cmake
+
+components:
+  core:
+    cmake_role: library
+    files:
+      - src/common/mod_precision.f90
+      - src/common/mod_constants.f90
+      - src/common/mod_common_config.f90
+      - src/common/mod_model_config.f90
+      - src/grid/mod_grid_fvm.f90
+      - src/field/mod_field_nse.f90
+      - src/io/mod_input_reader.f90
+      - src/mpi/module_mpi_TW_NEC.f90
+      - src/io/mod_slf_output.f90
+
+  main:
+    cmake_role: executable
+    files:
+      - src/main/main_nse.f90
+
+profiles:
+  cpu_mpi:
+    description: MPI domain decomposition with OpenMP local loops
+    components:
+      - core
+      - main
+    executable: solver
+    execution:
+      use_mpi: true
+      use_openmp: true
+    cmake:
+      NSE_ENABLE_OPENMP: true

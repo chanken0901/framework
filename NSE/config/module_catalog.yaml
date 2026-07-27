@@ -1,0 +1,89 @@
+# NSEソースの役割と依存関係を定義するライブラリ側の設計書。
+# 通常のビルド条件変更ではこのファイルを編集せず、新しいモジュールを追加した時に更新する。
+schema_version: 1
+solver_id: nse
+
+module_sets:
+  default:
+    description: Current MPI/OpenMP finite-volume NSE solver
+    entrypoints:
+      - main_nse
+
+modules:
+  mod_precision:
+    path: src/common/mod_precision.f90
+    role: library
+    requires: []
+
+  mod_constants:
+    path: src/common/mod_constants.f90
+    role: library
+    requires:
+      - mod_precision
+
+  mod_common_config:
+    path: src/common/mod_common_config.f90
+    role: library
+    requires:
+      - mod_precision
+
+  mod_model_config:
+    path: src/common/mod_model_config.f90
+    role: library
+    requires:
+      - mod_precision
+
+  mod_grid_fvm:
+    path: src/grid/mod_grid_fvm.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+
+  mod_field_nse:
+    path: src/field/mod_field_nse.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+
+  mod_input_reader:
+    path: src/io/mod_input_reader.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+
+  module_mpi:
+    path: src/mpi/module_mpi_TW_NEC.f90
+    role: library
+    requires: []
+    features:
+      - mpi
+
+  mod_slf_output:
+    path: src/io/mod_slf_output.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - module_mpi
+    features:
+      - mpi
+      - openmp
+
+  main_nse:
+    path: src/main/main_nse.f90
+    role: executable
+    requires:
+      - mod_constants
+      - mod_grid_fvm
+      - mod_field_nse
+      - mod_input_reader
+      - mod_slf_output
+      - module_mpi
+    features:
+      - mpi
+      - openmp

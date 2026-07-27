@@ -37,10 +37,20 @@ module mod_common_config
     real(dp) :: dz = 1.0_dp
 
     ! --- time ---
+
+    real(dp) :: t = 0.0_dp
+    integer  :: step = 0
+
     real(dp) :: dt = 1.0e-4_dp
     real(dp) :: t_max = 1.0_dp
     integer  :: nsteps = 1000
     logical  :: use_fixed_dt = .true.
+
+    ! --- real time ---
+    real(dp) :: t1     = 0.0_dp
+    real(dp) :: t2     = 0.0_dp
+    real(dp) :: ttotal = 0.0_dp
+
 
     ! --- output ---
     integer :: output_frequency = 100

@@ -1,0 +1,218 @@
+# SolverLibraryから実行環境へコピーするファイル群と、組み合わせ可能な構成を定義する。
+# componentsは再利用可能な部品、profilesはビルド可能な部品の組み合わせである。
+schema_version: 1
+solver_id: gp3d
+solver_api_version: 1
+model: gpe
+build_adapter: gp3d_cmake_v1
+input_adapter: gp3d_gpe_namelist_v1
+cmake_file: CMakeLists.txt
+
+input:
+  default_name: input.nml
+  pass_as_argument: true
+
+distribution:
+  required_files:
+    - CMakeLists.txt
+
+# 各コンポーネント内のパスは、このsolver_manifest.yamlからの相対パス。
+components:
+  core:
+    files:
+      - src/common/gp3d_types.f90
+      - src/grid/gp3d_grid.f90
+      - src/solver/gp3d_solver.f90
+      - src/init/gp3d_initial_conditions.f90
+      - src/io/gp3d_restart.f90
+      - src/io/gp3d_io.f90
+      - src/io/gp3d_input.f90
+
+  mpi_stub:
+    files:
+      - src/mpi/gp3d_mpi_stub.f90
+
+  mpi_real:
+    files:
+      - src/mpi/gp3d_mpi_real.f90
+
+  fft_serial_dft:
+    files:
+      - src/fft/gp3d_fft.f90
+
+  fft_serial_fftw:
+    files:
+      - src/fft/gp3d_fft_fftw.f90
+
+  fft_mpi:
+    files:
+      - src/fft/gp3d_fft_mpi.f90
+
+  local_fft_dft:
+    files:
+      - src/fft/gp3d_local_fft_dft.f90
+
+  local_fft_fftw:
+    files:
+      - src/fft/gp3d_local_fft_fftw.f90
+
+  cuda:
+    files:
+      - src/gpu/gp3d_gpu_cuda.f90
+      - src/gpu/gp3d_cuda_bridge.cu
+
+  cufftmp:
+    files:
+      - src/gpu/gp3d_gpu_cufftmp.f90
+      - src/gpu/gp3d_cufftmp_bridge.cu
+
+  main_serial:
+    files:
+      - src/main/main.f90
+
+  main_cuda:
+    files:
+      - src/main/main_cuda.f90
+
+  main_cufftmp:
+    files:
+      - src/main/main_cufftmp.f90
+
+  runtime_tools:
+    files:
+      - tools/run_workflow.ps1
+      - tools/run_workflow_linux.py
+      - tools/slf_to_paraview_merged_cropghost.py
+      - tools/slf_to_vti.py
+      - workflow.schema.json
+      - workflow.cufftmp.example.json
+      - docs/cufftmp_test_plan.md
+
+  tests_common:
+    files:
+      - tests/test_restart_slf.f90
+      - tests/restart_main_smoke.nml
+      - tests/taylor_green_smoke.nml
+
+  tests_mpi:
+    files:
+      - tests/test_distributed_fft.f90
+
+  tests_cuda:
+    files:
+      - tests/test_cuda_splitstep.f90
+      - tests/cuda_smoke.nml
+
+  tests_cufftmp:
+    files:
+      - tests/test_cufftmp_splitstep.f90
+      - tests/cuda_smoke.nml
+      - tests/cufftmp_scaling_256.nml
+
+# case.yamlのsolver.profileが、以下のいずれか一つを選択する。
+profiles:
+  cpu_serial_dft:
+    description: Single-process CPU build with the reference DFT backend
+    components:
+      - core
+      - mpi_stub
+      - fft_serial_dft
+      - main_serial
+      - runtime_tools
+    test_components:
+      - tests_common
+    executable: gp3d_sequential
+    cmake:
+      USE_MPI: false
+      FFT_BACKEND: dft
+      GPU_BACKEND: none
+
+  cpu_serial_fftw:
+    description: Single-process CPU build with FFTW
+    components:
+      - core
+      - mpi_stub
+      - fft_serial_fftw
+      - main_serial
+      - runtime_tools
+    test_components:
+      - tests_common
+    executable: gp3d_sequential
+    cmake:
+      USE_MPI: false
+      FFT_BACKEND: fftw
+      GPU_BACKEND: none
+
+  cpu_mpi_dft:
+    description: MPI z-slab distributed FFT with local reference DFTs
+    components:
+      - core
+      - mpi_real
+      - local_fft_dft
+      - fft_mpi
+      - main_serial
+      - runtime_tools
+    test_components:
+      - tests_common
+      - tests_mpi
+    executable: gp3d_mpi
+    cmake:
+      USE_MPI: true
+      FFT_BACKEND: dft
+      GPU_BACKEND: none
+
+  cpu_mpi_fftw:
+    description: MPI z-slab distributed FFT with FFTW local transforms
+    components:
+      - core
+      - mpi_real
+      - local_fft_fftw
+      - fft_mpi
+      - main_serial
+      - runtime_tools
+    test_components:
+      - tests_common
+      - tests_mpi
+    executable: gp3d_mpi
+    cmake:
+      USE_MPI: true
+      FFT_BACKEND: fftw
+      GPU_BACKEND: none
+
+  cuda_single:
+    description: Single-GPU CUDA/cuFFT build
+    components:
+      - core
+      - mpi_stub
+      - fft_serial_dft
+      - cuda
+      - main_cuda
+      - runtime_tools
+    test_components:
+      - tests_common
+      - tests_cuda
+    executable: gp3d_cuda
+    cmake:
+      USE_MPI: false
+      FFT_BACKEND: dft
+      GPU_BACKEND: cuda
+
+  cuda_mpi_cufftmp:
+    description: One MPI rank per GPU with distributed cuFFTMp transforms
+    components:
+      - core
+      - mpi_real
+      - local_fft_dft
+      - fft_mpi
+      - cufftmp
+      - main_cufftmp
+      - runtime_tools
+    test_components:
+      - tests_common
+      - tests_mpi
+      - tests_cufftmp
+    executable: gp3d_cufftmp
+    cmake:
+      USE_MPI: true
+      FFT_BACKEND: dft
+      GPU_BACKEND: cufftmp

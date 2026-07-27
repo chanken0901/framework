@@ -5,49 +5,15 @@ program main
   use mod_common_config, only : simulation_config, init_simulation_config, print_simulation_config
   use mod_model_config, only : nse_config, init_nse_config, print_nse_config
   use mod_input_reader, only : read_all_inputs
+  use mod_grid_fvm, only : build_uniform_grid
+  use mod_nse_field, only : allocate_nse_fields, deallocate_nse_fields, &
+                            Q, Q0, RHS, F, Qw
   use mod_slf_output, only : write_nse_conserved_slf,write_meta_json
 
   implicit none
 
   type(simulation_config) :: sim
   type(nse_config) :: nse
-
-  ! ------------------------------
-  ! Grid / geometry (3D)
-  ! ------------------------------
-  real(dp), allocatable :: x_edge(:,:,:)      ! faces: [1:2,0..sim%nx, 0..sim%ny]
-  real(dp), allocatable :: x_cell(:,:,:)      ! centers: 1..sim%nx
-  real(dp), allocatable :: y_edge(:,:,:)      ! faces: [1:2,0..sim%nx, 0..sim%ny]
-  real(dp), allocatable :: y_cell(:,:,:)      ! centers: 1..sim%nx
-  real(dp), allocatable :: z_edge(:,:,:)      ! faces: [1:2,0..sim%nx, 0..sim%ny]
-  real(dp), allocatable :: z_cell(:,:,:)      ! centers: 1..sim%nx
-  real(dp), allocatable :: vol   (:,:,:)      ! cell volumes (length in 1D)
-  real(dp), allocatable :: area_x(:,:,:)      ! face areas: 0..sim%nx
-  real(dp), allocatable :: area_y(:,:,:)      ! face areas: 0..sim%nx
-  real(dp), allocatable :: area_z(:,:,:)      ! face areas: 0..sim%nx
-
-  ! ------------------------------
-  ! Conserved variables & work
-  ! ------------------------------
-  real(dp), allocatable :: Q  (:,:,:,:)              ! [1-sim%nghost:sim%nx+sim%nghost, 1-sim%nghost:sim%ny+sim%nghost, 1-sim%nghost:sim%nz+sim%nghost, nse%nv]
-  real(dp), allocatable :: Q0 (:,:,:,:)              ! RK3 snapshot
-  real(dp), allocatable :: RHS(:,:,:,:)              ! residual
-  real(dp), allocatable :: F  (:,:,:,:)              ! x-direction face flux [0:sim%nx, 0:sim%ny, nse%nv]
-  real(dp), allocatable :: Qw(:,:,:,:)
-
-  real(dp), allocatable :: QL (:,:,:,:), QR(:,:,:,:) ! reconstructed face states
-  real(dp), allocatable :: Q_vis (:,:,:,:)              ! [1-sim%nghost:sim%nx+sim%nghost, 1-sim%nghost:sim%ny+sim%nghost, 1-sim%nghost:sim%nz+sim%nghost, nse%nv]
-
-  real(dp) :: dx_min,dy_min,dz_min
-
-  ! time
-  real(dp) :: t
-  integer  :: step
-  integer  :: i,j,k,l
-
-  ! realtime
-  real(dp) :: t1,t2,ttotal
-
 
   !--- MPI ---
   integer js,je,ks,ke,ierror,ierr,ierf
@@ -71,27 +37,30 @@ program main
   je=j_end
   ks=k_sta
   ke=k_end
+!write(*,*) my_rank,js,je,ks,ke
+!stop
   !-----------
 
-  call build_grid_uniform(sim%x_min, sim%x_max, sim%y_min, sim%y_max, sim%z_min, sim%z_max)
+
+  call build_uniform_grid(sim, js, je, ks, ke)
+  !call build_grid_uniform(sim%x_min, sim%x_max, sim%y_min, sim%y_max, sim%z_min, sim%z_max)
   if(my_rank == root) write(*,*) "Complete build grid"
-  call allocate_fields()
+  call allocate_nse_fields(sim, nse, js, je, ks, ke)
   if(my_rank == root) write(*,*) "Complete allocate"
   call initialize_Sym()
   if(my_rank == root) write(*,*) "Complete initialize"
-  t = 0.0_dp; step = 0; ttotal = 0.0_dp
+  sim%t = 0.0_dp; sim%step = 0; sim%ttotal = 0.0_dp
 
   !$OMP parallel default(none)         &
   !$OMP & shared(Q,Q0,QL,QR,Qw,RHS,F,  &
   !$OMP &        ks,ke,js,je,          &
-  !$OMP &        t,my_rank,step,       &
-  !$OMP &        t2,t1,ttotal,         &
+  !$OMP &        my_rank,              &
   !$OMP &        sim,nse               )
 
-  do while (t < sim%t_max)
+  do while (sim%t < sim%t_max)
     !$OMP masked
-    if(my_rank == root) write(*,*) step,t,sim%dt,t2-t1,ttotal
-    t1 = MPI_Wtime()
+    if(my_rank == root) write(*,*) sim%step,sim%t,sim%dt,sim%t2-sim%t1,sim%ttotal
+    sim%t1 = MPI_Wtime()
     !$OMP end masked
     !$OMP barrier
 
@@ -100,21 +69,21 @@ program main
     !$OMP end single
 
     !$OMP masked
-    if (t + sim%dt > sim%t_max) sim%dt = sim%t_max - t
+    if (sim%t + sim%dt > sim%t_max) sim%dt = sim%t_max - sim%t
     !$OMP end masked
     !$OMP barrier
 
     call step_rk3(Q, sim%dt)
 
     !$OMP masked
-    t = t + sim%dt; step = step + 1
-    if (mod(step, sim%output_frequency) == 0) then
+    sim%t = sim%t + sim%dt; sim%step = sim%step + 1
+    if (mod(sim%step, sim%output_frequency) == 0) then
       !call write_vtk_data(step, my_rank, Q(1:sim%nx,js:je,ks:ke,:), t) ! 3D VTKデータを出力
       !call write_bin_data(step, my_rank, Q(1:sim%nx,js:je,ks:ke,:), t) ! 3D VTKデータを出力
-      call write_nse_conserved_slf(sim, step, t, Q, rank=my_rank)
+      call write_nse_conserved_slf(sim, sim%step, sim%t, Q, rank=my_rank)
     end if
-    t2 = MPI_Wtime()
-    ttotal = ttotal+(t2-t1)
+    sim%t2 = MPI_Wtime()
+    sim%ttotal = sim%ttotal+(sim%t2-sim%t1)
     call mp_barrier
     !$OMP end masked
     !$OMP barrier
@@ -128,49 +97,6 @@ program main
 
 contains
 
-  subroutine build_grid_uniform(a,b,c,d,e,f)
-    real(dp), intent(in) :: a,b,c,d,e,f 
-    real(dp) :: dx,dy,dz
-    integer :: i,j,k
-    allocate(x_edge(-1:sim%nx,js-2:je,ks-2:ke), x_cell(-2:sim%nx,js-2:je,ks-2:ke))
-    allocate(y_edge(-1:sim%nx,js-2:je,ks-2:ke), y_cell(-2:sim%nx,js-2:je,ks-2:ke))
-    allocate(z_edge(-1:sim%nx,js-2:je,ks-2:ke), z_cell(-2:sim%nx,js-2:je,ks-2:ke))
-    allocate(vol   (0:sim%nx,js-1:je,ks-1:ke) )
-    allocate(area_x(0:sim%nx,js-1:je,ks-1:ke), area_y(0:sim%nx,js-1:je,ks-1:ke), area_z(0:sim%nx,js-1:je,ks-1:ke) )
-
-    dx_min = sim%x_max; dy_min = sim%y_max; dz_min = sim%z_max
-
-    do k = ks-2, ke
-    do j = js-2, je
-    do i = -1, sim%nx
-      x_edge(i,j,k) = a + (b-a) * real(i,dp) / real(sim%nx,dp)
-      y_edge(i,j,k) = c + (d-c) * real(j,dp) / real(sim%ny,dp)
-      z_edge(i,j,k) = e + (f-e) * real(k,dp) / real(sim%nz,dp)
-    end do; end do; end do
-
-    do k = ks-1, ke
-    do j = js-1, je
-    do i = 0, sim%nx
-      x_cell(i,j,k) = 0.5_dp*(x_edge(i-1,j  ,k  )+x_edge(i,j,k))
-      y_cell(i,j,k) = 0.5_dp*(y_edge(i  ,j-1,k  )+y_edge(i,j,k))
-      z_cell(i,j,k) = 0.5_dp*(z_edge(i  ,j  ,k-1)+z_edge(i,j,k))
-
-      sim%dx = x_edge(i  ,j  ,k  )-x_edge(i-1,j  ,k  )
-      sim%dy = y_edge(i  ,j  ,k  )-y_edge(i  ,j-1,k  )
-      sim%dz = z_edge(i  ,j  ,k  )-z_edge(i  ,j  ,k-1)
-
-      dx_min = min(dx_min,sim%dx)
-      dy_min = min(dy_min,sim%dy)
-      dz_min = min(dz_min,sim%dz)
-
-      area_x(i,j,k) = sim%dy*sim%dz       !Sx = deltay*deltaz
-      area_y(i,j,k) = sim%dz*sim%dx       !Sy = deltaz*deltax
-      area_z(i,j,k) = sim%dx*sim%dy       !Sz = deltax*deltay
-
-      vol(i,j,k)    = sim%dx*sim%dy*sim%dz
-    end do; end do; end do
-
-  end subroutine build_grid_uniform
 
   subroutine allocate_fields()
     allocate(Q  (1-sim%nghost:sim%nx+sim%nghost,js-sim%nghost:je+sim%nghost,ks-sim%nghost:ke+sim%nghost,nse%nv))
@@ -183,6 +109,8 @@ contains
   end subroutine allocate_fields
 
   subroutine initialize_Sym()
+  use mod_grid_fvm!, only : build_uniform_grid
+
     integer :: i,j,k
     real(dp) :: rho, u, v, w, p
     real(dp) :: C_1,C_2
@@ -385,7 +313,8 @@ contains
               dumcomxy_s8(i,j,g,:) = F1(i,j,sim%nz+g-sim%nghost,:)
               End Do
             End Do; End Do
-            dum_len=sim%nx*sim%nghost*(ke-ks+1)*nse%nv
+            !dum_len=sim%nx*sim%nghost*(ke-ks+1)*nse%nv
+            dum_len = sim%nx * (je-js+1) * sim%nghost * nse%nv
             Call mpi_isend(dumcomxy_s8(1,js,1,1),dum_len,MPI_DOUBLE_PRECISION,                        &
                                               itable(icom,0),1,MPI_COMM_WORLD,isend(1),ierr)
             Call mpi_irecv(dumcomxy_r8(1,js,1,1),dum_len,MPI_DOUBLE_PRECISION,                        &
@@ -399,7 +328,8 @@ contains
               dumcomxy_s8(i,j,g,:) = F1(i,j,g,:)
               End Do
             End Do; End Do
-            dum_len=sim%nx*sim%nghost*(ke-ks+1)*nse%nv
+            !dum_len=sim%nx*sim%nghost*(ke-ks+1)*nse%nv
+            dum_len = sim%nx * (je-js+1) * sim%nghost * nse%nv
             Call mpi_isend(dumcomxy_s8(1,js,1,1),dum_len,MPI_DOUBLE_PRECISION,                        &
                                               itable(icom,Ndiv_Nz-1),1,MPI_COMM_WORLD,isend(2),ierr)
             Call mpi_irecv(dumcomxy_r8(1,js,1,1),dum_len,MPI_DOUBLE_PRECISION,                        &
@@ -459,7 +389,8 @@ contains
       maxs = max(maxs, abs(u)+a, abs(v)+a, abs(w)+a)
     end do;end do;end do
 
-    dt = nse%cfl * min( dx_min/maxs, dy_min/maxs , dz_min/maxs )
+    !dt = nse%cfl * min( dx_min/maxs, dy_min/maxs , dz_min/maxs )
+    dt = nse%cfl * min( sim%dx/maxs, sim%dy/maxs , sim%dz/maxs )
 
     call mp_barrier
     call mp_allminr8(dt)
@@ -512,6 +443,7 @@ contains
   end subroutine step_rk3
 
   subroutine compute_rhs(Qin, R)
+    use mod_grid_fvm!, only : build_uniform_grid
     real(dp), intent(inout)  :: Qin(1-sim%nghost:sim%nx+sim%nghost,js-sim%nghost:je+sim%nghost,ks-sim%nghost:ke+sim%nghost,nse%nv)
     real(dp), intent(out) :: R  (1-sim%nghost:sim%nx+sim%nghost,js-sim%nghost:je+sim%nghost,ks-sim%nghost:ke+sim%nghost,nse%nv)
     integer :: i,j,k,g
@@ -848,186 +780,186 @@ contains
 
 
 
-  subroutine write_vtk_data(step, my_rank, Qin, t)
-    integer, intent(in) :: step, my_rank
-    real(dp), intent(in) :: Qin(1:sim%nx, js:je, ks:ke, nse%nv)
-    real(dp), intent(in) :: t
-    integer :: i, j, k
-    real(dp) :: rho, u, v, w, p
-    real(dp) :: xm,xp,ym,yp,zm,zp
-    real(dp) :: xc1,xc2,yc1,yc2,zc1,zc2
-    real(dp) :: xc,yc,zc
-    character(len=256) :: fname
-    character(len=*), parameter :: vtk_fmt = '(ES22.12E3)'
+  !subroutine write_vtk_data(step, my_rank, Qin, t)
+  !  integer, intent(in) :: step, my_rank
+  !  real(dp), intent(in) :: Qin(1:sim%nx, js:je, ks:ke, nse%nv)
+  !  real(dp), intent(in) :: t
+  !  integer :: i, j, k
+  !  real(dp) :: rho, u, v, w, p
+  !  real(dp) :: xm,xp,ym,yp,zm,zp
+  !  real(dp) :: xc1,xc2,yc1,yc2,zc1,zc2
+  !  real(dp) :: xc,yc,zc
+  !  character(len=256) :: fname
+  !  character(len=*), parameter :: vtk_fmt = '(ES22.12E3)'
 
-    ! VTKファイルはsim%output_frequencyごとにのみ書き出す
-    write(fname, '(A,I0.5,A,I0.5,A)') '3d_result_step_', step, '_rank', my_rank, '.vtk'
-    open(unit=30, file=fname, status='replace')
+  !  ! VTKファイルはsim%output_frequencyごとにのみ書き出す
+  !  write(fname, '(A,I0.5,A,I0.5,A)') '3d_result_step_', step, '_rank', my_rank, '.vtk'
+  !  open(unit=30, file=fname, status='replace')
 
-    ! VTK Header
-    write(30, '(A)') '# vtk DataFile Version 2.0'
-    write(30, '(A, F12.6)') 'Time = ', t
-    write(30, '(A)') 'ASCII'
-    write(30, '(A)') 'DATASET STRUCTURED_GRID'
-    write(30, '(A,I6,I6,I6)') 'DIMENSIONS ', sim%nx, (je-js)+1, (ke-ks)+1
-    write(30, '(A,I12,A)') 'POINTS ', sim%nx*((je-js)+1)*((ke-ks)+1), ' double'
+  !  ! VTK Header
+  !  write(30, '(A)') '# vtk DataFile Version 2.0'
+  !  write(30, '(A, F12.6)') 'Time = ', t
+  !  write(30, '(A)') 'ASCII'
+  !  write(30, '(A)') 'DATASET STRUCTURED_GRID'
+  !  write(30, '(A,I6,I6,I6)') 'DIMENSIONS ', sim%nx, (je-js)+1, (ke-ks)+1
+  !  write(30, '(A,I12,A)') 'POINTS ', sim%nx*((je-js)+1)*((ke-ks)+1), ' double'
 
-    xm = sim%x_min
-    xp = sim%x_max
-    ym = sim%y_min
-    yp = sim%y_max
-    zm = sim%z_min
-    zp = sim%z_max
+  !  xm = sim%x_min
+  !  xp = sim%x_max
+  !  ym = sim%y_min
+  !  yp = sim%y_max
+  !  zm = sim%z_min
+  !  zp = sim%z_max
 
-    ! Write grid points
-    do k = ks, ke
-      do j = js, je
-        do i = 1, sim%nx
+  !  ! Write grid points
+  !  do k = ks, ke
+  !    do j = js, je
+  !      do i = 1, sim%nx
 
-          !xc1 = xm + (xp-xm) * real(i-1,dp) / real(sim%nx,dp)
-          !xc2 = xm + (xp-xm) * real(i  ,dp) / real(sim%nx,dp)
-          !yc1 = ym + (yp-ym) * real(j-1,dp) / real(sim%ny,dp)
-          !yc2 = ym + (yp-ym) * real(j  ,dp) / real(sim%ny,dp)
-          !zc1 = zm + (zp-zm) * real(k-1,dp) / real(sim%nz,dp)
-          !zc2 = zm + (zp-zm) * real(k  ,dp) / real(sim%nz,dp)
+  !        !xc1 = xm + (xp-xm) * real(i-1,dp) / real(sim%nx,dp)
+  !        !xc2 = xm + (xp-xm) * real(i  ,dp) / real(sim%nx,dp)
+  !        !yc1 = ym + (yp-ym) * real(j-1,dp) / real(sim%ny,dp)
+  !        !yc2 = ym + (yp-ym) * real(j  ,dp) / real(sim%ny,dp)
+  !        !zc1 = zm + (zp-zm) * real(k-1,dp) / real(sim%nz,dp)
+  !        !zc2 = zm + (zp-zm) * real(k  ,dp) / real(sim%nz,dp)
 
-          !xc = 0.5_dp*(xc1+xc2)
-          !yc = 0.5_dp*(yc1+yc2)
-          !zc = 0.5_dp*(zc1+zc2)
+  !        !xc = 0.5_dp*(xc1+xc2)
+  !        !yc = 0.5_dp*(yc1+yc2)
+  !        !zc = 0.5_dp*(zc1+zc2)
 
-          !write(30, vtk_fmt) xc, yc, zc
-          write(30, vtk_fmt) x_cell(i,j,k), y_cell(i,j,k), z_cell(i,j,k)
-        end do
-      end do
-    end do
+  !        !write(30, vtk_fmt) xc, yc, zc
+  !        write(30, vtk_fmt) x_cell(i,j,k), y_cell(i,j,k), z_cell(i,j,k)
+  !      end do
+  !    end do
+  !  end do
 
-    ! Write data
-    write(30, '(A,I12)') 'POINT_DATA ', sim%nx*((je-js)+1)*((ke-ks)+1)
+  !  ! Write data
+  !  write(30, '(A,I12)') 'POINT_DATA ', sim%nx*((je-js)+1)*((ke-ks)+1)
 
-    ! --- Density (rho) ---
-    write(30, '(A)') 'SCALARS rho double 1'
-    write(30, '(A)') 'LOOKUP_TABLE default'
-    do k = ks, ke
-      do j = js, je
-        do i = 1, sim%nx
-          rho = Qin(i,j,k,1)
-          write(30, vtk_fmt) rho
-        end do
-      end do
-    end do
+  !  ! --- Density (rho) ---
+  !  write(30, '(A)') 'SCALARS rho double 1'
+  !  write(30, '(A)') 'LOOKUP_TABLE default'
+  !  do k = ks, ke
+  !    do j = js, je
+  !      do i = 1, sim%nx
+  !        rho = Qin(i,j,k,1)
+  !        write(30, vtk_fmt) rho
+  !      end do
+  !    end do
+  !  end do
 
-    ! --- X-Velocity (u) ---
-    write(30, '(A)') 'SCALARS u double 1'
-    write(30, '(A)') 'LOOKUP_TABLE default'
-    do k = ks, ke
-      do j = js, je
-        do i = 1, sim%nx
-          rho = max(Qin(i,j,k,1), nse%small_rho)
-          u   = Qin(i,j,k,2) / rho
-          write(30, vtk_fmt) u
-        end do
-      end do
-    end do
+  !  ! --- X-Velocity (u) ---
+  !  write(30, '(A)') 'SCALARS u double 1'
+  !  write(30, '(A)') 'LOOKUP_TABLE default'
+  !  do k = ks, ke
+  !    do j = js, je
+  !      do i = 1, sim%nx
+  !        rho = max(Qin(i,j,k,1), nse%small_rho)
+  !        u   = Qin(i,j,k,2) / rho
+  !        write(30, vtk_fmt) u
+  !      end do
+  !    end do
+  !  end do
 
-    ! --- Y-Velocity (v) ---
-    write(30, '(A)') 'SCALARS v double 1'
-    write(30, '(A)') 'LOOKUP_TABLE default'
-    do k = ks, ke
-      do j = js, je
-        do i = 1, sim%nx
-          rho = max(Qin(i,j,k,1), nse%small_rho)
-          v   = Qin(i,j,k,3) / rho
-          write(30, vtk_fmt) v
-        end do
-      end do
-    end do
+  !  ! --- Y-Velocity (v) ---
+  !  write(30, '(A)') 'SCALARS v double 1'
+  !  write(30, '(A)') 'LOOKUP_TABLE default'
+  !  do k = ks, ke
+  !    do j = js, je
+  !      do i = 1, sim%nx
+  !        rho = max(Qin(i,j,k,1), nse%small_rho)
+  !        v   = Qin(i,j,k,3) / rho
+  !        write(30, vtk_fmt) v
+  !      end do
+  !    end do
+  !  end do
 
-    ! --- Z-Velocity (w) ---
-    write(30, '(A)') 'SCALARS w double 1'
-    write(30, '(A)') 'LOOKUP_TABLE default'
-    do k = ks, ke
-      do j = js, je
-        do i = 1, sim%nx
-          rho = max(Qin(i,j,k,1), nse%small_rho)
-          w   = Qin(i,j,k,4) / rho
-          write(30, vtk_fmt) w
-        end do
-      end do
-    end do
+  !  ! --- Z-Velocity (w) ---
+  !  write(30, '(A)') 'SCALARS w double 1'
+  !  write(30, '(A)') 'LOOKUP_TABLE default'
+  !  do k = ks, ke
+  !    do j = js, je
+  !      do i = 1, sim%nx
+  !        rho = max(Qin(i,j,k,1), nse%small_rho)
+  !        w   = Qin(i,j,k,4) / rho
+  !        write(30, vtk_fmt) w
+  !      end do
+  !    end do
+  !  end do
 
-    ! --- Pressure (p) ---
-    write(30, '(A)') 'SCALARS p double 1'
-    write(30, '(A)') 'LOOKUP_TABLE default'
-    do k = ks, ke
-      do j = js, je
-        do i = 1, sim%nx
-          rho = max(Qin(i,j,k,1), nse%small_rho)
-          u   = Qin(i,j,k,2) / rho
-          v   = Qin(i,j,k,3) / rho
-          w   = Qin(i,j,k,4) / rho
-          p   = (nse%gamma-1.0_dp) * (Qin(i,j,k,5) - 0.5_dp*rho*(u*u + v*v + w*w))
-          p   = max(p, nse%small_p)
-          write(30, vtk_fmt) p
-        end do
-      end do
-    end do
+  !  ! --- Pressure (p) ---
+  !  write(30, '(A)') 'SCALARS p double 1'
+  !  write(30, '(A)') 'LOOKUP_TABLE default'
+  !  do k = ks, ke
+  !    do j = js, je
+  !      do i = 1, sim%nx
+  !        rho = max(Qin(i,j,k,1), nse%small_rho)
+  !        u   = Qin(i,j,k,2) / rho
+  !        v   = Qin(i,j,k,3) / rho
+  !        w   = Qin(i,j,k,4) / rho
+  !        p   = (nse%gamma-1.0_dp) * (Qin(i,j,k,5) - 0.5_dp*rho*(u*u + v*v + w*w))
+  !        p   = max(p, nse%small_p)
+  !        write(30, vtk_fmt) p
+  !      end do
+  !    end do
+  !  end do
 
-    close(30)
-    write(*,'(A,A)') 'Wrote VTK: ', trim(fname)
-  end subroutine write_vtk_data
+  !  close(30)
+  !  write(*,'(A,A)') 'Wrote VTK: ', trim(fname)
+  !end subroutine write_vtk_data
 
 
-  subroutine write_bin_data(step, my_rank, Qin, t)
-    use, intrinsic :: iso_fortran_env, only: int32
-    implicit none
-    integer, intent(in) :: step, my_rank
-    real(dp), intent(in) :: Qin(1:sim%nx, js:je, ks:ke, nse%nv)
-    real(dp), intent(in) :: t
+  !subroutine write_bin_data(step, my_rank, Qin, t)
+  !  use, intrinsic :: iso_fortran_env, only: int32
+  !  implicit none
+  !  integer, intent(in) :: step, my_rank
+  !  real(dp), intent(in) :: Qin(1:sim%nx, js:je, ks:ke, nse%nv)
+  !  real(dp), intent(in) :: t
 
-    integer :: u, ios
-    character(len=256) :: fname
-    character(len=8)   :: magic
-    integer(int32) :: ndim, dtype_code
-    integer(int32) :: shp(4)
-    integer(int32) :: meta(6)
-    real(dp) :: t_write
+  !  integer :: u, ios
+  !  character(len=256) :: fname
+  !  character(len=8)   :: magic
+  !  integer(int32) :: ndim, dtype_code
+  !  integer(int32) :: shp(4)
+  !  integer(int32) :: meta(6)
+  !  real(dp) :: t_write
 
-    ! ---- file name (rankごと) ----
-    write(fname, '(A,I0.5,A,I0.5,A)') 'output/3d_result_step_', step, '_rank', my_rank, '.fbn'
+  !  ! ---- file name (rankごと) ----
+  !  write(fname, '(A,I0.5,A,I0.5,A)') 'output/3d_result_step_', step, '_rank', my_rank, '.fbn'
 
-    ! ---- header ----
-    magic = 'FBN1' // char(0) // char(0) // char(0) // char(0)
-    ndim  = 4_int32
-    ! shape: (sim%nx, ny_local, nz_local, nse%nv)
-    shp   = [ int(sim%nx, int32), int((je-js)+1, int32), int((ke-ks)+1, int32), int(nse%nv, int32) ]
-    dtype_code = 2_int32   ! 1=float32, 2=float64(dp)
+  !  ! ---- header ----
+  !  magic = 'FBN1' // char(0) // char(0) // char(0) // char(0)
+  !  ndim  = 4_int32
+  !  ! shape: (sim%nx, ny_local, nz_local, nse%nv)
+  !  shp   = [ int(sim%nx, int32), int((je-js)+1, int32), int((ke-ks)+1, int32), int(nse%nv, int32) ]
+  !  dtype_code = 2_int32   ! 1=float32, 2=float64(dp)
 
-    ! 追加メタ情報（任意だが解析で便利）:
-    ! meta = [js, je, ks, ke, step, rank]
-    meta = [ int(js,int32), int(je,int32), int(ks,int32), int(ke,int32), int(step,int32), int(my_rank,int32) ]
-    t_write = t
+  !  ! 追加メタ情報（任意だが解析で便利）:
+  !  ! meta = [js, je, ks, ke, step, rank]
+  !  meta = [ int(js,int32), int(je,int32), int(ks,int32), int(ke,int32), int(step,int32), int(my_rank,int32) ]
+  !  t_write = t
 
-    open(newunit=u, file=fname, access='stream', form='unformatted', &
-         status='replace', action='write', iostat=ios)
-    if (ios /= 0) then
-      write(*,'(A,A)') 'ERROR: cannot open binary file: ', trim(fname)
-      error stop
-    end if
+  !  open(newunit=u, file=fname, access='stream', form='unformatted', &
+  !       status='replace', action='write', iostat=ios)
+  !  if (ios /= 0) then
+  !    write(*,'(A,A)') 'ERROR: cannot open binary file: ', trim(fname)
+  !    error stop
+  !  end if
 
-    ! ---- write header ----
-    write(u) magic
-    write(u) ndim
-    write(u) shp
-    write(u) dtype_code
-    write(u) meta
-    write(u) t_write
+  !  ! ---- write header ----
+  !  write(u) magic
+  !  write(u) ndim
+  !  write(u) shp
+  !  write(u) dtype_code
+  !  write(u) meta
+  !  write(u) t_write
 
-    ! ---- write data (Fortran配列順のまま) ----
-    write(u) Qin
+  !  ! ---- write data (Fortran配列順のまま) ----
+  !  write(u) Qin
 
-    close(u)
-    write(*,'(A,A)') 'Wrote BIN: ', trim(fname)
-  end subroutine write_bin_data
+  !  close(u)
+  !  write(*,'(A,A)') 'Wrote BIN: ', trim(fname)
+  !end subroutine write_bin_data
 
 
 end program 

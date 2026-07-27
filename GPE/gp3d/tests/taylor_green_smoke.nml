@@ -1,0 +1,40 @@
+&simulation
+  equation = "GPE"
+  case_name = "taylor_green_smoke"
+  initial_condition = "quantum_taylor_green"
+  nx = 8
+  ny = 8
+  nz = 8
+  x_min = -3.141592653589793
+  x_max =  3.141592653589793
+  y_min = -3.141592653589793
+  y_max =  3.141592653589793
+  z_min = -3.141592653589793
+  z_max =  3.141592653589793
+  dt = 1.0e-4
+  nsteps = 1
+  output_frequency = 0
+  output_dir = "tests/taylor_green_smoke_output"
+  write_initial = .false.
+  write_meta = .false.
+  timing_enabled = .true.
+/
+
+&gpe
+  use_dimensionless_parameters = .true.
+  alpha = 0.05
+  beta = 40.0
+  norm = 248.05021344239853
+  wx = 0.0
+  wy = 0.0
+  wz = 0.0
+  tg_velocity_amplitude = 1.0
+  tg_auto_winding = .true.
+  argle_enabled = .true.
+  argle_write_seed = .false.
+  argle_steps = 20
+  argle_dtau = 1.25e-2
+  argle_tolerance = 0.0
+  argle_output_every = 5
+  imaginary_time = .false.
+/
