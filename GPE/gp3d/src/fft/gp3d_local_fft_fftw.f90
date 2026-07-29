@@ -13,6 +13,7 @@ module gp3d_local_fft
 
   integer(c_int), parameter :: FFTW_FORWARD = -1_c_int
   integer(c_int), parameter :: FFTW_BACKWARD = 1_c_int
+  integer(c_int), parameter :: FFTW_UNALIGNED = 2_c_int
   integer(c_int), parameter :: FFTW_ESTIMATE = 64_c_int
 
   type :: gp3d_local_fft_plan_t
@@ -53,9 +54,9 @@ contains
     work_in = (0.0_dp, 0.0_dp)
     work_out = (0.0_dp, 0.0_dp)
     plan%forward_plan = fftw_plan_dft_1d(int(n, c_int), c_loc(work_in), c_loc(work_out), &
-      FFTW_FORWARD, FFTW_ESTIMATE)
+      FFTW_FORWARD, ior(FFTW_ESTIMATE, FFTW_UNALIGNED))
     plan%inverse_plan = fftw_plan_dft_1d(int(n, c_int), c_loc(work_in), c_loc(work_out), &
-      FFTW_BACKWARD, FFTW_ESTIMATE)
+      FFTW_BACKWARD, ior(FFTW_ESTIMATE, FFTW_UNALIGNED))
     if (.not. c_associated(plan%forward_plan)) error stop "failed to create FFTW forward plan"
     if (.not. c_associated(plan%inverse_plan)) error stop "failed to create FFTW inverse plan"
   end subroutine gp3d_local_fft_init

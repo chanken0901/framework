@@ -12,6 +12,7 @@ module gp3d_mpi
   public :: gp3d_mpi_z_range
   public :: gp3d_mpi_sum_real
   public :: gp3d_mpi_max_real
+  public :: gp3d_mpi_supports_funneled
 
   type :: gp3d_mpi_t
     logical :: enabled = .false.
@@ -19,6 +20,7 @@ module gp3d_mpi
     integer :: rank = 0
     integer :: nprocs = 1
     integer :: root = 0
+    integer :: thread_level = 0
   end type gp3d_mpi_t
 
 contains
@@ -31,6 +33,7 @@ contains
     ctx%rank = 0
     ctx%nprocs = 1
     ctx%root = 0
+    ctx%thread_level = 0
   end subroutine gp3d_mpi_init
 
   subroutine gp3d_mpi_finalize(ctx)
@@ -44,6 +47,13 @@ contains
 
     is_root = (ctx%rank == ctx%root)
   end function gp3d_mpi_is_root
+
+  pure logical function gp3d_mpi_supports_funneled(ctx) result(supported)
+    type(gp3d_mpi_t), intent(in) :: ctx
+
+    if (ctx%enabled) continue
+    supported = .true.
+  end function gp3d_mpi_supports_funneled
 
   subroutine gp3d_mpi_barrier(ctx)
     type(gp3d_mpi_t), intent(in) :: ctx

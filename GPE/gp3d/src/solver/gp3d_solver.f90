@@ -6,6 +6,7 @@ module gp3d_solver
     gp3d_model_config_t
   use gp3d_fft, only: gp3d_fft_plan_t, gp3d_fft_forward, gp3d_fft_inverse
   use gp3d_mpi, only: gp3d_mpi_t, gp3d_mpi_sum_real, gp3d_mpi_max_real
+  use gp3d_openmp, only: gp3d_openmp_active
   implicit none
   private
 
@@ -47,10 +48,11 @@ contains
 
     integer :: i, j, k, kg
 
+    !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) private(kg)
     do k = 1, grid%local_nz
-      kg = grid%k_start + k - 1
       do j = 1, grid%ny
         do i = 1, grid%nx
+          kg = grid%k_start + k - 1
           state%potential(i,j,k) = 0.5_dp * ( &
             (omega_x * grid%x(i))**2 + &
             (omega_y * grid%y(j))**2 + &
@@ -58,6 +60,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
   end subroutine gp3d_set_harmonic_potential
 
   subroutine gp3d_set_gaussian_initial_state(state, grid, sigma_x, sigma_y, sigma_z)
@@ -72,10 +75,11 @@ contains
       error stop "Gaussian widths must be positive"
     end if
 
+    !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) private(kg, exponent_value)
     do k = 1, grid%local_nz
-      kg = grid%k_start + k - 1
       do j = 1, grid%ny
         do i = 1, grid%nx
+          kg = grid%k_start + k - 1
           exponent_value = -0.5_dp * ( &
             (grid%x(i) / sigma_x)**2 + &
             (grid%y(j) / sigma_y)**2 + &
@@ -84,6 +88,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
   end subroutine gp3d_set_gaussian_initial_state
 
   real(dp) function gp3d_density_norm(state, grid, mpi) result(norm_value)
@@ -91,8 +96,19 @@ contains
     type(gp3d_grid_t), intent(in) :: grid
     type(gp3d_mpi_t), intent(in), optional :: mpi
     real(dp) :: local_norm
+    integer :: i, j, k
 
-    local_norm = sum(abs(state%psi)**2) * grid%dx * grid%dy * grid%dz
+    local_norm = 0.0_dp
+    !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) reduction(+:local_norm)
+    do k = 1, grid%local_nz
+      do j = 1, grid%ny
+        do i = 1, grid%nx
+          local_norm = local_norm + abs(state%psi(i,j,k))**2
+        end do
+      end do
+    end do
+    !$omp end parallel do
+    local_norm = local_norm * grid%dx * grid%dy * grid%dz
     if (present(mpi)) then
       call gp3d_mpi_sum_real(mpi, local_norm, norm_value)
     else
@@ -106,7 +122,8 @@ contains
     real(dp), intent(in) :: target_norm
     type(gp3d_mpi_t), intent(in), optional :: mpi
 
-    real(dp) :: current_norm
+    integer :: i, j, k
+    real(dp) :: current_norm, scale
 
     if (present(mpi)) then
       current_norm = gp3d_density_norm(state, grid, mpi)
@@ -114,7 +131,16 @@ contains
       current_norm = gp3d_density_norm(state, grid)
     end if
     if (current_norm <= 0.0_dp) error stop "cannot normalize a zero wave function"
-    state%psi = state%psi * sqrt(target_norm / current_norm)
+    scale = sqrt(target_norm / current_norm)
+    !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active)
+    do k = 1, grid%local_nz
+      do j = 1, grid%ny
+        do i = 1, grid%nx
+          state%psi(i,j,k) = state%psi(i,j,k) * scale
+        end do
+      end do
+    end do
+    !$omp end parallel do
   end subroutine gp3d_normalize
 
   subroutine gp3d_step_split_operator(state, grid, params, fft_plan, mpi, timing)
@@ -229,7 +255,7 @@ contains
     real(dp), allocatable :: velocity_x(:,:,:), velocity_y(:,:,:), velocity2(:,:,:)
     integer :: i, j, k, kg, step
     real(dp) :: alpha, beta, k2, denominator, explicit_factor, reaction
-    real(dp) :: local_error, global_error, local_min_density, global_min_density
+    real(dp) :: local_error, point_error, global_error, local_min_density, global_min_density
     real(dp) :: neg_global_min_density, norm_value, mean_density, pseudo_time
     logical :: converged, report_step
 
@@ -266,6 +292,7 @@ contains
       psi_old = state%psi
       call gp3d_fft_forward(fft_plan, psi_old, psi_k)
 
+      !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active)
       do k = 1, grid%local_nz
         do j = 1, grid%ny
           do i = 1, grid%nx
@@ -273,8 +300,10 @@ contains
           end do
         end do
       end do
+      !$omp end parallel do
       call gp3d_fft_inverse(fft_plan, derivative_k, grad_x)
 
+      !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active)
       do k = 1, grid%local_nz
         do j = 1, grid%ny
           do i = 1, grid%nx
@@ -282,8 +311,10 @@ contains
           end do
         end do
       end do
+      !$omp end parallel do
       call gp3d_fft_inverse(fft_plan, derivative_k, grad_y)
 
+      !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) private(reaction)
       do k = 1, grid%local_nz
         do j = 1, grid%ny
           do i = 1, grid%nx
@@ -301,12 +332,15 @@ contains
           end do
         end do
       end do
+      !$omp end parallel do
       call gp3d_fft_forward(fft_plan, rhs, rhs_k)
 
+      !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) &
+      !$omp& private(kg, k2, denominator, explicit_factor)
       do k = 1, grid%local_nz
-        kg = grid%k_start + k - 1
         do j = 1, grid%ny
           do i = 1, grid%nx
+            kg = grid%k_start + k - 1
             k2 = grid%kx(i)**2 + grid%ky(j)**2 + grid%kz(kg)**2
             denominator = 1.0_dp + 0.5_dp * model_cfg%argle_dtau * alpha * k2
             explicit_factor = 1.0_dp - 0.5_dp * model_cfg%argle_dtau * alpha * k2
@@ -315,9 +349,22 @@ contains
           end do
         end do
       end do
+      !$omp end parallel do
       call gp3d_fft_inverse(fft_plan, next_k, state%psi)
 
-      local_error = maxval(abs(state%psi - psi_old)) / model_cfg%argle_dtau
+      local_error = 0.0_dp
+      !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) &
+      !$omp& private(point_error) reduction(max:local_error)
+      do k = 1, grid%local_nz
+        do j = 1, grid%ny
+          do i = 1, grid%nx
+            point_error = abs(state%psi(i,j,k) - psi_old(i,j,k))
+            local_error = max(local_error, point_error)
+          end do
+        end do
+      end do
+      !$omp end parallel do
+      local_error = local_error / model_cfg%argle_dtau
       call gp3d_mpi_max_real(mpi, local_error, global_error)
       converged = model_cfg%argle_tolerance > 0.0_dp .and. &
         global_error < model_cfg%argle_tolerance
@@ -328,7 +375,17 @@ contains
       if (report_step) then
         norm_value = gp3d_density_norm(state, grid, mpi)
         mean_density = norm_value / (grid%lx * grid%ly * grid%lz)
-        local_min_density = minval(abs(state%psi)**2)
+        local_min_density = huge(1.0_dp)
+        !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) &
+        !$omp& reduction(min:local_min_density)
+        do k = 1, grid%local_nz
+          do j = 1, grid%ny
+            do i = 1, grid%nx
+              local_min_density = min(local_min_density, abs(state%psi(i,j,k))**2)
+            end do
+          end do
+        end do
+        !$omp end parallel do
         call gp3d_mpi_max_real(mpi, -local_min_density, neg_global_min_density)
         global_min_density = -neg_global_min_density
         pseudo_time = real(step, dp) * model_cfg%argle_dtau
@@ -353,27 +410,32 @@ contains
 
     complex(dp), allocatable :: psi_k(:,:,:)
     integer :: i, j, k, kg
-    real(dp) :: volume_element, spectral_scale, k2, kinetic, local_energy
+    real(dp) :: volume_element, spectral_scale, k2, kinetic, interaction, local_energy
 
     allocate(psi_k(grid%nx, grid%ny, grid%local_nz))
     call gp3d_fft_forward(fft_plan, state%psi, psi_k)
 
     kinetic = 0.0_dp
+    interaction = 0.0_dp
     spectral_scale = grid%dx * grid%dy * grid%dz / real(grid%nx * grid%ny * grid%nz, dp)
+    !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) &
+    !$omp& private(kg, k2) reduction(+:kinetic, interaction)
     do k = 1, grid%local_nz
-      kg = grid%k_start + k - 1
       do j = 1, grid%ny
         do i = 1, grid%nx
+          kg = grid%k_start + k - 1
           k2 = grid%kx(i)**2 + grid%ky(j)**2 + grid%kz(kg)**2
           kinetic = kinetic + 0.5_dp * params%hbar**2 / params%mass * k2 * abs(psi_k(i,j,k))**2
+          interaction = interaction + state%potential(i,j,k) * abs(state%psi(i,j,k))**2 + &
+            0.5_dp * params%g * abs(state%psi(i,j,k))**4
         end do
       end do
     end do
+    !$omp end parallel do
     kinetic = kinetic * spectral_scale
 
     volume_element = grid%dx * grid%dy * grid%dz
-    local_energy = kinetic + sum(state%potential * abs(state%psi)**2 + &
-      0.5_dp * params%g * abs(state%psi)**4) * volume_element
+    local_energy = kinetic + interaction * volume_element
     if (present(mpi)) then
       call gp3d_mpi_sum_real(mpi, local_energy, energy)
     else
@@ -394,6 +456,8 @@ contains
     complex(dp) :: factor
 
     tau = 0.5_dp * params%dt / params%hbar
+    !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) &
+    !$omp& private(local_energy, factor)
     do k = 1, grid%local_nz
       do j = 1, grid%ny
         do i = 1, grid%nx
@@ -407,6 +471,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
   end subroutine apply_local_half_step
 
   subroutine apply_kinetic_step(psi_k, grid, params)
@@ -420,10 +485,12 @@ contains
     complex(dp) :: factor
 
     tau = params%dt / params%hbar
+    !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) &
+    !$omp& private(kg, kinetic_energy, factor)
     do k = 1, grid%local_nz
-      kg = grid%k_start + k - 1
       do j = 1, grid%ny
         do i = 1, grid%nx
+          kg = grid%k_start + k - 1
           kinetic_energy = 0.5_dp * params%hbar**2 / params%mass * &
             (grid%kx(i)**2 + grid%ky(j)**2 + grid%kz(kg)**2)
           if (params%imaginary_time) then
@@ -435,6 +502,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
   end subroutine apply_kinetic_step
 
   subroutine fill_taylor_green_velocity(grid, amplitude, velocity_x, velocity_y, velocity2)
@@ -452,12 +520,14 @@ contains
     y_origin = grid%y(1) - 0.5_dp * grid%dy
     z_origin = grid%z(1) - 0.5_dp * grid%dz
 
+    !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) &
+    !$omp& private(kg, x_angle, y_angle, z_angle)
     do k = 1, grid%local_nz
-      kg = grid%k_start + k - 1
-      z_angle = 2.0_dp * pi * (grid%z(kg) - z_origin) / grid%lz - pi
       do j = 1, grid%ny
-        y_angle = 2.0_dp * pi * (grid%y(j) - y_origin) / grid%ly - pi
         do i = 1, grid%nx
+          kg = grid%k_start + k - 1
+          z_angle = 2.0_dp * pi * (grid%z(kg) - z_origin) / grid%lz - pi
+          y_angle = 2.0_dp * pi * (grid%y(j) - y_origin) / grid%ly - pi
           x_angle = 2.0_dp * pi * (grid%x(i) - x_origin) / grid%lx - pi
           velocity_x(i,j,k) = amplitude * sin(x_angle) * cos(y_angle) * cos(z_angle)
           velocity_y(i,j,k) = -amplitude * cos(x_angle) * sin(y_angle) * cos(z_angle)
@@ -465,6 +535,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
   end subroutine fill_taylor_green_velocity
 
   real(dp) function wall_time_seconds() result(seconds)

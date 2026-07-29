@@ -2,6 +2,7 @@
 !> 振幅の渦芯形状と位相巻き込みを同時に与え、必要に応じて再現可能な位相ノイズを加える。
 module gp3d_initial_conditions
   use gp3d_types, only: dp, pi, gp3d_grid_t, gp3d_state_t
+  use gp3d_openmp, only: gp3d_openmp_active
   implicit none
   private
 
@@ -39,13 +40,15 @@ contains
     z_origin = grid%z(1) - 0.5_dp * grid%dz
     root_half = 1.0_dp / sqrt(2.0_dp)
 
+    !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) &
+    !$omp& private(kg, x_angle, y_angle, z_angle, cos_z_scale, lambda, mu, psi_four)
     do k = 1, grid%local_nz
-      kg = grid%k_start + k - 1
-      z_angle = 2.0_dp * pi * (grid%z(kg) - z_origin) / grid%lz - pi
-      cos_z_scale = sqrt(2.0_dp * abs(cos(z_angle)))
       do j = 1, grid%ny
-        y_angle = 2.0_dp * pi * (grid%y(j) - y_origin) / grid%ly - pi
         do i = 1, grid%nx
+          kg = grid%k_start + k - 1
+          z_angle = 2.0_dp * pi * (grid%z(kg) - z_origin) / grid%lz - pi
+          cos_z_scale = sqrt(2.0_dp * abs(cos(z_angle)))
+          y_angle = 2.0_dp * pi * (grid%y(j) - y_origin) / grid%ly - pi
           x_angle = 2.0_dp * pi * (grid%x(i) - x_origin) / grid%lx - pi
           lambda = cos(x_angle) * cos_z_scale
           mu = cos(y_angle) * cos_z_scale * sign(1.0_dp, cos(z_angle))
@@ -58,6 +61,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
   end subroutine gp3d_set_quantum_taylor_green
 
   subroutine gp3d_set_uniform_vortex_line(state, grid, charge, x0, y0, healing_length, density0)
@@ -81,6 +85,7 @@ contains
 
     if (g <= 0.0_dp) error stop "Thomas-Fermi initial condition requires g > 0"
 
+    !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) private(density)
     do k = 1, grid%local_nz
       do j = 1, grid%ny
         do i = 1, grid%nx
@@ -89,6 +94,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
 
     call gp3d_imprint_vortex_line(state, grid, charge, x0, y0, healing_length)
   end subroutine gp3d_set_thomas_fermi_vortex_line
@@ -127,6 +133,8 @@ contains
     do n = 1, size(charges)
       if (charges(n) == 0) cycle
 
+      !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) &
+      !$omp& private(dx, dy, radius, phase, core, factor)
       do k = 1, grid%local_nz
         do j = 1, grid%ny
           do i = 1, grid%nx
@@ -140,6 +148,7 @@ contains
           end do
         end do
       end do
+      !$omp end parallel do
     end do
   end subroutine gp3d_imprint_vortex_lines
 
@@ -157,10 +166,12 @@ contains
     if (ring_radius <= 0.0_dp) error stop "ring radius must be positive"
     if (healing_length <= 0.0_dp) error stop "healing length must be positive"
 
+    !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) &
+    !$omp& private(kg, rho, dr, dz, distance, phase, core, factor)
     do k = 1, grid%local_nz
-      kg = grid%k_start + k - 1
       do j = 1, grid%ny
         do i = 1, grid%nx
+          kg = grid%k_start + k - 1
           rho = sqrt(grid%x(i)**2 + grid%y(j)**2)
           dr = rho - ring_radius
           dz = grid%z(kg) - z0
@@ -172,6 +183,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
   end subroutine gp3d_imprint_vortex_ring
 
   subroutine gp3d_imprint_vortex_ring_oriented(state, grid, charge, center, normal, ring_radius, healing_length)
@@ -193,10 +205,12 @@ contains
     if (norm_normal <= 0.0_dp) error stop "ring normal must be nonzero"
     nvec = normal / norm_normal
 
+    !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active) &
+    !$omp& private(kg, rvec, parallel, in_plane2, rho, dr, distance, phase, core, factor)
     do k = 1, grid%local_nz
-      kg = grid%k_start + k - 1
       do j = 1, grid%ny
         do i = 1, grid%nx
+          kg = grid%k_start + k - 1
           rvec = [grid%x(i) - center(1), grid%y(j) - center(2), grid%z(kg) - center(3)]
           parallel = sum(rvec * nvec)
           in_plane2 = max(sum(rvec * rvec) - parallel * parallel, 0.0_dp)
@@ -210,6 +224,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
   end subroutine gp3d_imprint_vortex_ring_oriented
 
   subroutine gp3d_imprint_random_vortex_lines(state, grid, nlines, healing_length, seed)

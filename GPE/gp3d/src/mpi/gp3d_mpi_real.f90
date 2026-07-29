@@ -13,6 +13,7 @@ module gp3d_mpi
   public :: gp3d_mpi_z_range
   public :: gp3d_mpi_sum_real
   public :: gp3d_mpi_max_real
+  public :: gp3d_mpi_supports_funneled
 
   type :: gp3d_mpi_t
     logical :: enabled = .true.
@@ -20,21 +21,28 @@ module gp3d_mpi
     integer :: rank = 0
     integer :: nprocs = 1
     integer :: root = 0
+    integer :: thread_level = MPI_THREAD_SINGLE
   end type gp3d_mpi_t
 
 contains
 
   subroutine gp3d_mpi_init(ctx)
     type(gp3d_mpi_t), intent(out) :: ctx
-    integer :: ierr
+    integer :: ierr, provided
     logical :: initialized
 
     call MPI_Initialized(initialized, ierr)
-    if (.not. initialized) call MPI_Init(ierr)
+    if (.not. initialized) then
+      call MPI_Init_thread(MPI_THREAD_FUNNELED, provided, ierr)
+    else
+      call MPI_Query_thread(provided, ierr)
+    end if
+    if (ierr /= MPI_SUCCESS) error stop "MPI initialization failed"
 
     ctx%enabled = .true.
     ctx%comm = MPI_COMM_WORLD
     ctx%root = 0
+    ctx%thread_level = provided
     call MPI_Comm_rank(ctx%comm, ctx%rank, ierr)
     call MPI_Comm_size(ctx%comm, ctx%nprocs, ierr)
   end subroutine gp3d_mpi_init
@@ -54,6 +62,12 @@ contains
 
     is_root = (ctx%rank == ctx%root)
   end function gp3d_mpi_is_root
+
+  pure logical function gp3d_mpi_supports_funneled(ctx) result(supported)
+    type(gp3d_mpi_t), intent(in) :: ctx
+
+    supported = ctx%thread_level >= MPI_THREAD_FUNNELED
+  end function gp3d_mpi_supports_funneled
 
   subroutine gp3d_mpi_barrier(ctx)
     type(gp3d_mpi_t), intent(in) :: ctx

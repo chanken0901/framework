@@ -9,6 +9,7 @@ set(CMAKE_Fortran_STANDARD_REQUIRED ON)
 
 # 同じ公開モジュール名を持つ実装から、MPI・FFT・GPUバックエンドを一つずつ選ぶ。
 option(USE_MPI "Build with MPI support" OFF)
+option(USE_OPENMP "Build CPU kernels with runtime-selectable OpenMP support" OFF)
 set(FFT_BACKEND "dft" CACHE STRING "CPU FFT backend: dft or fftw")
 set_property(CACHE FFT_BACKEND PROPERTY STRINGS dft fftw)
 set(GPU_BACKEND "none" CACHE STRING "GPU backend: none, cuda, or cufftmp")
@@ -162,6 +163,7 @@ endif()
 
 set(GP3D_LIBRARY_SOURCES
   src/common/gp3d_types.f90
+  src/common/gp3d_openmp.f90
   ${GP3D_MPI_SOURCE}
   src/grid/gp3d_grid.f90
   ${GP3D_LOCAL_FFT_SOURCE}
@@ -184,6 +186,11 @@ endif()
 
 add_library(gp3d STATIC ${GP3D_LIBRARY_SOURCES})
 target_include_directories(gp3d PUBLIC "${CMAKE_Fortran_MODULE_DIRECTORY}")
+
+if(USE_OPENMP)
+  find_package(OpenMP REQUIRED COMPONENTS Fortran)
+  target_link_libraries(gp3d PUBLIC OpenMP::OpenMP_Fortran)
+endif()
 
 if(FFT_BACKEND STREQUAL "fftw")
   set(FFTW_ROOT "" CACHE PATH "Optional FFTW installation prefix")
@@ -403,6 +410,18 @@ if(BUILD_TESTING)
         FIXTURES_REQUIRED restart_slf_data
         PASS_REGULAR_EXPRESSION "restart step=7"
         TIMEOUT 20)
+      if(USE_OPENMP)
+        add_test(NAME mpi_openmp_smoke_np2
+          COMMAND "${GP3D_MPIEXEC_EXECUTABLE}" -n 2
+            $<TARGET_FILE:${GP3D_EXECUTABLE_NAME}>
+            "${CMAKE_SOURCE_DIR}/tests/mpi_openmp_smoke.nml")
+        set_tests_properties(mpi_openmp_smoke_np2 PROPERTIES
+          ENVIRONMENT "OMP_NUM_THREADS=2;OMP_DYNAMIC=FALSE"
+          PASS_REGULAR_EXPRESSION
+            "# OpenMP compiled=T active=T threads_per_rank=2"
+          PROCESSORS 4
+          TIMEOUT 30)
+      endif()
     endif()
   else()
     add_test(NAME taylor_green_argle_serial

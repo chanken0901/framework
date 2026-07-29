@@ -9,8 +9,10 @@ program gp3d_sequential
   use gp3d_io, only: gp3d_output_config_t, gp3d_write_meta_json, gp3d_write_gpe_psi_slf
   use gp3d_input, only: gp3d_read_all_inputs, gp3d_configure_problem
   use gp3d_restart, only: gp3d_restart_info_t
+  use gp3d_openmp, only: gp3d_openmp_configure, gp3d_openmp_is_compiled, &
+    gp3d_openmp_active, gp3d_openmp_thread_count
   use gp3d_mpi, only: gp3d_mpi_t, gp3d_mpi_init, gp3d_mpi_finalize, &
-    gp3d_mpi_is_root, gp3d_mpi_barrier
+    gp3d_mpi_is_root, gp3d_mpi_barrier, gp3d_mpi_supports_funneled
   implicit none
 
   type(gp3d_mpi_t) :: mpi
@@ -39,6 +41,14 @@ program gp3d_sequential
   run_cfg%use_mpi = mpi%enabled
   run_cfg%rank = mpi%rank
   run_cfg%nprocs = mpi%nprocs
+  if (run_cfg%use_openmp .and. .not. gp3d_mpi_supports_funneled(mpi)) then
+    error stop "MPI implementation does not provide MPI_THREAD_FUNNELED for OpenMP"
+  end if
+  call gp3d_openmp_configure(run_cfg%use_openmp)
+  if (gp3d_mpi_is_root(mpi)) then
+    write(*,'(a,l1,a,l1,a,i0)') "# OpenMP compiled=", gp3d_openmp_is_compiled(), &
+      " active=", gp3d_openmp_active, " threads_per_rank=", gp3d_openmp_thread_count()
+  end if
 
   ! 格子・ポテンシャル・初期条件、または再スタート波動関数を準備する。
   call gp3d_configure_problem(run_cfg, model_cfg, grid, params, state, output_cfg, mpi, restart_info)

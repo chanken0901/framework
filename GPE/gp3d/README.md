@@ -44,11 +44,36 @@ NSEとGPEを同じ入口からビルド・実行する場合は、フレーム�
 
 - 検証用DFTまたはFFTWを使用するCPU逐次実行
 - z方向スラブ分割と、局所DFTまたはFFTWを使用するMPI分散実行
+- MPI rank内のCPU処理をOpenMPで並列化するMPI+OpenMPハイブリッド実行
 - CUDAとcuFFTを使用するNVIDIA GPU 1台での実行
 - 1 MPI rankにつき1 GPUを使用する、CUDAとcuFFTMpによる分散実行
 
 複数GPU版は`cuda_mpi_cufftmp`プロファイルとして独立しているため、
 既存のCPU版および単一GPU版で使用しているケースYAMLの形式を維持できます。
+
+## MPI+OpenMPハイブリッド実行
+
+`cpu_mpi_dft`と`cpu_mpi_fftw`はOpenMP対応でビルドされます。同じ実行ファイルのまま、
+ケースごとに`solver.use_openmp`を切り替えられるため、ON/OFFのたびに再ビルドする必要はありません。
+
+```yaml
+solver:
+  profile: cpu_mpi_fftw
+  processes: 4
+  use_openmp: true
+  omp_threads: 4
+```
+
+`case.yaml`を編集した後、入力を再生成して実行します。
+
+```powershell
+python .\tools\run_case.py --prepare
+python .\tools\run_case.py --run
+```
+
+起動時の`# OpenMP compiled=... active=... threads_per_rank=...`で実際の設定を確認できます。
+OpenMPは各rank内の局所項、運動エネルギー係数、ARGLE、診断量、初期条件、および
+分散FFTを構成する独立な1次元変換に使われます。MPI転置通信はOpenMP並列領域の外で実行されます。
 
 ## cuFFTMp版のビルドと実行
 

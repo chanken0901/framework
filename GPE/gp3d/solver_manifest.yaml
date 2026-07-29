@@ -21,6 +21,7 @@ components:
   core:
     files:
       - src/common/gp3d_types.f90
+      - src/common/gp3d_openmp.f90
       - src/grid/gp3d_grid.f90
       - src/solver/gp3d_solver.f90
       - src/init/gp3d_initial_conditions.f90
@@ -97,6 +98,7 @@ components:
   tests_mpi:
     files:
       - tests/test_distributed_fft.f90
+      - tests/mpi_openmp_smoke.nml
 
   tests_cuda:
     files:
@@ -124,6 +126,7 @@ profiles:
     executable: gp3d_sequential
     cmake:
       USE_MPI: false
+      USE_OPENMP: false
       FFT_BACKEND: dft
       GPU_BACKEND: none
 
@@ -140,6 +143,7 @@ profiles:
     executable: gp3d_sequential
     cmake:
       USE_MPI: false
+      USE_OPENMP: false
       FFT_BACKEND: fftw
       GPU_BACKEND: none
 
@@ -158,6 +162,7 @@ profiles:
     executable: gp3d_mpi
     cmake:
       USE_MPI: true
+      USE_OPENMP: true
       FFT_BACKEND: dft
       GPU_BACKEND: none
 
@@ -176,6 +181,7 @@ profiles:
     executable: gp3d_mpi
     cmake:
       USE_MPI: true
+      USE_OPENMP: true
       FFT_BACKEND: fftw
       GPU_BACKEND: none
 
@@ -194,6 +200,7 @@ profiles:
     executable: gp3d_cuda
     cmake:
       USE_MPI: false
+      USE_OPENMP: false
       FFT_BACKEND: dft
       GPU_BACKEND: cuda
 
@@ -214,5 +221,6 @@ profiles:
     executable: gp3d_cufftmp
     cmake:
       USE_MPI: true
+      USE_OPENMP: false
       FFT_BACKEND: dft
       GPU_BACKEND: cufftmp

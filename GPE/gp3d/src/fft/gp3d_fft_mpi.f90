@@ -5,6 +5,7 @@ module gp3d_fft
   use gp3d_types, only: dp
   use gp3d_local_fft, only: gp3d_local_fft_plan_t, gp3d_local_fft_init, &
     gp3d_local_fft_execute, gp3d_local_fft_finalize
+  use gp3d_openmp, only: gp3d_openmp_active
   implicit none
   include 'mpif.h'
   private
@@ -121,52 +122,80 @@ contains
     integer, intent(in) :: sign
     logical, intent(in) :: normalize
     complex(dp), allocatable :: z_slab(:,:,:), y_slab(:,:,:)
-    complex(dp), allocatable :: line_in(:), line_out(:)
-    integer :: line_size
+    integer :: i, j, k
 
-    line_size = max(plan%nx, plan%ny, plan%nz)
     allocate(z_slab(plan%nx, plan%ny, plan%local_nz))
     allocate(y_slab(plan%nx, plan%local_ny, plan%nz))
-    allocate(line_in(line_size), line_out(line_size))
-    z_slab = input
+    !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active)
+    do k = 1, plan%local_nz
+      do j = 1, plan%ny
+        do i = 1, plan%nx
+          z_slab(i,j,k) = input(i,j,k)
+        end do
+      end do
+    end do
+    !$omp end parallel do
 
-    call transform_xy(plan, z_slab, sign, line_in, line_out)
+    call transform_xy(plan, z_slab, sign)
     call transpose_z_to_y(plan, z_slab, y_slab)
-    call transform_z(plan, y_slab, sign, line_in, line_out)
+    call transform_z(plan, y_slab, sign)
     call transpose_y_to_z(plan, y_slab, output)
 
-    if (normalize) output = output / real(plan%nx * plan%ny * plan%nz, dp)
-    deallocate(z_slab, y_slab, line_in, line_out)
+    if (normalize) then
+      !$omp parallel do collapse(3) schedule(static) if(gp3d_openmp_active)
+      do k = 1, plan%local_nz
+        do j = 1, plan%ny
+          do i = 1, plan%nx
+            output(i,j,k) = output(i,j,k) / real(plan%nx * plan%ny * plan%nz, dp)
+          end do
+        end do
+      end do
+      !$omp end parallel do
+    end if
+    deallocate(z_slab, y_slab)
   end subroutine distributed_transform
 
-  subroutine transform_xy(plan, slab, sign, line_in, line_out)
+  subroutine transform_xy(plan, slab, sign)
     type(gp3d_fft_plan_t), intent(in) :: plan
     complex(dp), intent(inout) :: slab(plan%nx, plan%ny, plan%local_nz)
     integer, intent(in) :: sign
-    complex(dp), intent(inout) :: line_in(:), line_out(:)
+    complex(dp), allocatable :: line_in(:), line_out(:)
     integer :: i, j, k
 
+    !$omp parallel if(gp3d_openmp_active) private(i, j, k, line_in, line_out)
+    allocate(line_in(max(plan%nx, plan%ny)), line_out(max(plan%nx, plan%ny)))
+    !$omp do collapse(2) schedule(static)
     do k = 1, plan%local_nz
       do j = 1, plan%ny
         line_in(1:plan%nx) = slab(:,j,k)
         call gp3d_local_fft_execute(plan%x_plan, line_in(1:plan%nx), line_out(1:plan%nx), sign)
         slab(:,j,k) = line_out(1:plan%nx)
       end do
+    end do
+    !$omp end do
+    !$omp do collapse(2) schedule(static)
+    do k = 1, plan%local_nz
       do i = 1, plan%nx
         line_in(1:plan%ny) = slab(i,:,k)
         call gp3d_local_fft_execute(plan%y_plan, line_in(1:plan%ny), line_out(1:plan%ny), sign)
         slab(i,:,k) = line_out(1:plan%ny)
       end do
     end do
+    !$omp end do
+    deallocate(line_in, line_out)
+    !$omp end parallel
   end subroutine transform_xy
 
-  subroutine transform_z(plan, slab, sign, line_in, line_out)
+  subroutine transform_z(plan, slab, sign)
     type(gp3d_fft_plan_t), intent(in) :: plan
     complex(dp), intent(inout) :: slab(plan%nx, plan%local_ny, plan%nz)
     integer, intent(in) :: sign
-    complex(dp), intent(inout) :: line_in(:), line_out(:)
+    complex(dp), allocatable :: line_in(:), line_out(:)
     integer :: i, j
 
+    !$omp parallel if(gp3d_openmp_active) private(i, j, line_in, line_out)
+    allocate(line_in(plan%nz), line_out(plan%nz))
+    !$omp do collapse(2) schedule(static)
     do j = 1, plan%local_ny
       do i = 1, plan%nx
         line_in(1:plan%nz) = slab(i,j,:)
@@ -174,6 +203,9 @@ contains
         slab(i,j,:) = line_out(1:plan%nz)
       end do
     end do
+    !$omp end do
+    deallocate(line_in, line_out)
+    !$omp end parallel
   end subroutine transform_z
 
   subroutine transpose_z_to_y(plan, z_slab, y_slab)
@@ -185,6 +217,7 @@ contains
     integer :: dest, source, i, j, k, offset, ierr
 
     allocate(sendbuf(sum(plan%zy_sendcounts)), recvbuf(sum(plan%zy_recvcounts)))
+    !$omp parallel do schedule(static) if(gp3d_openmp_active) private(offset, i, j, k)
     do dest = 1, plan%nprocs
       offset = plan%zy_senddispls(dest) + 1
       do k = 1, plan%local_nz
@@ -196,11 +229,13 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
 
     call MPI_Alltoallv(sendbuf, plan%zy_sendcounts, plan%zy_senddispls, MPI_DOUBLE_COMPLEX, &
       recvbuf, plan%zy_recvcounts, plan%zy_recvdispls, MPI_DOUBLE_COMPLEX, plan%comm, ierr)
     if (ierr /= MPI_SUCCESS) error stop "MPI_Alltoallv z-to-y transpose failed"
 
+    !$omp parallel do schedule(static) if(gp3d_openmp_active) private(offset, i, j, k)
     do source = 1, plan%nprocs
       offset = plan%zy_recvdispls(source) + 1
       do k = plan%z_starts(source), plan%z_starts(source) + plan%z_counts(source) - 1
@@ -212,6 +247,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
     deallocate(sendbuf, recvbuf)
   end subroutine transpose_z_to_y
 
@@ -224,6 +260,7 @@ contains
     integer :: dest, source, i, j, k, offset, ierr
 
     allocate(sendbuf(sum(plan%zy_recvcounts)), recvbuf(sum(plan%zy_sendcounts)))
+    !$omp parallel do schedule(static) if(gp3d_openmp_active) private(offset, i, j, k)
     do dest = 1, plan%nprocs
       offset = plan%zy_recvdispls(dest) + 1
       do k = plan%z_starts(dest), plan%z_starts(dest) + plan%z_counts(dest) - 1
@@ -235,11 +272,13 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
 
     call MPI_Alltoallv(sendbuf, plan%zy_recvcounts, plan%zy_recvdispls, MPI_DOUBLE_COMPLEX, &
       recvbuf, plan%zy_sendcounts, plan%zy_senddispls, MPI_DOUBLE_COMPLEX, plan%comm, ierr)
     if (ierr /= MPI_SUCCESS) error stop "MPI_Alltoallv y-to-z transpose failed"
 
+    !$omp parallel do schedule(static) if(gp3d_openmp_active) private(offset, i, j, k)
     do source = 1, plan%nprocs
       offset = plan%zy_senddispls(source) + 1
       do k = 1, plan%local_nz
@@ -251,6 +290,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
     deallocate(sendbuf, recvbuf)
   end subroutine transpose_y_to_z
 
