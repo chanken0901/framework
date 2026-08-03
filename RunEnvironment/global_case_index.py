@@ -44,7 +44,7 @@ SUMMARY_FLAT_KEYS = {
     "description",
     "physics.model",
     "solver.profile",
-    "solver.processes",
+    "solver.mpi_processes",
 }
 
 
@@ -123,7 +123,9 @@ def row_from_case(
         "status": _csv_value(_nested(case, SUMMARY_PATHS["status"])),
         "description": _csv_value(_nested(case, SUMMARY_PATHS["description"])),
         "profile": str(profile or _nested(case, "solver.profile", "")),
-        "processes": str(processes or _nested(case, "solver.processes", 1)),
+        "processes": str(
+            processes or _nested(case, "solver.mpi_processes", 1)
+        ),
         "environment": environment,
         "case_path": _relative_case_path(case_path, index_path),
         "registered_at_utc": registered_at_utc or now,
@@ -276,12 +278,18 @@ def sync_environment_case(
     if not case_path.is_file():
         raise GlobalCaseIndexError(f"case design not found: {case_path}")
     case = _mapping(load_yaml(case_path), "case YAML")
+    try:
+        mpi_processes = int(_nested(case, "solver.mpi_processes", 1))
+    except (TypeError, ValueError) as exc:
+        raise GlobalCaseIndexError(
+            "case solver.mpi_processes must be an integer"
+        ) from exc
     sync_case_document(
         case,
         index_path=index_path,
         model=str(lock.get("model", "")),
         profile=str(lock.get("profile", "")),
-        processes=int(lock.get("processes", 1)),
+        processes=mpi_processes,
         environment=environment_root.name,
         case_path=case_path,
     )

@@ -13,8 +13,10 @@ from prepare_environment import (  # noqa: E402
     EnvironmentError,
     _global_case_index_path,
     _numbered_case_destination,
+    _parallel_features,
     _slurm_script,
 )
+from yaml_support import load_yaml  # noqa: E402
 
 
 class NumberedCaseDestinationTests(unittest.TestCase):
@@ -62,11 +64,77 @@ class SlurmScriptTests(unittest.TestCase):
                 "modules": ["gcc", "openmpi"],
             },
             include_tests=False,
+            use_mpi=True,
+            use_openmp=True,
         )
 
         self.assertIn("python3 tools/run_case.py --run", script)
+        self.assertIn('--processes "${SLURM_NTASKS}"', script)
+        self.assertIn('--omp-threads "${SLURM_CPUS_PER_TASK}"', script)
+        self.assertNotIn("#SBATCH --ntasks-per-node", script)
+        self.assertNotIn("#SBATCH --cpus-per-task", script)
         self.assertNotIn("--build", script)
         self.assertNotIn("--all", script)
+
+
+class ParallelFeatureTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        framework_root = SCRIPT_DIR.parents[1]
+        cls.gpe_manifest = load_yaml(
+            framework_root
+            / "SolverLibrary"
+            / "GPE"
+            / "gp3d"
+            / "solver_manifest.yaml"
+        )
+
+    def test_accepts_mpi_openmp_capability_without_counts(self) -> None:
+        design = {
+            "parallel": {
+                "use_mpi": True,
+                "use_openmp": True,
+                "use_cuda": False,
+            }
+        }
+
+        self.assertEqual(
+            _parallel_features(design, self.gpe_manifest, "cpu_mpi_fftw"),
+            (True, True, False),
+        )
+
+    def test_rejects_cuda_flag_for_cpu_profile(self) -> None:
+        design = {
+            "parallel": {
+                "use_mpi": True,
+                "use_openmp": False,
+                "use_cuda": True,
+            }
+        }
+
+        with self.assertRaisesRegex(EnvironmentError, "use_cuda"):
+            _parallel_features(design, self.gpe_manifest, "cpu_mpi_fftw")
+
+
+class NseCaseTemplateTests(unittest.TestCase):
+    def test_parallel_features_and_runtime_counts_are_template_fields(self) -> None:
+        template = (
+            SCRIPT_DIR / "case_templates" / "nse.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("use_openmp: {{use_openmp}}", template)
+        self.assertIn("mpi_processes: {{mpi_processes}}", template)
+        self.assertIn("omp_threads: {{omp_threads}}", template)
+        self.assertNotIn("use_openmp: true", template)
+
+    def test_flow_conditions_share_one_nse_template(self) -> None:
+        template = (
+            SCRIPT_DIR / "case_templates" / "nse.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("type: taylor_green", template)
+        self.assertIn("taylor_green:", template)
+        self.assertIn("hit:", template)
 
 
 if __name__ == "__main__":

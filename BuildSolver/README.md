@@ -40,6 +40,17 @@ python .\build_model.py .\build.yaml --model gpe --list-profiles
 
 ### NSE
 
+| profile | 内容 |
+|---|---|
+| `cuda_single` | 単一GPUのCUDA KEEP・SSPRK3 |
+
+CUDA版のビルドとテスト:
+
+```powershell
+python .\build_model.py .\build.yaml `
+  --model nse --profile cuda_single --test
+```
+
 | プロファイル | 内容 |
 |---|---|
 | `cpu_mpi` | MPI領域分割とOpenMP局所ループ |

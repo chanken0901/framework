@@ -23,7 +23,8 @@ BUILTIN = SCRIPT_DIR / "environment_options.yaml"
 class EnvironmentOptionTests(unittest.TestCase):
     def test_supplied_design_templates_resolve(self) -> None:
         expected = {
-            "environment.yaml": ("cpu_mpi_fftw", "workstation", False),
+            "environment.gpe.yaml": ("cpu_mpi_fftw", "workstation", False),
+            "environment.nse.yaml": ("cpu_mpi", "workstation", False),
             "environment.hpc.yaml": ("cpu_mpi_fftw", "hpc_slurm", True),
         }
         for name, values in expected.items():
@@ -43,12 +44,16 @@ class EnvironmentOptionTests(unittest.TestCase):
                 "source": "mozart_nas",
                 "model": "gpe_cpu_mpi_fftw",
                 "case": "gpe_quantum_taylor_green",
-                "execution": "mpi4_release",
+                "execution": "release",
             },
-            "execution": {"processes": 6},
+            "parallel": {
+                "use_mpi": True,
+                "use_openmp": False,
+                "use_cuda": False,
+            },
         }
         resolved, state = resolve_design_options(
-            design, SCRIPT_DIR / "environment.yaml", BUILTIN
+            design, SCRIPT_DIR / "environment.gpe.yaml", BUILTIN
         )
 
         self.assertEqual(
@@ -56,8 +61,8 @@ class EnvironmentOptionTests(unittest.TestCase):
             r"\\Mozart\share\FrameWork",
         )
         self.assertEqual(resolved["model"]["profile"], "cpu_mpi_fftw")
-        self.assertEqual(resolved["execution"]["processes"], 6)
         self.assertEqual(resolved["execution"]["configuration"], "Release")
+        self.assertTrue(resolved["parallel"]["use_mpi"])
         self.assertEqual(state["selections"]["model"]["id"], "gpe_cpu_mpi_fftw")
 
     def test_legacy_inline_design_needs_no_selection(self) -> None:
@@ -67,7 +72,7 @@ class EnvironmentOptionTests(unittest.TestCase):
             "model": {"name": "nse", "profile": "cpu_mpi"},
         }
         resolved, state = resolve_design_options(
-            design, SCRIPT_DIR / "environment.yaml", BUILTIN
+            design, SCRIPT_DIR / "environment.gpe.yaml", BUILTIN
         )
 
         self.assertEqual(resolved, design)
@@ -84,12 +89,10 @@ class EnvironmentOptionTests(unittest.TestCase):
                         "catalog_id: local_test",
                         "options:",
                         "  execution:",
-                        "    mpi16_release:",
-                        "      label: MPI 16",
+                        "    release_large_build:",
+                        "      label: Release large build",
                         "      values:",
                         "        configuration: Release",
-                        "        processes: 16",
-                        "        omp_threads: 1",
                         "        parallel_jobs: 16",
                         "",
                     ]
@@ -104,7 +107,7 @@ class EnvironmentOptionTests(unittest.TestCase):
                         "option_catalogs:",
                         "  - local.yaml",
                         "select:",
-                        "  execution: mpi16_release",
+                        "  execution: release_large_build",
                         "",
                     ]
                 ),
@@ -115,8 +118,8 @@ class EnvironmentOptionTests(unittest.TestCase):
                 design, design_path, BUILTIN
             )
 
-            self.assertEqual(resolved["execution"]["processes"], 16)
-            self.assertIn("mpi16_release", state["options"]["execution"])
+            self.assertEqual(resolved["execution"]["parallel_jobs"], 16)
+            self.assertIn("release_large_build", state["options"]["execution"])
 
     def test_duplicate_option_requires_explicit_override(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -154,36 +157,51 @@ class EnvironmentOptionTests(unittest.TestCase):
         }
         with self.assertRaises(OptionCatalogError):
             resolve_design_options(
-                design, SCRIPT_DIR / "environment.yaml", BUILTIN
+                design, SCRIPT_DIR / "environment.gpe.yaml", BUILTIN
             )
 
-    def test_single_gpu_rejects_multiple_processes(self) -> None:
+    def test_single_gpu_uses_release_execution_without_parallel_count(self) -> None:
         design = {
             "schema_version": 1,
             "select": {
                 "model": "gpe_cuda_single",
-                "execution": "mpi8_release",
+                "execution": "release",
             },
-        }
-        with self.assertRaises(OptionCatalogError):
-            resolve_design_options(
-                design, SCRIPT_DIR / "environment.yaml", BUILTIN
-            )
-
-    def test_single_gpu_accepts_serial_execution(self) -> None:
-        design = {
-            "schema_version": 1,
-            "select": {
-                "model": "gpe_cuda_single",
-                "execution": "serial_release",
+            "parallel": {
+                "use_mpi": False,
+                "use_openmp": False,
+                "use_cuda": True,
             },
         }
         resolved, _ = resolve_design_options(
-            design, SCRIPT_DIR / "environment.yaml", BUILTIN
+            design, SCRIPT_DIR / "environment.gpe.yaml", BUILTIN
         )
 
         self.assertEqual(resolved["model"]["profile"], "cuda_single")
-        self.assertEqual(resolved["execution"]["processes"], 1)
+        self.assertNotIn("processes", resolved["execution"])
+        self.assertTrue(resolved["parallel"]["use_cuda"])
+
+    def test_nse_single_gpu_accepts_cuda_parallel_flags(self) -> None:
+        design = {
+            "schema_version": 1,
+            "select": {
+                "model": "nse_cuda_single",
+                "case": "nse_case",
+                "execution": "release",
+            },
+            "parallel": {
+                "use_mpi": False,
+                "use_openmp": False,
+                "use_cuda": True,
+            },
+        }
+        resolved, _ = resolve_design_options(
+            design, SCRIPT_DIR / "environment.nse.yaml", BUILTIN
+        )
+
+        self.assertEqual(resolved["model"]["name"], "nse")
+        self.assertEqual(resolved["model"]["profile"], "cuda_single")
+        self.assertNotIn("processes", resolved["execution"])
 
 
 if __name__ == "__main__":

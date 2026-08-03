@@ -166,15 +166,28 @@ def validate_case(case: dict[str, Any], manifest: dict[str, Any], profile_name: 
     profile = profiles.get(profile_name, {})
     definitions = profile.get("cmake", {}) if isinstance(profile, dict) else {}
     use_mpi = bool(definitions.get("USE_MPI", False))
+    openmp_capable = bool(definitions.get("USE_OPENMP", False))
     gpu_backend = str(definitions.get("GPU_BACKEND", "none")).lower()
     use_cuda = gpu_backend in {"cuda", "cufftmp"}
-    processes = nested(case, "solver.processes", 1)
+    processes = nested(case, "solver.mpi_processes", 1)
     if not isinstance(processes, int) or isinstance(processes, bool) or processes < 1:
-        errors.append("solver.processes must be a positive integer")
+        errors.append("solver.mpi_processes must be a positive integer")
     elif not use_mpi and processes != 1:
-        errors.append(f"solver.processes must be 1 for non-MPI profile {profile_name}")
+        errors.append(
+            f"solver.mpi_processes must be 1 for non-MPI profile {profile_name}"
+        )
     if use_mpi and gpu_backend == "cuda":
         errors.append("the single-GPU CUDA profile cannot be combined with MPI")
+    use_openmp = nested(case, "solver.use_openmp", False)
+    omp_threads = nested(case, "solver.omp_threads", 1)
+    if not isinstance(use_openmp, bool):
+        errors.append("solver.use_openmp must be true or false")
+    elif use_openmp and not openmp_capable:
+        errors.append(
+            f"solver.use_openmp requires an OpenMP-capable profile; {profile_name} is not one"
+        )
+    if not isinstance(omp_threads, int) or isinstance(omp_threads, bool) or omp_threads < 1:
+        errors.append("solver.omp_threads must be a positive integer")
 
     if errors:
         raise CaseValidationError("invalid case YAML:\n  - " + "\n  - ".join(errors))
@@ -246,7 +259,7 @@ def generate_input_namelist(
         ("use_cuda", use_cuda),
         ("cuda_device", nested(case, "solver.cuda_device", 0)),
         ("rank", 0),
-        ("nprocs", nested(case, "solver.processes", 1)),
+        ("nprocs", nested(case, "solver.mpi_processes", 1)),
     ]
 
     gpe = dict(nested(case, "physics.gpe", {}))

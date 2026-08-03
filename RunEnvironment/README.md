@@ -1,7 +1,144 @@
 # 外部実行環境ジェネレーター
 
+## NSE単一GPU
+
+NSEのCPU/MPI版と単一GPU版は、どちらも`environment.nse.yaml`を設計書の
+ひな型にします。GPEと同様に、同じ設計書の`select.model`と
+`parallel`でMPI、OpenMP、CUDAの使用可否を指定し、`select.execution`では
+Debug/Releaseだけを選びます。
+
+```powershell
+$tool = "C:\Users\Owner\Documents\Codex\FrameWork\ScriptLibrary\RunEnvironment"
+$designs = "$env:USERPROFILE\ResearchRuns\Designs"
+$design = "$designs\nse_cuda.yaml"
+
+New-Item -ItemType Directory -Force $designs | Out-Null
+Copy-Item "$tool\environment.nse.yaml" $design
+```
+
+コピーした設計書を次のように変更します。
+
+```yaml
+select:
+  model: nse_cuda_single
+  execution: release
+
+parallel:
+  use_mpi: false
+  use_openmp: false
+  use_cuda: true
+```
+
+CPU MPI + OpenMP版では次を選択します。
+
+```yaml
+select:
+  model: nse_cpu_mpi
+  execution: release
+
+parallel:
+  use_mpi: true
+  use_openmp: true
+  use_cuda: false
+```
+
+実行環境生成後は、GPEおよびNSE CPU版と同じコマンドを使います。
+
+```powershell
+python "$tool\prepare_environment.py" $design --dry-run
+python "$tool\prepare_environment.py" $design
+
+# 生成ログに表示されたnse_caseNNNNへ移動する
+python .\tools\run_case.py --prepare
+python .\tools\run_case.py --validate-only
+python .\tools\run_case.py --build
+python .\tools\run_case.py --run
+```
+
+実行前に`cases\caseNNNN\case.yaml`で並列数を指定します。
+
+```yaml
+solver:
+  mpi_processes: 4
+  omp_threads: 4
+```
+
+## GPEとNSEを同じ手順で実行する
+
+モデル別の標準設計書は次の2ファイルです。
+
+| モデル | 標準設計書 | 生成先の名前 |
+|---|---|---|
+| GPE | `environment.gpe.yaml` | `gpe_caseNNNN` |
+| NSE | `environment.nse.yaml` | `nse_caseNNNN` |
+
+どちらも実行環境を生成した後は、同じ`tools/run_case.py`を使用します。
+
+### GPE
+
+```powershell
+$framework = "C:\Users\Owner\Documents\Codex\FrameWork"
+$tool = "$framework\ScriptLibrary\RunEnvironment"
+$designs = "$env:USERPROFILE\ResearchRuns\Designs"
+
+New-Item -ItemType Directory -Force $designs | Out-Null
+Copy-Item "$tool\environment.gpe.yaml" "$designs\gpe_qtgv.yaml"
+python "$tool\prepare_environment.py" "$designs\gpe_qtgv.yaml"
+```
+
+### NSE
+
+```powershell
+$framework = "C:\Users\Owner\Documents\Codex\FrameWork"
+$tool = "$framework\ScriptLibrary\RunEnvironment"
+$designs = "$env:USERPROFILE\ResearchRuns\Designs"
+
+New-Item -ItemType Directory -Force $designs | Out-Null
+Copy-Item "$tool\environment.nse.yaml" "$designs\nse_tgv.yaml"
+
+python "$tool\prepare_environment.py" "$designs\nse_tgv.yaml"
+
+# 生成ログに表示された自動採番後のディレクトリへ移動する
+Set-Location "$env:USERPROFILE\ResearchRuns\nse_caseNNNN"
+
+python .\tools\run_case.py --prepare
+python .\tools\run_case.py --validate-only
+python .\tools\run_case.py --build
+python .\tools\run_case.py --run
+```
+
+計算条件は`cases\caseNNNN\case.yaml`を編集します。編集後の`input.dat`は
+`--prepare`、`--validate-only`、`--build`、`--run`のいずれでも必要に応じて
+自動再生成されます。結果は`cases\caseNNNN\output`へ出力されます。
+現在のNSE MPI分割は4プロセス以上を必要とします。
+`solver.mpi_processes`と`solver.omp_threads`は実行時設定であり、実行環境を
+作り直さずに変更できます。
+
+## ParaView可視化
+
+生成した実行環境では、GPE/NSEとも同じコマンドでSLFをVTI/PVDへ変換できます。
+既定では最新の完全な時刻だけを空間方向に2点おきで変換するため、まず可視化を
+確認するときに向いています。
+
+```powershell
+python .\tools\postprocess_case.py
+```
+
+NSEの全解像度データについて、0、500、1000ステップだけを変換する例です。
+
+```powershell
+python .\tools\postprocess_case.py `
+  --steps 0,500,1000 `
+  --stride 1 `
+  --fields rho,u,v,w,p
+```
+
+結果は`cases\caseNNNN\paraview`へ生成されます。ParaViewでは
+`collection.pvd`を開きます。計算中に実行した場合、全MPI rankの書き込みが
+完了していない最新ステップは自動的に除外されます。
+
 ローカルFrameWorkは`SolverLibrary`と`ScriptLibrary`の編集元です。計算時は
-`environment.yaml`に従って、必要なソースとスクリプトだけをワークステーションの
+モデル別の`environment.<model>.yaml`に従って、必要なソースとスクリプトだけをワークステーションの
 ローカルSSD、またはスパコンのscratchへコピーします。NASは同期ミラーとして扱い、
 直接編集、ビルド、実行には使いません。
 
@@ -25,8 +162,8 @@
 [`ENVIRONMENT_OPTIONS.md`](ENVIRONMENT_OPTIONS.md)にまとめています。
 
 ```powershell
-python .\prepare_environment.py .\environment.yaml --list-options
-python .\prepare_environment.py .\environment.yaml --list-options model
+python .\prepare_environment.py .\environment.gpe.yaml --list-options
+python .\prepare_environment.py .\environment.nse.yaml --list-options model
 ```
 
 設計書では次のように選びます。
@@ -38,9 +175,14 @@ select:
   model: gpe_cpu_mpi_fftw
   target: windows_gnu_msmpi
   case: gpe_quantum_taylor_green
-  execution: mpi4_release
+  execution: release
   scheduler: disabled
   archive: none
+
+parallel:
+  use_mpi: true
+  use_openmp: false
+  use_cuda: false
 ```
 
 研究室や計算機固有の候補は別のYAMLカタログへ追加できます。既存の分類に候補を
@@ -48,7 +190,8 @@ select:
 
 ## ワークステーション
 
-ローカルFrameWork上の[`environment.yaml`](environment.yaml)をテンプレートとして保ち、
+ローカルFrameWork上の[`environment.gpe.yaml`](environment.gpe.yaml)と
+[`environment.nse.yaml`](environment.nse.yaml)をモデル別テンプレートとして保ち、
 計算機側へコピーした設計書の`select.source`と`select.destination`を選びます。
 通常のWindows運用では`select.source: local_framework`を使います。NASは同期ミラーとして
 扱い、直接編集やビルドには使いません。候補にないパスは`source.framework_root`
@@ -59,7 +202,7 @@ $framework = "C:\Users\Owner\Documents\Codex\FrameWork"
 $tool = "$framework\ScriptLibrary\RunEnvironment"
 $designs = "$env:USERPROFILE\ResearchRuns\Designs"
 New-Item -ItemType Directory -Force $designs | Out-Null
-Copy-Item "$tool\environment.yaml" "$designs\gpe_case0001.yaml"
+Copy-Item "$tool\environment.gpe.yaml" "$designs\gpe_case0001.yaml"
 
 python "$tool\prepare_environment.py" `
   "$designs\gpe_case0001.yaml" --dry-run
@@ -103,6 +246,13 @@ python .\tools\run_case.py --build
 python .\tools\run_case.py --run
 ```
 
+`--run`は`case.yaml`の`solver.mpi_processes`と`solver.omp_threads`を読みます。
+一度だけ別の数で実行する場合は、次のようにコマンドラインで上書きできます。
+
+```powershell
+python .\tools\run_case.py --run --processes 8 --omp-threads 2
+```
+
 `--run`はCMakeキャッシュ生成、Visual Studio初期化、configure、buildを行いません。
 実行ファイルが存在しない場合は、先に`--build`を実行するようエラーで案内します。
 
@@ -136,7 +286,29 @@ NSE:
 ```yaml
 select:
   model: nse_cpu_mpi
-  case: nse_taylor_green
+  case: nse_case
+```
+
+NSEの流れ場はenvironment設計書では分けません。生成後の
+`cases/caseNNNN/case.yaml`にある`flow.type`を変更します。
+
+```yaml
+flow:
+  type: taylor_green
+```
+
+分散FFTでHIT初期条件を生成する場合は、同じ`environment.nse.yaml`で
+`model: nse_cpu_mpi_2decomp_fftw`を選び、生成後の`case.yaml`を
+次のように変更します。
+
+```yaml
+flow:
+  type: hit_spectral
+  hit:
+    spectrum: johnsen
+    random_seed: 13579
+    rms_velocity: 0.1
+    peak_wavenumber: 4.0
 ```
 
 GPE:
@@ -175,12 +347,13 @@ cd "$SCRATCH/gpe_case0001"
 python3 tools/run_case.py --prepare
 python3 tools/run_case.py --validate-only
 python3 tools/run_case.py --build
-sbatch submit.slurm
+sbatch --nodes=1 --ntasks-per-node=8 --cpus-per-task=2 submit.slurm
 ```
 
 ビルドは利用機関が許可するログインノード、ビルドノード、またはインタラクティブジョブで
 1回実行します。標準の`submit.slurm`は`python3 tools/run_case.py --run`だけを実行し、
-Slurmジョブごとの再ビルドを避けます。
+Slurmジョブごとの再ビルドを避けます。MPIプロセス数は`SLURM_NTASKS`、OpenMP
+スレッド数は`SLURM_CPUS_PER_TASK`から取得するため、`sbatch`実行時に指定します。
 
 ## 更新と再生成
 

@@ -245,7 +245,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-root", default="/mnt/data_nas")
     parser.add_argument("--model", default="nse")
     parser.add_argument("--solver-profile", default="cpu_mpi")
-    parser.add_argument("--processes", type=int, default=1)
+    parser.add_argument(
+        "--use-mpi", action=argparse.BooleanOptionalAction, default=False
+    )
+    parser.add_argument(
+        "--use-openmp", action=argparse.BooleanOptionalAction, default=False
+    )
+    parser.add_argument(
+        "--use-cuda", action=argparse.BooleanOptionalAction, default=False
+    )
+    parser.add_argument("--mpi-processes", type=int, default=1)
     parser.add_argument("--omp-threads", type=int, default=1)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -282,7 +291,10 @@ def main() -> int:
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "physics_model": args.model,
         "solver_profile": args.solver_profile,
-        "processes": str(args.processes),
+        "use_mpi": "true" if args.use_mpi else "false",
+        "use_openmp": "true" if args.use_openmp else "false",
+        "use_cuda": "true" if args.use_cuda else "false",
+        "mpi_processes": str(args.mpi_processes),
         "omp_threads": str(args.omp_threads),
     }
 

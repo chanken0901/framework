@@ -38,6 +38,7 @@ openmp:
 
 libraries:
   fftw_root: C:/msys64/ucrt64
+  decomp2d_root: C:/Users/Owner/Documents/Codex/ThirdParty/install/2decomp-fft-v2.1.0
   cuda_compiler:
   cuda_toolkit_root:
   cuda_architectures: 86

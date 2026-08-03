@@ -9,9 +9,14 @@ select:
   model: gpe_cpu_mpi_fftw
   target: linux_hpc_slurm
   case: gpe_quantum_taylor_green
-  execution: mpi8_release
-  scheduler: slurm_cpu_8
+  execution: release
+  scheduler: slurm
   archive: gztar
+
+parallel:
+  use_mpi: true
+  use_openmp: false
+  use_cuda: false
 
 # サイト固有値やジョブごとに変える値だけを上書きする。
 case:

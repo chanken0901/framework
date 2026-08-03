@@ -61,6 +61,20 @@ options:
         name: nse
         profile: cpu_mpi
         include_tests: false
+    nse_cpu_mpi_2decomp_fftw:
+      label: NSE CPU MPI 2DECOMP&FFT
+      description: 2DECOMP&FFTとFFTW3による分散FFT初期化・Forcingに対応したCPU MPI版。
+      values:
+        name: nse
+        profile: cpu_mpi_2decomp_fftw
+        include_tests: false
+    nse_cuda_single:
+      label: NSE 単一GPU
+      description: 単一GPU上でKEEP対流項とSSPRK3をCUDA計算する。
+      values:
+        name: nse
+        profile: cuda_single
+        include_tests: false
     gpe_cpu_serial_dft:
       label: GPE CPU逐次 DFT
       description: 参照用DFTバックエンドを単一プロセスで使う。
@@ -92,8 +106,6 @@ options:
     gpe_cuda_single:
       label: GPE 単一GPU
       description: 単一GPUのCUDAおよびcuFFTバックエンドを使う。
-      requires:
-        execution.processes: 1
       values:
         name: gpe
         profile: cuda_single
@@ -127,17 +139,17 @@ options:
         machine_profile: ScriptLibrary/RunEnvironment/machine_profiles/linux_hpc_slurm.yaml
 
   case:
-    nse_taylor_green:
-      label: NSE Taylor-Green渦
-      description: NSEのTaylor-Green渦caseを生成する。
+    nse_case:
+      label: NSE case
+      description: 流れ場条件をcase.yamlで選択するNSE共通caseを生成する。
       requires:
         model.name: nse
       values:
         create: true
-        template: ScriptLibrary/RunEnvironment/case_templates/nse_taylor_green.yaml
+        template: ScriptLibrary/RunEnvironment/case_templates/nse.yaml
         id: case0001
-        label: tgv_baseline
-        description: Taylor-Green vortex baseline
+        label: nse_baseline
+        description: NSE baseline case
         project_name: NSEResearch
         data_root: results
     gpe_quantum_taylor_green:
@@ -155,46 +167,24 @@ options:
         data_root: results
 
   execution:
-    debug_single:
-      label: Debug 単一プロセス
-      description: 1プロセス、1 OpenMPスレッドのDebugビルド。
+    debug:
+      label: Debug
+      description: 並列機能の構成とは独立したDebugビルド。
       values:
         configuration: Debug
-        processes: 1
-        omp_threads: 1
         parallel_jobs: 4
-    serial_release:
-      label: Release 単一プロセス
-      description: 1プロセス、1 OpenMPスレッドのReleaseビルド。
+    release:
+      label: Release
+      description: 並列機能の構成とは独立したReleaseビルド。
       values:
         configuration: Release
-        processes: 1
-        omp_threads: 1
         parallel_jobs: 8
-    mpi4_release:
-      label: Release 4 MPIプロセス
-      description: 4 MPIプロセスでReleaseビルドおよび実行する。
+    relwithdebinfo:
+      label: RelWithDebInfo
+      description: 最適化とデバッグ情報を有効にしたビルド。
       values:
-        configuration: Release
-        processes: 4
-        omp_threads: 1
+        configuration: RelWithDebInfo
         parallel_jobs: 8
-    mpi8_release:
-      label: Release 8 MPIプロセス
-      description: 8 MPIプロセスでReleaseビルドおよび実行する。
-      values:
-        configuration: Release
-        processes: 8
-        omp_threads: 1
-        parallel_jobs: 8
-    mpi24_release:
-      label: Release 24 MPIプロセス
-      description: 24 MPIプロセスでReleaseビルドおよび実行する。
-      values:
-        configuration: Release
-        processes: 24
-        omp_threads: 1
-        parallel_jobs: 24
 
   scheduler:
     disabled:
@@ -202,9 +192,9 @@ options:
       description: ジョブ投入スクリプトを生成しない。
       values:
         enabled: false
-    slurm_cpu_8:
-      label: Slurm CPU 8タスク
-      description: 1ノード、8 CPUタスクのSlurmスクリプトを生成する。
+    slurm:
+      label: Slurm
+      description: 並列数をsbatch実行時に指定する汎用Slurmスクリプトを生成する。
       requires:
         target.type: hpc_slurm
       values:
@@ -212,10 +202,6 @@ options:
         job_name: solver-case0001
         account:
         partition:
-        nodes: 1
-        tasks_per_node: 8
-        cpus_per_task: 1
-        gpus_per_node:
         time_limit: 01:00:00
         output: slurm-%j.out
         modules:

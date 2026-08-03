@@ -11,9 +11,14 @@ select:
   model: gpe_cpu_mpi_fftw
   target: windows_gnu_msmpi
   case: gpe_quantum_taylor_green
-  execution: mpi8_release
+  execution: release
   scheduler: disabled
   archive: none
+
+parallel:
+  use_mpi: true
+  use_openmp: false
+  use_cuda: false
 
 # 選択肢の値を変更したい部分だけを同名セクションに記述する。
 # ここではcaseの識別情報だけを上書きしている。

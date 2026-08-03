@@ -290,13 +290,21 @@ def _model_machine_variables(
             )
         use_mpi = bool(execution.get("use_mpi", True))
         use_openmp = bool(execution.get("use_openmp", True))
+        gpu_backend = str(cmake_variables.get("NSE_GPU_BACKEND", "none")).lower()
         if use_openmp and not bool(openmp.get("enabled", False)):
             raise ModelBuildError("NSE profile requires OpenMP, but machine openmp.enabled is false")
+        if gpu_backend not in {"none", "cuda"}:
+            raise ModelBuildError(
+                f"unsupported NSE GPU backend {gpu_backend!r}; use none or cuda"
+            )
+        if gpu_backend == "cuda" and use_mpi:
+            raise ModelBuildError("NSE cuda profile is single-GPU and cannot enable MPI")
         cmake_variables.update(
             {
                 "NSE_CORE_SOURCES": library_sources,
                 "NSE_MAIN_SOURCE": executable_sources[0],
                 "NSE_OUTPUT_NAME": executable,
+                "NSE_USE_MPI": use_mpi,
                 "NSE_MPI_PROVIDER": str(mpi.get("provider") or "AUTO").upper(),
                 "NSE_ENABLE_OPENMP": use_openmp,
                 "NSE_ENABLE_WARNINGS": warnings,
@@ -307,15 +315,37 @@ def _model_machine_variables(
                 "NSE_RELWITHDEBINFO_FLAGS": relwithdebinfo_flags,
             }
         )
-        if mpi.get("root"):
+        if use_mpi and mpi.get("root"):
             cmake_variables["MSMPI_ROOT"] = str(mpi["root"])
-        return use_mpi, use_openmp, "none"
+        if libraries.get("decomp2d_root"):
+            cmake_variables["NSE_2DECOMP_ROOT"] = str(
+                libraries["decomp2d_root"]
+            )
+        if gpu_backend == "cuda":
+            if libraries.get("cuda_compiler"):
+                cmake_variables["CMAKE_CUDA_COMPILER"] = str(
+                    libraries["cuda_compiler"]
+                )
+            if libraries.get("cuda_toolkit_root"):
+                cmake_variables["CUDAToolkit_ROOT"] = str(
+                    libraries["cuda_toolkit_root"]
+                )
+            if libraries.get("cuda_architectures") is not None:
+                cmake_variables["NSE_CUDA_ARCHITECTURES"] = libraries[
+                    "cuda_architectures"
+                ]
+        return use_mpi, use_openmp, gpu_backend
 
     if adapter != "gp3d_cmake_v1":
         raise ModelBuildError(f"unsupported build adapter: {adapter}")
 
     use_mpi = _enabled(cmake_variables.get("USE_MPI", False))
+    use_openmp = _enabled(cmake_variables.get("USE_OPENMP", False))
     gpu_backend = str(cmake_variables.get("GPU_BACKEND", "none")).lower()
+    if use_openmp and not bool(openmp.get("enabled", False)):
+        raise ModelBuildError(
+            "GPE profile requires OpenMP, but machine openmp.enabled is false"
+        )
     if gpu_backend == "cuda" and use_mpi:
         raise ModelBuildError("GPE cuda profile is single-GPU and cannot enable MPI")
     if gpu_backend == "cufftmp" and not use_mpi:
@@ -352,7 +382,7 @@ def _model_machine_variables(
             cmake_variables["NVSHMEM_ROOT"] = str(libraries["nvshmem_root"])
         if libraries.get("cufftmp_api"):
             cmake_variables["CUFFTMP_API"] = str(libraries["cufftmp_api"])
-    return use_mpi, False, gpu_backend
+    return use_mpi, use_openmp, gpu_backend
 
 
 def _resolve(args: argparse.Namespace) -> ResolvedBuild:
@@ -541,6 +571,7 @@ def _cache_type(name: str, value: Any) -> tuple[str, str]:
         "MSMPI_ROOT",
         "MPI_ROOT",
         "FFTW_ROOT",
+        "NSE_2DECOMP_ROOT",
         "CUDAToolkit_ROOT",
         "CUFFTMP_ROOT",
         "NVSHMEM_ROOT",
@@ -905,7 +936,11 @@ def _summary(resolved: ResolvedBuild) -> None:
     print(f"     configuration:  {resolved.configuration}")
     print(f"     solver root:    {resolved.solver_root}")
     print(f"     build dir:      {resolved.build_dir}")
-    print(f"     MPI/GPU:        {resolved.use_mpi}/{resolved.gpu_backend}", flush=True)
+    print(
+        "     MPI/OpenMP/GPU: "
+        f"{resolved.use_mpi}/{resolved.use_openmp}/{resolved.gpu_backend}",
+        flush=True,
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

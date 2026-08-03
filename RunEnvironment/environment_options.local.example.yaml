@@ -20,11 +20,9 @@ options:
         root: D:/ResearchRuns/gpe_case0001
 
   execution:
-    mpi16_release:
-      label: Release sixteen MPI processes
-      description: Example larger workstation or cluster allocation.
+    release_large_build:
+      label: Release large build
+      description: Example configuration using sixteen concurrent compile jobs.
       values:
         configuration: Release
-        processes: 16
-        omp_threads: 1
         parallel_jobs: 16

@@ -32,7 +32,7 @@ def _case(case_id: str, model: str, profile: str, nx: int) -> dict:
         "flow": {"type": "quantum_taylor_green"},
         "grid": {"nx": nx, "ny": nx, "nz": nx},
         "time": {"dt": 1.0e-4, "nsteps": 100},
-        "solver": {"profile": profile, "processes": 1},
+        "solver": {"profile": profile, "mpi_processes": 1},
     }
 
 
@@ -101,7 +101,7 @@ class GlobalCaseIndexTests(unittest.TestCase):
                         "schema_version": 1,
                         "model": "gpe",
                         "profile": "cuda_single",
-                        "processes": 1,
+                        "use_mpi": False,
                         "case_id": "case0001",
                         "case_directory": "cases/case0001",
                     }

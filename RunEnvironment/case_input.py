@@ -56,12 +56,33 @@ NSE_KEYS = (
     "nv",
     "nghost",
     "gamma",
+    "cfl",
     "small_rho",
     "small_p",
     "rho0",
     "mach",
     "reynolds",
     "prandtl",
+    "convective_scheme",
+    "viscous_scheme",
+    "boundary_condition",
+    "time_integrator",
+    "hit_spectrum",
+    "hit_seed",
+    "hit_rms_velocity",
+    "hit_peak_wavenumber",
+    "hit_integral_length",
+    "hit_kolmogorov_length",
+    "hit_dealias_fraction",
+    "forcing_scheme",
+    "forcing_spectrum",
+    "forcing_fft_backend",
+    "forcing_k_cutoff",
+    "forcing_target_dissipation",
+    "forcing_dilatational_ratio",
+    "forcing_denominator_floor",
+    "forcing_max_coefficient",
+    "forcing_report_interval",
 )
 
 NSE_ALIASES = {
@@ -116,6 +137,11 @@ def _append(lines: list[str], values: list[tuple[str, Any]]) -> None:
             lines.append(f"  {key} = {_fortran(value)}")
 
 
+def _canonical_selector(value: str) -> str:
+    """Normalize human-readable selector spelling to the solver convention."""
+    return "_".join(value.strip().lower().replace("-", " ").split())
+
+
 def _profile_settings(
     manifest: dict[str, Any], profile_name: str
 ) -> tuple[dict[str, Any], bool, bool, str]:
@@ -130,12 +156,22 @@ def _profile_settings(
         profile.get("execution", {}), f"profile {profile_name}.execution"
     )
     use_mpi = bool(cmake.get("USE_MPI", execution.get("use_mpi", False)))
-    use_openmp = bool(execution.get("use_openmp", False))
-    gpu_backend = str(cmake.get("GPU_BACKEND", "none")).lower()
+    use_openmp = bool(
+        cmake.get(
+            "USE_OPENMP",
+            cmake.get("NSE_ENABLE_OPENMP", execution.get("use_openmp", False)),
+        )
+    )
+    gpu_backend = str(
+        cmake.get("GPU_BACKEND", cmake.get("NSE_GPU_BACKEND", "none"))
+    ).lower()
+    model = str(manifest.get("model", "")).lower()
     if gpu_backend == "cufftmp":
         backend = "cufftmp"
     elif gpu_backend == "cuda":
-        backend = "cufft"
+        backend = "cuda" if model == "nse" else "cufft"
+    elif model == "nse":
+        backend = "cpu_mpi" if use_mpi else "serial"
     else:
         backend = str(cmake.get("FFT_BACKEND", nested(profile, "backend", "serial")))
     return profile, use_mpi, use_openmp, backend
@@ -152,18 +188,61 @@ def _validate_solver_selection(
             "the execution environment"
         )
 
-    _, use_mpi, _, _ = _profile_settings(manifest, profile_name)
+    profile, use_mpi, profile_openmp, backend = _profile_settings(
+        manifest, profile_name
+    )
+    use_cuda = backend in {"cuda", "cufft", "cufftmp"}
+    solver = _mapping(nested(case, "solver", {}), "case solver")
+    if "processes" in solver:
+        raise CaseInputError(
+            "solver.processes is no longer supported; use solver.mpi_processes"
+        )
     try:
-        processes = int(nested(case, "solver.processes", 1))
+        processes = int(solver.get("mpi_processes", 1))
     except (TypeError, ValueError) as exc:
-        raise CaseInputError("case solver.processes must be an integer") from exc
+        raise CaseInputError("case solver.mpi_processes must be an integer") from exc
     if processes < 1:
-        raise CaseInputError("case solver.processes must be positive")
+        raise CaseInputError("case solver.mpi_processes must be positive")
     if not use_mpi and processes != 1:
         raise CaseInputError(
-            f"profile {profile_name!r} does not use MPI, so solver.processes "
+            f"profile {profile_name!r} does not use MPI, so solver.mpi_processes "
             "must be 1"
         )
+    if (
+        str(manifest.get("model", "")).lower() == "nse"
+        and use_mpi
+        and processes < 4
+    ):
+        raise CaseInputError(
+            "the current NSE y-z decomposition requires at least 4 MPI processes"
+        )
+    requested_mpi = solver.get("use_mpi", use_mpi)
+    requested_openmp = solver.get("use_openmp", False)
+    requested_cuda = solver.get("use_cuda", use_cuda)
+    for name, value in (
+        ("use_mpi", requested_mpi),
+        ("use_openmp", requested_openmp),
+        ("use_cuda", requested_cuda),
+    ):
+        if not isinstance(value, bool):
+            raise CaseInputError(f"case solver.{name} must be true or false")
+    if requested_mpi != use_mpi:
+        raise CaseInputError(
+            f"case solver.use_mpi does not match profile {profile_name!r}; "
+            "regenerate the execution environment"
+        )
+    if requested_cuda != use_cuda:
+        raise CaseInputError(
+            f"case solver.use_cuda does not match profile {profile_name!r}; "
+            "regenerate the execution environment"
+        )
+    if requested_openmp and not profile_openmp:
+        raise CaseInputError(
+            f"profile {profile_name!r} was built without OpenMP support"
+        )
+    omp_threads = nested(case, "solver.omp_threads", 1)
+    if not isinstance(omp_threads, int) or isinstance(omp_threads, bool) or omp_threads < 1:
+        raise CaseInputError("case solver.omp_threads must be a positive integer")
 
 
 def _common_values(
@@ -173,11 +252,22 @@ def _common_values(
     use_openmp: bool,
     backend: str,
 ) -> list[tuple[str, Any]]:
-    processes = int(nested(case, "solver.processes", 1))
+    processes = int(nested(case, "solver.mpi_processes", 1))
+    initial_condition = str(_required(case, "flow.type")).strip()
+    if equation.upper() == "NSE":
+        initial_condition = {
+            "tgv": "taylor_green",
+            "taylor-green": "taylor_green",
+            "taylor_green_vortex": "taylor_green",
+            "hit": "hit_spectral",
+            "homogeneous_isotropic_turbulence": "hit_spectral",
+            "homogeneous-isotropic-turbulence": "hit_spectral",
+        }.get(initial_condition.lower(), initial_condition.lower())
+
     values = [
         ("equation", equation),
         ("case_name", str(_required(case, "case_id"))),
-        ("initial_condition", str(_required(case, "flow.type"))),
+        ("initial_condition", initial_condition),
         ("nx", _required(case, "grid.nx")),
         ("ny", _required(case, "grid.ny")),
         ("nz", _required(case, "grid.nz")),
@@ -211,18 +301,123 @@ def _common_values(
 def render_nse(
     case: dict[str, Any], manifest: dict[str, Any], profile_name: str
 ) -> str:
-    _, use_mpi, use_openmp, backend = _profile_settings(manifest, profile_name)
+    profile, use_mpi, use_openmp, backend = _profile_settings(
+        manifest, profile_name
+    )
     nse = dict(_mapping(nested(case, "physics.nse", {}), "physics.nse"))
+    numerics = _mapping(nested(case, "numerics", {}), "numerics")
+    if "convective_order" in nse or "convective_order" in numerics:
+        raise CaseInputError(
+            "convective_order is no longer supported; set "
+            "numerics.convective_scheme to KEEP2 or KEEP6"
+        )
     for source, target in NSE_ALIASES.items():
         if target not in nse and source in nse:
             nse[target] = nse[source]
+    numerical_aliases = {
+        "convective_scheme": (
+            numerics.get("convective_scheme"),
+            numerics.get("flux"),
+        ),
+        "viscous_scheme": (numerics.get("viscous_scheme"),),
+        "boundary_condition": (numerics.get("boundary_condition"),),
+        "time_integrator": (
+            numerics.get("time_integrator"),
+            numerics.get("time_integration"),
+        ),
+    }
+    for target, candidates in numerical_aliases.items():
+        if target not in nse or nse[target] in {None, ""}:
+            for value in candidates:
+                if value not in {None, ""}:
+                    nse[target] = value
+                    break
+    if "cfl" not in nse:
+        nse["cfl"] = nested(case, "time.cfl")
+    hit = _mapping(nested(case, "flow.hit", {}), "flow.hit")
+    hit_aliases = {
+        "hit_spectrum": ("spectrum",),
+        "hit_seed": ("random_seed",),
+        "hit_rms_velocity": ("rms_velocity", "turbulent_mach_number"),
+        "hit_peak_wavenumber": ("peak_wavenumber",),
+        "hit_integral_length": ("integral_length",),
+        "hit_kolmogorov_length": ("kolmogorov_length",),
+        "hit_dealias_fraction": ("dealias_fraction",),
+    }
+    for target, candidates in hit_aliases.items():
+        if target not in nse or nse[target] in {None, ""}:
+            for source in candidates:
+                value = hit.get(source)
+                if value not in {None, ""}:
+                    nse[target] = value
+                    break
+    forcing = _mapping(nested(case, "forcing", {}), "forcing")
+    forcing_aliases = {
+        "forcing_scheme": ("type", "scheme"),
+        "forcing_spectrum": ("spectrum",),
+        "forcing_fft_backend": ("fft_backend",),
+        "forcing_k_cutoff": ("k_cutoff",),
+        "forcing_target_dissipation": ("target_dissipation",),
+        "forcing_dilatational_ratio": ("dilatational_ratio",),
+        "forcing_denominator_floor": ("denominator_floor",),
+        "forcing_max_coefficient": ("max_coefficient",),
+        "forcing_report_interval": ("report_interval",),
+    }
+    for target, candidates in forcing_aliases.items():
+        if target not in nse or nse[target] in {None, ""}:
+            for source in candidates:
+                value = forcing.get(source)
+                if value not in {None, ""}:
+                    nse[target] = value
+                    break
+    for key in (
+        "convective_scheme",
+        "viscous_scheme",
+        "boundary_condition",
+        "time_integrator",
+        "hit_spectrum",
+        "forcing_scheme",
+        "forcing_spectrum",
+        "forcing_fft_backend",
+    ):
+        if isinstance(nse.get(key), str):
+            nse[key] = _canonical_selector(nse[key])
+    forcing_backend = str(
+        _mapping(profile.get("cmake", {}), f"profile {profile_name}.cmake").get(
+            "NSE_FORCING_FFT_BACKEND", "none"
+        )
+    ).strip().lower()
+    forcing_scheme = str(nse.get("forcing_scheme", "none"))
+    requested_forcing_backend = str(nse.get("forcing_fft_backend", "auto"))
+    if forcing_scheme != "none":
+        if forcing_backend == "none":
+            raise CaseInputError(
+                f"forcing.type={forcing_scheme!r} requires a forcing FFT backend; "
+                f"profile {profile_name!r} has none. Use "
+                "solver.profile=cpu_mpi_2decomp_fftw for CPU/MPI or "
+                "solver.profile=cuda_single for a single GPU, then regenerate "
+                "the execution environment"
+            )
+        if requested_forcing_backend not in {"auto", forcing_backend}:
+            raise CaseInputError(
+                f"forcing.fft_backend={requested_forcing_backend!r} does not match "
+                f"profile {profile_name!r} backend {forcing_backend!r}"
+            )
+    if nse.get("convective_scheme") == "keep":
+        raise CaseInputError(
+            "convective_scheme=KEEP is no longer supported; use KEEP2 or KEEP6"
+        )
+    if nse.get("time_integrator") in {"rk3", "ssp_rk3", "ssp-rk3"}:
+        nse["time_integrator"] = "ssprk3"
     lines = [
         "! Automatically generated from case.yaml.",
         "! Edit case.yaml and regenerate this file.",
         "",
         "&simulation",
     ]
-    _append(lines, _common_values(case, "NSE", use_mpi, use_openmp, backend))
+    common = _common_values(case, "NSE", use_mpi, use_openmp, backend)
+    common.append(("cuda_device", nested(case, "solver.cuda_device", 0)))
+    _append(lines, common)
     lines.extend(["/", "", "&nse"])
     _append(lines, [(key, nse.get(key)) for key in NSE_KEYS])
     lines.extend(["/", ""])

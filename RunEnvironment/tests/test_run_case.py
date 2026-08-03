@@ -9,7 +9,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from run_case import _prepare_input  # noqa: E402
+from run_case import RunCaseError, _case_parallel_settings, _prepare_input  # noqa: E402
 
 
 class RunCasePrepareTests(unittest.TestCase):
@@ -94,6 +94,102 @@ class RunCasePrepareTests(unittest.TestCase):
             output = _prepare_input(root, lock, force=False, dry_run=False)
 
             self.assertEqual(output.read_text(encoding="ascii"), "current")
+
+    def test_parallel_settings_follow_case_yaml(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            case_dir = root / "cases" / "case0001"
+            case_dir.mkdir(parents=True)
+            (case_dir / "case.yaml").write_text(
+                "\n".join(
+                    [
+                        "solver:",
+                        "  use_mpi: true",
+                        "  mpi_processes: 4",
+                        "  use_openmp: true",
+                        "  use_cuda: false",
+                        "  omp_threads: 6",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            lock = {
+                "case_directory": "cases/case0001",
+                "use_mpi": True,
+                "use_openmp": True,
+            }
+
+            self.assertEqual(_case_parallel_settings(root, lock), (4, 6))
+
+    def test_parallel_settings_reject_zero_threads(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            case_dir = root / "cases" / "case0001"
+            case_dir.mkdir(parents=True)
+            (case_dir / "case.yaml").write_text(
+                "solver:\n  mpi_processes: 2\n  omp_threads: 0\n",
+                encoding="utf-8",
+            )
+            lock = {
+                "case_directory": "cases/case0001",
+                "use_mpi": True,
+                "use_openmp": True,
+            }
+
+            with self.assertRaisesRegex(RunCaseError, "must be positive"):
+                _case_parallel_settings(root, lock)
+
+    def test_rejects_removed_processes_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            case_dir = root / "cases" / "case0001"
+            case_dir.mkdir(parents=True)
+            (case_dir / "case.yaml").write_text(
+                "solver:\n  processes: 4\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RunCaseError, "no longer supported"):
+                _case_parallel_settings(
+                    root,
+                    {
+                        "case_directory": "cases/case0001",
+                        "use_mpi": True,
+                        "use_openmp": False,
+                    },
+                )
+
+    def test_parallel_settings_reject_environment_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            case_dir = root / "cases" / "case0001"
+            case_dir.mkdir(parents=True)
+            (case_dir / "case.yaml").write_text(
+                "\n".join(
+                    [
+                        "solver:",
+                        "  use_mpi: false",
+                        "  use_openmp: true",
+                        "  use_cuda: false",
+                        "  mpi_processes: 1",
+                        "  omp_threads: 4",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RunCaseError, "regenerate"):
+                _case_parallel_settings(
+                    root,
+                    {
+                        "case_directory": "cases/case0001",
+                        "use_mpi": True,
+                        "use_openmp": True,
+                        "use_cuda": False,
+                    },
+                )
 
 
 if __name__ == "__main__":

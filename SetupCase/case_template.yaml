@@ -50,13 +50,16 @@ time:
 solver:
   type: nse
   backend: serial
-  use_mpi: true
-  use_openmp: true
+  use_mpi: {{use_mpi}}
+  use_openmp: {{use_openmp}}
+  use_cuda: {{use_cuda}}
+  mpi_processes: {{mpi_processes}}
+  omp_threads: {{omp_threads}}
 
 numerics:
   reconstruction:
   time_integration: RK3
-  flux: KEEP
+  flux: KEEP6
 
 storage:
   raw_data_location: {{raw_data_location}}

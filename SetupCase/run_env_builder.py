@@ -266,7 +266,7 @@ def workflow_config(
             definitions["CUFFTMP_API"] = libraries["cufftmp_api"]
 
     use_mpi = bool(definitions.get("USE_MPI", False))
-    processes = int(nested(case, "solver.processes", 1))
+    processes = int(nested(case, "solver.mpi_processes", 1))
     environment: dict[str, Any] = {}
     if bool(nested(case, "solver.use_openmp", False)):
         environment["OMP_NUM_THREADS"] = int(nested(case, "solver.omp_threads", 1))

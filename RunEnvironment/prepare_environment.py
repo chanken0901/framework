@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from case_input import CaseInputError, render_case_input
+from case_input import CaseInputError, _profile_settings, render_case_input
 from environment_options import (
     OPTION_CATEGORIES,
     OptionCatalogError,
@@ -31,7 +31,7 @@ from yaml_support import YamlFormatError, load_yaml
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_DESIGN = SCRIPT_DIR / "environment.yaml"
+DEFAULT_DESIGN = SCRIPT_DIR / "environment.gpe.yaml"
 DEFAULT_OPTION_CATALOG = SCRIPT_DIR / "environment_options.yaml"
 GENERATED_MARKER = ".generated_run_environment.json"
 FORTRAN_SUFFIXES = {".f90", ".f95", ".f03", ".f08"}
@@ -342,8 +342,6 @@ def _local_build_design(
     profile: str,
     configuration: str,
     include_tests: bool,
-    processes: int,
-    omp_threads: int,
     parallel_jobs: int,
 ) -> dict[str, Any]:
     return {
@@ -372,8 +370,8 @@ def _local_build_design(
         "run": {
             "enabled": False,
             "working_directory": None,
-            "mpi_processes": processes,
-            "omp_threads": omp_threads,
+            "mpi_processes": 1,
+            "omp_threads": 1,
             "launcher_arguments": [],
             "program_arguments": [],
             "environment": {},
@@ -381,18 +379,49 @@ def _local_build_design(
     }
 
 
+def _parallel_features(
+    design: dict[str, Any],
+    manifest: dict[str, Any],
+    profile: str,
+) -> tuple[bool, bool, bool]:
+    parallel = _mapping(design.get("parallel"), "parallel")
+    values: dict[str, bool] = {}
+    for name in ("use_mpi", "use_openmp", "use_cuda"):
+        value = parallel.get(name)
+        if not isinstance(value, bool):
+            raise EnvironmentError(f"parallel.{name} must be true or false")
+        values[name] = value
+
+    _, profile_mpi, profile_openmp, backend = _profile_settings(manifest, profile)
+    profile_cuda = backend in {"cuda", "cufft", "cufftmp"}
+    if values["use_mpi"] != profile_mpi:
+        raise EnvironmentError(
+            f"parallel.use_mpi={values['use_mpi']} does not match solver "
+            f"profile {profile!r} (use_mpi={profile_mpi})"
+        )
+    if values["use_cuda"] != profile_cuda:
+        raise EnvironmentError(
+            f"parallel.use_cuda={values['use_cuda']} does not match solver "
+            f"profile {profile!r} (use_cuda={profile_cuda})"
+        )
+    if values["use_openmp"] and not profile_openmp:
+        raise EnvironmentError(
+            f"parallel.use_openmp=true requires an OpenMP-capable profile; "
+            f"{profile!r} is not OpenMP-capable"
+        )
+    return values["use_mpi"], values["use_openmp"], values["use_cuda"]
+
+
 def _slurm_script(
     scheduler: dict[str, Any],
     include_tests: bool,
+    use_mpi: bool,
+    use_openmp: bool,
 ) -> str:
     directives = [
         ("job-name", scheduler.get("job_name", "solver-case")),
         ("account", scheduler.get("account")),
         ("partition", scheduler.get("partition")),
-        ("nodes", scheduler.get("nodes", 1)),
-        ("ntasks-per-node", scheduler.get("tasks_per_node", 1)),
-        ("cpus-per-task", scheduler.get("cpus_per_task", 1)),
-        ("gpus-per-node", scheduler.get("gpus_per_node")),
         ("time", scheduler.get("time_limit", "01:00:00")),
         ("output", scheduler.get("output", "slurm-%j.out")),
     ]
@@ -412,17 +441,30 @@ def _slurm_script(
     if modules:
         lines.append("module purge")
         lines.extend(f"module load {name}" for name in modules)
-    lines.extend(
-        [
-            "",
-            "python3 tools/run_case.py --run",
-            "",
-        ]
-    )
+    lines.append("")
+    run_command = "python3 tools/run_case.py --run"
+    if use_mpi:
+        lines.append(': "${SLURM_NTASKS:?submit with --ntasks or --ntasks-per-node}"')
+        run_command += ' --processes "${SLURM_NTASKS}"'
+    if use_openmp:
+        lines.append(': "${SLURM_CPUS_PER_TASK:?submit with --cpus-per-task}"')
+        run_command += ' --omp-threads "${SLURM_CPUS_PER_TASK}"'
+    lines.extend([run_command, ""])
     return "\n".join(lines)
 
 
-def _generated_readme(model: str, profile: str, case_id: str) -> str:
+def _generated_readme(
+    model: str,
+    profile: str,
+    case_id: str,
+    use_mpi: bool,
+    use_openmp: bool,
+) -> str:
+    enabled_features = ", ".join(
+        name
+        for name, enabled in (("MPI", use_mpi), ("OpenMP", use_openmp))
+        if enabled
+    ) or "serial"
     return f"""# Generated execution environment
 
 This directory is a disposable execution copy. The canonical source remains in
@@ -431,6 +473,7 @@ the framework NAS.
 - Model: `{model}`
 - Solver profile: `{profile}`
 - Case: `{case_id}`
+- Parallel features: `{enabled_features}`
 - Shared case index: `../case_index.csv`
 
 ## Workstation
@@ -442,6 +485,24 @@ python .\\tools\\run_case.py --build
 python .\\tools\\run_case.py --run
 ```
 
+Set `solver.mpi_processes` and `solver.omp_threads` in
+`cases/{case_id}/case.yaml` before running. Command-line options
+`--processes` and `--omp-threads` temporarily override those values.
+
+## ParaView preview
+
+Convert the latest complete SLF step with a spatial stride of two:
+
+```powershell
+python .\\tools\\postprocess_case.py
+```
+
+Convert selected full-resolution steps:
+
+```powershell
+python .\\tools\\postprocess_case.py --steps 0,1000 --stride 1
+```
+
 ## Linux / HPC
 
 ```bash
@@ -449,6 +510,7 @@ python3 tools/run_case.py --prepare
 python3 tools/run_case.py --validate-only
 python3 tools/run_case.py --build
 python3 tools/run_case.py --run
+python3 tools/postprocess_case.py
 ```
 
 Build once before submitting production jobs. When `submit.slurm` exists, it
@@ -481,6 +543,9 @@ def _create_case(
     model: str,
     profile: str,
     manifest_path: Path,
+    use_mpi: bool,
+    use_openmp: bool,
+    use_cuda: bool,
 ) -> tuple[str, str]:
     cases_root = temporary / "cases"
     cases_root.mkdir(parents=True, exist_ok=True)
@@ -515,11 +580,18 @@ def _create_case(
             model,
             "--solver-profile",
             profile,
-            "--processes",
-            str(case_cfg.get("processes", 1)),
-            "--omp-threads",
-            str(case_cfg.get("omp_threads", 1)),
         ]
+        command.append("--use-mpi" if use_mpi else "--no-use-mpi")
+        command.append("--use-openmp" if use_openmp else "--no-use-openmp")
+        command.append("--use-cuda" if use_cuda else "--no-use-cuda")
+        command.extend(
+            [
+                "--mpi-processes",
+                "4" if use_mpi else "1",
+                "--omp-threads",
+                "1",
+            ]
+        )
         if case_cfg.get("id"):
             command.extend(["--case-id", str(case_cfg["id"])])
         result = subprocess.run(command, cwd=str(temporary), check=False)
@@ -648,6 +720,9 @@ def prepare(args: argparse.Namespace) -> Path:
         solver_root, manifest, profile, include_tests
     )
     dependencies = _inspect_dependencies(solver_root, manifest, selected_files)
+    use_mpi, use_openmp, use_cuda = _parallel_features(
+        design, manifest, profile
+    )
 
     destination_cfg = _mapping(design.get("destination"), "destination")
     destination_text = destination_cfg.get("root")
@@ -687,11 +762,9 @@ def prepare(args: argparse.Namespace) -> Path:
         raise EnvironmentError("case.template is required when case.create is true")
 
     execution = _mapping(design.get("execution", {}), "execution")
-    processes = int(execution.get("processes", 1))
-    omp_threads = int(execution.get("omp_threads", 1))
     parallel_jobs = int(execution.get("parallel_jobs", 8))
-    if min(processes, omp_threads, parallel_jobs) < 1:
-        raise EnvironmentError("execution counts must be positive")
+    if parallel_jobs < 1:
+        raise EnvironmentError("execution.parallel_jobs must be positive")
 
     if args.dry_run:
         print("[DRY-RUN] Execution environment plan")
@@ -706,6 +779,10 @@ def prepare(args: argparse.Namespace) -> Path:
         print(f"  case index:  {global_case_index}")
         print(f"  model:       {model}")
         print(f"  profile:     {profile}")
+        print(
+            "  parallel:    "
+            f"MPI={use_mpi}, OpenMP={use_openmp}, CUDA={use_cuda}"
+        )
         print(f"  components:  {', '.join(components)}")
         print(f"  solver files:{len(selected_files)}")
         return output
@@ -768,6 +845,7 @@ def prepare(args: argparse.Namespace) -> Path:
         )
         for name in (
             "run_case.py",
+            "postprocess_case.py",
             "case_input.py",
             "global_case_index.py",
             "yaml_support.py",
@@ -804,8 +882,6 @@ def prepare(args: argparse.Namespace) -> Path:
             profile,
             str(execution.get("configuration", "Release")),
             include_tests,
-            processes,
-            omp_threads,
             parallel_jobs,
         )
         _write_json(
@@ -819,8 +895,6 @@ def prepare(args: argparse.Namespace) -> Path:
         _write_json(temporary / "environment.resolved.yaml", design)
         local_manifest = solver_destination / manifest_name
         effective_case_cfg = dict(case_cfg)
-        effective_case_cfg.setdefault("processes", processes)
-        effective_case_cfg.setdefault("omp_threads", omp_threads)
         case_id, input_name = _create_case(
             temporary,
             design_path,
@@ -828,12 +902,19 @@ def prepare(args: argparse.Namespace) -> Path:
             model,
             profile,
             local_manifest,
+            use_mpi,
+            use_openmp,
+            use_cuda,
         )
 
         scheduler = _mapping(design.get("scheduler", {}), "scheduler")
         if bool(scheduler.get("enabled", False)):
             (temporary / "submit.slurm").write_text(
-                _slurm_script(scheduler, include_tests), encoding="utf-8", newline="\n"
+                _slurm_script(
+                    scheduler, include_tests, use_mpi, use_openmp
+                ),
+                encoding="utf-8",
+                newline="\n",
             )
 
         generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -856,8 +937,9 @@ def prepare(args: argparse.Namespace) -> Path:
             "case_index_path": _portable_path_reference(
                 global_case_index, output
             ),
-            "processes": processes,
-            "omp_threads": omp_threads,
+            "use_mpi": use_mpi,
+            "use_openmp": use_openmp,
+            "use_cuda": use_cuda,
         }
         provenance = {
             "schema_version": 1,
@@ -893,7 +975,10 @@ def prepare(args: argparse.Namespace) -> Path:
             {"schema_version": 1, "generated_at_utc": generated_at},
         )
         (temporary / "README.md").write_text(
-            _generated_readme(model, profile, case_id), encoding="utf-8"
+            _generated_readme(
+                model, profile, case_id, use_mpi, use_openmp
+            ),
+            encoding="utf-8",
         )
         temporary.replace(output)
         sync_environment_case(output, lock, global_case_index)

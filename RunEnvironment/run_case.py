@@ -115,6 +115,54 @@ def _prepare_input(
     return input_path
 
 
+def _case_parallel_settings(
+    root: Path, lock: dict[str, Any]
+) -> tuple[int, int]:
+    case_path = root / str(lock["case_directory"]) / "case.yaml"
+    if not case_path.is_file():
+        raise RunCaseError(f"case design not found: {case_path}")
+    case = load_yaml(case_path)
+    if not isinstance(case, dict):
+        raise RunCaseError(f"invalid case design: {case_path}")
+    solver = case.get("solver", {})
+    if not isinstance(solver, dict):
+        raise RunCaseError("case solver section must be a YAML mapping")
+    if "processes" in solver:
+        raise RunCaseError(
+            "solver.processes is no longer supported; use solver.mpi_processes"
+        )
+
+    for key in ("use_mpi", "use_openmp", "use_cuda"):
+        expected = bool(lock.get(key, False))
+        actual = solver.get(key, expected)
+        if not isinstance(actual, bool):
+            raise RunCaseError(f"solver.{key} must be true or false")
+        if actual != expected:
+            raise RunCaseError(
+                f"solver.{key} does not match the generated environment; "
+                "update the environment design and regenerate the environment"
+            )
+
+    try:
+        processes = int(solver.get("mpi_processes", 1))
+        omp_threads = int(solver.get("omp_threads", 1))
+    except (TypeError, ValueError) as exc:
+        raise RunCaseError(
+            "solver.mpi_processes and solver.omp_threads must be integers"
+        ) from exc
+    if processes < 1 or omp_threads < 1:
+        raise RunCaseError(
+            "solver.mpi_processes and solver.omp_threads must be positive"
+        )
+    use_mpi = bool(lock.get("use_mpi", False))
+    use_openmp = bool(lock.get("use_openmp", False))
+    if not use_mpi and processes != 1:
+        raise RunCaseError("solver.mpi_processes must be 1 when MPI is disabled")
+    if not use_openmp and omp_threads != 1:
+        raise RunCaseError("solver.omp_threads must be 1 when OpenMP is disabled")
+    return processes, omp_threads
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the local BuildSolver copy for this case."
@@ -185,6 +233,27 @@ def main() -> int:
         ):
             raise RunCaseError("generated environment is missing runner, design, or input")
 
+        case_processes, case_omp_threads = _case_parallel_settings(root, lock)
+        processes = args.processes if args.processes is not None else case_processes
+        omp_threads = (
+            args.omp_threads
+            if args.omp_threads is not None
+            else case_omp_threads
+        )
+        if processes < 1 or omp_threads < 1:
+            raise RunCaseError("runtime parallel counts must be positive")
+        if not bool(lock.get("use_mpi", False)) and processes != 1:
+            raise RunCaseError("--processes must be 1 when MPI is disabled")
+        if not bool(lock.get("use_openmp", False)) and omp_threads != 1:
+            raise RunCaseError("--omp-threads must be 1 when OpenMP is disabled")
+        if (
+            str(lock.get("model", "")).lower() == "nse"
+            and bool(lock.get("use_mpi", False))
+            and processes < 4
+        ):
+            raise RunCaseError(
+                "the current NSE y-z decomposition requires at least 4 MPI processes"
+            )
         command = [
             sys.executable,
             str(runner),
@@ -198,9 +267,9 @@ def main() -> int:
             "--run-dir",
             str(case_dir),
             "--processes",
-            str(args.processes or lock.get("processes", 1)),
+            str(processes),
             "--omp-threads",
-            str(args.omp_threads or lock.get("omp_threads", 1)),
+            str(omp_threads),
         ]
         if args.configuration:
             command.extend(["--configuration", args.configuration])
