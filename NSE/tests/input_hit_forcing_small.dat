@@ -1,0 +1,52 @@
+&simulation
+  equation = "NSE"
+  case_name = "hit_forcing_mpi_smoke"
+  initial_condition = "hit_spectral"
+  nx = 16
+  ny = 16
+  nz = 16
+  nghost = 3
+  x_min = 0.0
+  x_max = 6.283185307179586
+  y_min = 0.0
+  y_max = 6.283185307179586
+  z_min = 0.0
+  z_max = 6.283185307179586
+  dt = 1.0e-5
+  t_max = 1.0e-5
+  nsteps = 1
+  cfl = 0.5
+  use_fixed_dt = .true.
+  output_frequency = 0
+  output_dir = "hit-forcing-smoke-output"
+  write_initial = .false.
+  write_meta = .false.
+/
+
+&nse
+  nv = 5
+  gamma = 1.4
+  cfl = 0.5
+  small_rho = 1.0e-12
+  small_p = 1.0e-12
+  rho0 = 1.0
+  mach = 0.1
+  reynolds = 100.0
+  prandtl = 0.72
+  convective_scheme = "keep6"
+  viscous_scheme = "central6"
+  boundary_condition = "periodic"
+  time_integrator = "ssprk3"
+  hit_spectrum = "johnsen"
+  hit_seed = 13579
+  hit_rms_velocity = 0.1
+  hit_peak_wavenumber = 4.0
+  hit_dealias_fraction = 0.6666666666666667
+  forcing_scheme = "petersen_livescu"
+  forcing_spectrum = "low_wavenumber"
+  forcing_fft_backend = "2decomp_fftw"
+  forcing_k_cutoff = 6.0
+  forcing_target_dissipation = 0.01
+  forcing_dilatational_ratio = 0.0
+  forcing_report_interval = 1
+/

@@ -44,6 +44,7 @@ module mod_common_config
     real(dp) :: dt = 1.0e-4_dp
     real(dp) :: t_max = 1.0_dp
     integer  :: nsteps = 1000
+    real(dp) :: cfl = 0.5_dp
     logical  :: use_fixed_dt = .true.
 
     ! --- real time ---
@@ -66,6 +67,7 @@ module mod_common_config
     logical :: use_openmp = .false.
     integer :: rank = 0
     integer :: nprocs = 1
+    integer :: cuda_device = 0
   end type simulation_config
 
 contains
@@ -113,15 +115,17 @@ contains
     write(u,'(A,A)')    'equation          = ', trim(cfg%equation)
     write(u,'(A,A)')    'case_name         = ', trim(cfg%case_name)
     write(u,'(A,3I10)') 'nx, ny, nz        = ', cfg%nx, cfg%ny, cfg%nz
-    write(u,'(A,3I10)') 'nx, ny, nz        = ', cfg%nghost
+    write(u,'(A,I10)')  'nghost            = ', cfg%nghost
     write(u,'(A,3ES16.8)') 'lx, ly, lz     = ', cfg%lx, cfg%ly, cfg%lz
     write(u,'(A,3ES16.8)') 'dx, dy, dz     = ', cfg%dx, cfg%dy, cfg%dz
     write(u,'(A,ES16.8)') 'dt               = ', cfg%dt
     write(u,'(A,ES16.8)') 't_max            = ', cfg%t_max
     write(u,'(A,I10)')  'nsteps            = ', cfg%nsteps
+    write(u,'(A,ES16.8)') 'cfl              = ', cfg%cfl
     write(u,'(A,I10)')  'output_frequency  = ', cfg%output_frequency
     write(u,'(A,A)')    'output_dir        = ', trim(cfg%output_dir)
     write(u,'(A,A)')    'backend           = ', trim(cfg%backend)
+    write(u,'(A,I10)')  'cuda_device       = ', cfg%cuda_device
   end subroutine print_simulation_config
 
 end module mod_common_config

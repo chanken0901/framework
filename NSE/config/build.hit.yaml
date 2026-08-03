@@ -1,0 +1,25 @@
+schema_version: 1
+design_id: nse_windows_hit_2decomp_release
+machine_profile: build_profiles/windows_msmpi.yaml
+module_catalog: module_catalog.yaml
+
+solver:
+  module_set: hit_2decomp_fftw
+  executable_name: solver
+  include_modules: []
+  exclude_modules: []
+
+build:
+  configuration: Release
+  output_root: ${LOCALAPPDATA}/SolverLibraryBuild/NSE
+  directory_name: windows-msmpi-hit-2decomp-release
+  warnings: true
+  parallel_jobs: 8
+  configure_fresh: true
+
+run:
+  enabled: false
+  input_file:
+  mpi_processes: 4
+  omp_threads: 1
+  program_arguments: []

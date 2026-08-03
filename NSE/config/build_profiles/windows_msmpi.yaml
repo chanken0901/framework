@@ -36,3 +36,6 @@ mpi:
 
 openmp:
   enabled: true
+
+libraries:
+  decomp2d_root: C:/Users/Owner/Documents/Codex/ThirdParty/install/2decomp-fft-v2.1.0

@@ -327,9 +327,15 @@ def _resolve_build(args: argparse.Namespace) -> ResolvedBuild:
             str(value)
             for value in _list(compiler.get("relwithdebinfo_flags"), "compiler.relwithdebinfo_flags")
         ],
+        "NSE_INIT_FFT_BACKEND": (
+            "2decomp_fftw" if "distributed_fft" in features else "none"
+        ),
     }
     if mpi.get("root"):
         cmake_variables["MSMPI_ROOT"] = str(mpi["root"])
+    libraries = _mapping(profile.get("libraries") or {}, "machine profile.libraries")
+    if libraries.get("decomp2d_root"):
+        cmake_variables["NSE_2DECOMP_ROOT"] = str(libraries["decomp2d_root"])
 
     return ResolvedBuild(
         design_path=design_path,

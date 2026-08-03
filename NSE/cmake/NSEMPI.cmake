@@ -86,6 +86,22 @@ function(nse_configure_mpi target_name)
         "${MSMPI_LIBRARY}"
     )
 
+    # External Fortran MPI libraries commonly export a dependency on the
+    # standard CMake target even when Microsoft MPI is configured manually.
+    if(NOT TARGET MPI::MPI_Fortran)
+      add_library(MPI::MPI_Fortran INTERFACE IMPORTED GLOBAL)
+      set_property(
+        TARGET MPI::MPI_Fortran
+        PROPERTY INTERFACE_INCLUDE_DIRECTORIES
+          "${MSMPI_FORTRAN_INCLUDE_DIR};${MSMPI_X64_INCLUDE_DIR}"
+      )
+      set_property(
+        TARGET MPI::MPI_Fortran
+        PROPERTY INTERFACE_LINK_LIBRARIES
+          "${MSMPI_FORTRAN_LIBRARY};${MSMPI_LIBRARY}"
+      )
+    endif()
+
     message(STATUS "Microsoft MPI include: ${MSMPI_FORTRAN_INCLUDE_DIR}")
     message(STATUS "Microsoft MPI x64 include: ${MSMPI_X64_INCLUDE_DIR}")
     message(STATUS "Microsoft MPI Fortran library: ${MSMPI_FORTRAN_LIBRARY}")

@@ -8,18 +8,12 @@ module mod_nse_field
 
   public :: allocate_nse_fields
   public :: deallocate_nse_fields
-  public :: Q, Q0, RHS, F, Qw
+  public :: Q, Q0, RHS, F
 
   real(dp), allocatable :: Q(:,:,:,:)
   real(dp), allocatable :: Q0(:,:,:,:)
   real(dp), allocatable :: RHS(:,:,:,:)
   real(dp), allocatable :: F(:,:,:,:)
-  real(dp), allocatable :: Qw(:,:,:,:)
-
-  real(dp), allocatable :: QL (:,:,:,:), QR(:,:,:,:) ! reconstructed face states
-  real(dp), allocatable :: Q_vis (:,:,:,:)              ! [1-sim%nghost:sim%nx+sim%nghost, 1-sim%nghost:sim%ny+sim%nghost, 1-sim%nghost:sim%nz+sim%nghost, nse%nv]
-
-
 contains
 
   subroutine allocate_nse_fields(sim, nse, js, je, ks, ke)
@@ -32,8 +26,11 @@ contains
     allocate(RHS(1-sim%nghost:sim%nx+sim%nghost,js-sim%nghost:je+sim%nghost,ks-sim%nghost:ke+sim%nghost,nse%nv))
 
     allocate(F  (0:sim%nx, js-1:je, ks-1:ke, nse%nv))
-    allocate(Qw (1-sim%nghost:sim%nx+sim%nghost,js-sim%nghost:je+sim%nghost,ks-sim%nghost:ke+sim%nghost,nse%nv))
 
+    Q = 0.0_dp
+    Q0 = 0.0_dp
+    RHS = 0.0_dp
+    F = 0.0_dp
   end subroutine allocate_nse_fields
 
 
@@ -42,7 +39,6 @@ contains
     if (allocated(Q0))  deallocate(Q0)
     if (allocated(RHS)) deallocate(RHS)
     if (allocated(F))   deallocate(F)
-    if (allocated(Qw))  deallocate(Qw)
   end subroutine deallocate_nse_fields
 
 end module mod_nse_field

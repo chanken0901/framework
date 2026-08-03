@@ -8,6 +8,10 @@ module_sets:
     description: Current MPI/OpenMP finite-volume NSE solver
     entrypoints:
       - main_nse
+  hit_2decomp_fftw:
+    description: MPI/OpenMP NSE solver with distributed spectral HIT initialization
+    entrypoints:
+      - main_nse_hit_2decomp
 
 modules:
   mod_precision:
@@ -72,7 +76,162 @@ modules:
       - module_mpi
     features:
       - mpi
+
+  module_mpi_stub:
+    path: src/mpi/module_mpi_stub.f90
+    role: library
+    requires:
+      - mod_precision
+
+  mod_nse_forcing_common:
+    path: src/forcing/mod_nse_forcing_common.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_model_config
+
+  mod_nse_forcing_stub:
+    path: src/forcing/mod_nse_forcing_stub.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_nse_forcing_common
+
+  mod_nse_forcing_2decomp:
+    path: src/forcing/mod_nse_forcing_2decomp.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_nse_forcing_common
+      - module_mpi
+    features:
+      - mpi
+      - distributed_fft
+      - forcing
+
+  mod_openmp_runtime:
+    path: src/parallel/mod_openmp_runtime_enabled.f90
+    role: library
+    requires: []
+    features:
       - openmp
+
+  mod_openmp_runtime_stub:
+    path: src/parallel/mod_openmp_runtime_stub.f90
+    role: library
+    requires: []
+
+  mod_init_taylor_green:
+    path: src/init/mod_init_taylor_green.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_grid_fvm
+
+  mod_init_hit_spectral_stub:
+    path: src/init/mod_init_hit_spectral_stub.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+
+  mod_init_hit_spectral_2decomp:
+    path: src/init/mod_init_hit_spectral_2decomp.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - module_mpi
+    features:
+      - mpi
+      - distributed_fft
+
+  mod_nse_initial_conditions:
+    path: src/init/mod_nse_initial_conditions.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_init_taylor_green
+
+  mod_nse_boundary:
+    path: src/boundary/mod_boundary_periodic.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - module_mpi
+    features:
+      - mpi
+      - openmp
+
+  mod_convective_scheme:
+    path: src/numerics/convective/mod_convective_keep.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+    features:
+      - openmp
+
+  mod_viscous_scheme:
+    path: src/numerics/viscous/mod_viscous_central6.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+
+  mod_nse_spatial_operator:
+    path: src/numerics/mod_nse_spatial_operator.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_grid_fvm
+      - mod_nse_boundary
+      - mod_convective_scheme
+      - mod_viscous_scheme
+      - mod_nse_forcing_stub
+    features:
+      - mpi
+      - openmp
+
+  mod_nse_time_integration:
+    path: src/time/mod_nse_time_integration.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_nse_spatial_operator
+      - module_mpi
+    features:
+      - mpi
+      - openmp
+
+  mod_nse_gpu:
+    path: src/gpu/mod_nse_gpu_cuda.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_nse_forcing_common
+    features:
+      - cuda
 
   main_nse:
     path: src/main/main_nse.f90
@@ -82,8 +241,55 @@ modules:
       - mod_grid_fvm
       - mod_field_nse
       - mod_input_reader
+      - mod_init_hit_spectral_stub
+      - mod_nse_initial_conditions
+      - mod_nse_boundary
+      - mod_nse_spatial_operator
+      - mod_nse_forcing_stub
+      - mod_nse_time_integration
       - mod_slf_output
       - module_mpi
+      - mod_openmp_runtime
     features:
       - mpi
       - openmp
+
+  main_nse_hit_2decomp:
+    path: src/main/main_nse.f90
+    role: executable
+    requires:
+      - mod_constants
+      - mod_grid_fvm
+      - mod_field_nse
+      - mod_input_reader
+      - mod_init_hit_spectral_2decomp
+      - mod_nse_initial_conditions
+      - mod_nse_boundary
+      - mod_nse_spatial_operator
+      - mod_nse_forcing_2decomp
+      - mod_nse_time_integration
+      - mod_slf_output
+      - module_mpi
+      - mod_openmp_runtime
+    features:
+      - mpi
+      - openmp
+      - distributed_fft
+
+  main_nse_cuda:
+    path: src/main/main_nse_cuda.f90
+    role: executable
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_grid_fvm
+      - mod_input_reader
+      - mod_init_hit_spectral_stub
+      - mod_nse_initial_conditions
+      - mod_nse_gpu
+      - mod_slf_output
+      - module_mpi_stub
+      - mod_openmp_runtime_stub
+    features:
+      - cuda

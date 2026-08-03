@@ -2,6 +2,7 @@ module mod_slf_output
   use, intrinsic :: iso_fortran_env, only : int32
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
+  use mod_openmp_runtime, only : nse_max_threads
   use module_mpi
   implicit none
   private
@@ -55,7 +56,6 @@ contains
   !
   !  integer :: u, i, nvar, ios
   subroutine write_meta_json(cfg, filename, primary_variables_note, is, ie, js, je, ks, ke, use_cuda)
-    use omp_lib, only : omp_get_max_threads
     type(simulation_config), intent(in) :: cfg
     character(len=*), intent(in), optional :: filename
     character(len=*), intent(in), optional :: primary_variables_note
@@ -71,7 +71,8 @@ contains
     logical :: cuda_enabled
     character(len=512) :: fname
 
-    call ensure_directory(cfg%output_dir)
+    if (my_rank == root) call ensure_directory(cfg%output_dir)
+    call mp_barrier
   
     fname = trim(cfg%output_dir)//'/meta.json'
     eq = adjustl(cfg%equation)
@@ -94,14 +95,16 @@ if (present(je)) local_range(4) = je
 if (present(ks)) local_range(5) = ks
 if (present(ke)) local_range(6) = ke
   
-    if (my_rank == root) allocate(all_ranges(6,nprocs))
+    ! MPI_Gather ignores the receive buffer on non-root ranks, but the
+    ! Fortran actual argument must still be a valid allocated array.
+    allocate(all_ranges(6,max(1,nprocs)))
     call MPI_Gather(local_range, 6, MPI_INTEGER, all_ranges, 6, MPI_INTEGER, root, MPI_COMM_WORLD, ierr)
     if (my_rank /= root) return
 
     cuda_enabled = .false.
     if (present(use_cuda)) cuda_enabled = use_cuda
     omp_threads = 1
-    if (cfg%use_openmp) omp_threads = omp_get_max_threads()
+    if (cfg%use_openmp) omp_threads = nse_max_threads()
 
   
     select case (trim(eq))

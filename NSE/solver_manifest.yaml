@@ -8,7 +8,7 @@ cmake_file: CMakeLists.txt
 
 input:
   default_name: input.dat
-  pass_as_argument: false
+  pass_as_argument: true
 
 distribution:
   required_files:
@@ -23,26 +23,224 @@ components:
       - src/common/mod_constants.f90
       - src/common/mod_common_config.f90
       - src/common/mod_model_config.f90
+      - src/forcing/mod_nse_forcing_common.f90
       - src/grid/mod_grid_fvm.f90
       - src/field/mod_field_nse.f90
       - src/io/mod_input_reader.f90
-      - src/mpi/module_mpi_TW_NEC.f90
       - src/io/mod_slf_output.f90
 
-  main:
+  mpi_real:
+    cmake_role: library
+    files:
+      - src/mpi/module_mpi_TW_NEC.f90
+
+  mpi_stub:
+    cmake_role: library
+    files:
+      - src/mpi/module_mpi_stub.f90
+
+  openmp_runtime:
+    cmake_role: library
+    files:
+      - src/parallel/mod_openmp_runtime_enabled.f90
+
+  serial_runtime:
+    cmake_role: library
+    files:
+      - src/parallel/mod_openmp_runtime_stub.f90
+
+  initial_conditions:
+    cmake_role: library
+    files:
+      - src/init/mod_init_taylor_green.f90
+      - src/init/mod_nse_initial_conditions.f90
+
+  initial_hit_stub:
+    cmake_role: library
+    files:
+      - src/init/mod_init_hit_spectral_stub.f90
+
+  initial_hit_2decomp_fftw:
+    cmake_role: library
+    files:
+      - src/init/mod_init_hit_spectral_2decomp.f90
+
+  boundary_periodic:
+    cmake_role: library
+    files:
+      - src/boundary/mod_boundary_periodic.f90
+
+  convective_keep:
+    cmake_role: library
+    files:
+      - src/numerics/convective/mod_convective_keep.f90
+
+  viscous_none:
+    cmake_role: library
+    files:
+      - src/numerics/viscous/mod_viscous_none.f90
+
+  viscous_central6:
+    cmake_role: library
+    files:
+      - src/numerics/viscous/mod_viscous_central6.f90
+
+  forcing_none:
+    cmake_role: library
+    files:
+      - src/forcing/mod_nse_forcing_stub.f90
+
+  forcing_2decomp_fftw:
+    cmake_role: library
+    files:
+      - src/forcing/mod_nse_forcing_2decomp.f90
+
+  forcing_cufftmp_contract:
+    files:
+      - src/forcing/cufftmp_forcing_contract.yaml
+      - tests/test_cufftmp_forcing_contract.py
+      - tests/validate_cufftmp_forcing_contract.cmake
+
+  spatial_operator:
+    cmake_role: library
+    files:
+      - src/numerics/mod_nse_spatial_operator.f90
+
+  time_ssprk3:
+    cmake_role: library
+    files:
+      - src/time/mod_nse_time_integration.f90
+
+  runtime_tools:
+    files:
+      - tools/slf_to_paraview_merged_cropghost.py
+
+  cuda_backend:
+    cmake_role: library
+    files:
+      - src/gpu/mod_nse_gpu_cuda.f90
+      - src/gpu/nse_cuda_bridge.cu
+
+  main_cpu:
     cmake_role: executable
     files:
       - src/main/main_nse.f90
+
+  main_cuda:
+    cmake_role: executable
+    files:
+      - src/main/main_nse_cuda.f90
+
+  tests_cuda:
+    files:
+      - tests/test_cuda_keep.f90
+      - tests/test_cuda_keep_compare.f90
+      - tests/test_cuda_viscous_compare.f90
+      - tests/input_tgv_cuda_small.dat
+      - tests/input_tgv_cuda_forcing_small.dat
+      - tests/test_forcing_coefficients.f90
+      - src/numerics/convective/mod_convective_keep.f90
+      - src/numerics/viscous/mod_viscous_central6.f90
+
+  tests_cpu:
+    files:
+      - tests/test_keep6_accuracy.f90
+      - tests/test_viscous_central6.f90
+      - tests/test_boundary_periodic.f90
+      - tests/input_tgv_viscous_small.dat
+      - tests/input_tgv_forcing_small.dat
+      - tests/input_hit_forcing_small.dat
+      - tests/test_forcing_coefficients.f90
 
 profiles:
   cpu_mpi:
     description: MPI domain decomposition with OpenMP local loops
     components:
       - core
-      - main
+      - mpi_real
+      - openmp_runtime
+      - initial_conditions
+      - initial_hit_stub
+      - boundary_periodic
+      - convective_keep
+      - viscous_central6
+      - forcing_none
+      - spatial_operator
+      - time_ssprk3
+      - runtime_tools
+      - main_cpu
+    test_components:
+      - tests_cpu
     executable: solver
     execution:
       use_mpi: true
       use_openmp: true
     cmake:
+      NSE_USE_MPI: true
       NSE_ENABLE_OPENMP: true
+      NSE_GPU_BACKEND: none
+      NSE_CONVECTIVE_BACKEND: keep_family
+      NSE_VISCOUS_SCHEME: central6
+      NSE_BOUNDARY_SCHEME: periodic
+      NSE_INIT_FFT_BACKEND: none
+      NSE_FORCING_FFT_BACKEND: none
+
+  cpu_mpi_2decomp_fftw:
+    description: MPI/OpenMP solver with 2DECOMP&FFT spectral HIT initialization
+    components:
+      - core
+      - mpi_real
+      - openmp_runtime
+      - initial_conditions
+      - initial_hit_2decomp_fftw
+      - boundary_periodic
+      - convective_keep
+      - viscous_central6
+      - forcing_2decomp_fftw
+      - spatial_operator
+      - time_ssprk3
+      - runtime_tools
+      - main_cpu
+    test_components:
+      - tests_cpu
+    executable: solver
+    execution:
+      use_mpi: true
+      use_openmp: true
+    cmake:
+      NSE_USE_MPI: true
+      NSE_ENABLE_OPENMP: true
+      NSE_GPU_BACKEND: none
+      NSE_CONVECTIVE_BACKEND: keep_family
+      NSE_VISCOUS_SCHEME: central6
+      NSE_BOUNDARY_SCHEME: periodic
+      NSE_INIT_FFT_BACKEND: 2decomp_fftw
+      NSE_FORCING_FFT_BACKEND: 2decomp_fftw
+
+  cuda_single:
+    description: Single-GPU CUDA KEEP and SSPRK3 backend
+    components:
+      - core
+      - mpi_stub
+      - serial_runtime
+      - initial_conditions
+      - initial_hit_stub
+      - cuda_backend
+      - forcing_cufftmp_contract
+      - runtime_tools
+      - main_cuda
+    test_components:
+      - tests_cuda
+    executable: nse_cuda
+    execution:
+      use_mpi: false
+      use_openmp: false
+    cmake:
+      NSE_USE_MPI: false
+      NSE_ENABLE_OPENMP: false
+      NSE_GPU_BACKEND: cuda
+      NSE_CONVECTIVE_BACKEND: keep_family
+      NSE_VISCOUS_SCHEME: central6
+      NSE_BOUNDARY_SCHEME: periodic
+      NSE_INIT_FFT_BACKEND: none
+      NSE_FORCING_FFT_BACKEND: cufft

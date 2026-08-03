@@ -20,7 +20,7 @@ contains
     character(len=256) :: case_name, input_file, output_dir
     character(len=64)  :: initial_condition
     integer :: nx, ny, nz, nghost, nsteps, output_frequency
-    integer :: rank, nprocs
+    integer :: rank, nprocs, cuda_device
     real(dp) :: x_min, x_max, y_min, y_max, z_min, z_max
     real(dp) :: dt, t_max, cfl
     logical :: use_fixed_dt, write_initial, write_meta, use_mpi, use_openmp
@@ -32,7 +32,8 @@ contains
       x_min, x_max, y_min, y_max, z_min, z_max, &
       dt, t_max, nsteps, cfl, use_fixed_dt, &
       output_frequency, output_dir, output_format, precision_name, &
-      write_initial, write_meta, backend, use_mpi, use_openmp, rank, nprocs
+      write_initial, write_meta, backend, use_mpi, use_openmp, rank, nprocs, &
+      cuda_device
 
     ! copy defaults from cfg
     equation = cfg%equation
@@ -44,7 +45,7 @@ contains
     x_min = cfg%x_min; x_max = cfg%x_max
     y_min = cfg%y_min; y_max = cfg%y_max
     z_min = cfg%z_min; z_max = cfg%z_max
-    dt = cfg%dt; t_max = cfg%t_max; nsteps = cfg%nsteps
+    dt = cfg%dt; t_max = cfg%t_max; nsteps = cfg%nsteps; cfl = cfg%cfl
     use_fixed_dt = cfg%use_fixed_dt
     output_frequency = cfg%output_frequency
     output_dir = cfg%output_dir
@@ -57,6 +58,7 @@ contains
     use_openmp = cfg%use_openmp
     rank = cfg%rank
     nprocs = cfg%nprocs
+    cuda_device = cfg%cuda_device
 
     inquire(file=filename, exist=exists)
     if (.not. exists) then
@@ -84,7 +86,7 @@ contains
     cfg%x_min = x_min; cfg%x_max = x_max
     cfg%y_min = y_min; cfg%y_max = y_max
     cfg%z_min = z_min; cfg%z_max = z_max
-    cfg%dt = dt; cfg%t_max = t_max; cfg%nsteps = nsteps
+    cfg%dt = dt; cfg%t_max = t_max; cfg%nsteps = nsteps; cfg%cfl = cfl
     cfg%use_fixed_dt = use_fixed_dt
     cfg%output_frequency = output_frequency
     cfg%output_dir = output_dir
@@ -97,6 +99,7 @@ contains
     cfg%use_openmp = use_openmp
     cfg%rank = rank
     cfg%nprocs = nprocs
+    cfg%cuda_device = cuda_device
 
     call update_derived_config(cfg)
   end subroutine read_common_input
@@ -132,14 +135,55 @@ contains
     type(nse_config), intent(inout) :: cfg
 
     integer :: nv, nghost
-    real(dp) :: gamma, small_rho, small_p, rho0, mach, reynolds, prandtl
+    real(dp) :: gamma, cfl, small_rho, small_p, rho0, mach, reynolds, prandtl
+    real(dp) :: hit_rms_velocity, hit_peak_wavenumber
+    real(dp) :: hit_integral_length, hit_kolmogorov_length
+    real(dp) :: hit_dealias_fraction
+    real(dp) :: forcing_k_cutoff, forcing_target_dissipation
+    real(dp) :: forcing_dilatational_ratio, forcing_denominator_floor
+    real(dp) :: forcing_max_coefficient
+    integer :: hit_seed
+    integer :: forcing_report_interval
+    character(len=32) :: convective_scheme, viscous_scheme, hit_spectrum
+    character(len=32) :: boundary_condition, time_integrator
+    character(len=32) :: forcing_scheme, forcing_spectrum, forcing_fft_backend
     integer :: u, ios
     logical :: exists
-    namelist /nse/ nv, nghost, gamma, small_rho, small_p, rho0, mach, reynolds, prandtl
+    namelist /nse/ nv, nghost, gamma, cfl, small_rho, small_p, rho0, mach, &
+      reynolds, prandtl, convective_scheme, viscous_scheme, &
+      boundary_condition, time_integrator, hit_spectrum, hit_seed, &
+      hit_rms_velocity, hit_peak_wavenumber, hit_integral_length, &
+      hit_kolmogorov_length, hit_dealias_fraction, forcing_scheme, &
+      forcing_spectrum, forcing_fft_backend, forcing_k_cutoff, &
+      forcing_target_dissipation, forcing_dilatational_ratio, &
+      forcing_denominator_floor, forcing_max_coefficient, &
+      forcing_report_interval
 
     nv = cfg%nv
-    gamma = cfg%gamma; small_rho = cfg%small_rho; small_p = cfg%small_p
+    nghost = 3
+    gamma = cfg%gamma; cfl = cfg%cfl
+    small_rho = cfg%small_rho; small_p = cfg%small_p
     rho0 = cfg%rho0; mach = cfg%mach; reynolds = cfg%reynolds; prandtl = cfg%prandtl
+    convective_scheme = cfg%convective_scheme
+    viscous_scheme = cfg%viscous_scheme
+    boundary_condition = cfg%boundary_condition
+    time_integrator = cfg%time_integrator
+    hit_spectrum = cfg%hit_spectrum
+    hit_seed = cfg%hit_seed
+    hit_rms_velocity = cfg%hit_rms_velocity
+    hit_peak_wavenumber = cfg%hit_peak_wavenumber
+    hit_integral_length = cfg%hit_integral_length
+    hit_kolmogorov_length = cfg%hit_kolmogorov_length
+    hit_dealias_fraction = cfg%hit_dealias_fraction
+    forcing_scheme = cfg%forcing_scheme
+    forcing_spectrum = cfg%forcing_spectrum
+    forcing_fft_backend = cfg%forcing_fft_backend
+    forcing_k_cutoff = cfg%forcing_k_cutoff
+    forcing_target_dissipation = cfg%forcing_target_dissipation
+    forcing_dilatational_ratio = cfg%forcing_dilatational_ratio
+    forcing_denominator_floor = cfg%forcing_denominator_floor
+    forcing_max_coefficient = cfg%forcing_max_coefficient
+    forcing_report_interval = cfg%forcing_report_interval
 
     inquire(file=filename, exist=exists)
     if (.not. exists) return
@@ -147,11 +191,35 @@ contains
     if (ios /= 0) error stop 'ERROR: cannot open input file.'
     read(u, nml=nse, iostat=ios)
     close(u)
-    if (ios /= 0) return  ! /nse/ block is optional for non-NSE solver
+    if (ios /= 0) then
+      write(*,'(A,A)') 'ERROR: failed to read namelist /nse/ in ', trim(filename)
+      error stop
+    end if
 
     cfg%nv = nv
-    cfg%gamma = gamma; cfg%small_rho = small_rho; cfg%small_p = small_p
+    cfg%gamma = gamma; cfg%cfl = cfl
+    cfg%small_rho = small_rho; cfg%small_p = small_p
     cfg%rho0 = rho0; cfg%mach = mach; cfg%reynolds = reynolds; cfg%prandtl = prandtl
+    cfg%convective_scheme = convective_scheme
+    cfg%viscous_scheme = viscous_scheme
+    cfg%boundary_condition = boundary_condition
+    cfg%time_integrator = time_integrator
+    cfg%hit_spectrum = hit_spectrum
+    cfg%hit_seed = hit_seed
+    cfg%hit_rms_velocity = hit_rms_velocity
+    cfg%hit_peak_wavenumber = hit_peak_wavenumber
+    cfg%hit_integral_length = hit_integral_length
+    cfg%hit_kolmogorov_length = hit_kolmogorov_length
+    cfg%hit_dealias_fraction = hit_dealias_fraction
+    cfg%forcing_scheme = forcing_scheme
+    cfg%forcing_spectrum = forcing_spectrum
+    cfg%forcing_fft_backend = forcing_fft_backend
+    cfg%forcing_k_cutoff = forcing_k_cutoff
+    cfg%forcing_target_dissipation = forcing_target_dissipation
+    cfg%forcing_dilatational_ratio = forcing_dilatational_ratio
+    cfg%forcing_denominator_floor = forcing_denominator_floor
+    cfg%forcing_max_coefficient = forcing_max_coefficient
+    cfg%forcing_report_interval = forcing_report_interval
   end subroutine read_nse_input
 
   subroutine read_all_inputs(filename, sim, gpe, nse)
@@ -162,7 +230,10 @@ contains
 
     call read_common_input(filename, sim)
     if (present(gpe)) call read_gpe_input(filename, gpe)
-    if (present(nse)) call read_nse_input(filename, nse)
+    if (present(nse)) then
+      nse%cfl = sim%cfl
+      call read_nse_input(filename, nse)
+    end if
   end subroutine read_all_inputs
 
 end module mod_input_reader
