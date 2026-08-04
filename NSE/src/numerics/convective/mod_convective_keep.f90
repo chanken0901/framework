@@ -1,4 +1,4 @@
-module mod_convective_scheme
+module mod_convective_keep
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config
@@ -9,13 +9,13 @@ module mod_convective_scheme
   real(dp), parameter :: central6_coefficient(3) = [ &
     3.0_dp/4.0_dp, -3.0_dp/20.0_dp, 1.0_dp/60.0_dp ]
 
-  public :: compute_convective_flux
-  public :: validate_convective_scheme
-  public :: convective_required_ghost_cells
+  public :: compute_keep_flux
+  public :: validate_keep_scheme
+  public :: keep_required_ghost_cells
 
 contains
 
-  subroutine compute_convective_flux(q, fface, direction, sim, nse, js, je, ks, ke)
+  subroutine compute_keep_flux(q, fface, direction, sim, nse, js, je, ks, ke)
     type(simulation_config), intent(in) :: sim
     type(nse_config), intent(in) :: nse
     integer, intent(in) :: direction, js, je, ks, ke
@@ -26,7 +26,7 @@ contains
     real(dp) :: pair_flux(5), weight, derivative_coefficient(3)
 
     if (nse%nv /= 5) error stop 'KEEP flux requires five conserved variables'
-    if (sim%nghost < convective_required_ghost_cells()) then
+    if (sim%nghost < keep_required_ghost_cells()) then
       error stop 'selectable-order KEEP flux requires three ghost cells'
     end if
     selected_order = requested_keep_order(nse)
@@ -108,7 +108,7 @@ contains
     case default
       error stop 'convective flux direction must be 1, 2, or 3'
     end select
-  end subroutine compute_convective_flux
+  end subroutine compute_keep_flux
 
   pure subroutine select_derivative_coefficients(order, coefficient, &
       maximum_separation)
@@ -195,7 +195,7 @@ contains
     flux(5) = kk + lk + pk
   end subroutine keep_two_point_flux
 
-  subroutine validate_convective_scheme(nse)
+  subroutine validate_keep_scheme(nse)
     type(nse_config), intent(in) :: nse
     integer :: selected_order
 
@@ -205,7 +205,7 @@ contains
         trim(adjustl(nse%convective_scheme)), '"; use keep2 or keep6'
       error stop
     end if
-  end subroutine validate_convective_scheme
+  end subroutine validate_keep_scheme
 
   pure integer function requested_keep_order(nse) result(order)
     type(nse_config), intent(in) :: nse
@@ -220,8 +220,8 @@ contains
     end select
   end function requested_keep_order
 
-  integer function convective_required_ghost_cells() result(nghost)
+  integer function keep_required_ghost_cells() result(nghost)
     nghost = 3
-  end function convective_required_ghost_cells
+  end function keep_required_ghost_cells
 
-end module mod_convective_scheme
+end module mod_convective_keep

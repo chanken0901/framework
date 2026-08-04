@@ -26,27 +26,28 @@ CPU版はroot集約を行わず、既存のx-pencil分割と2DECOMPの転置を�
 ```yaml
 forcing:
   type: petersen_livescu
-  spectrum: low_wavenumber
-  fft_backend: auto
-  k_cutoff: 2.5
-  target_dissipation: 0.1
-  dilatational_ratio: 0.0
-  denominator_floor: 1.0e-14
-  max_coefficient: 0.0
-  report_interval: 100
+  petersen_livescu:
+    spectrum: low_wavenumber
+    fft_backend: auto
+    k_cutoff: 2.5
+    target_dissipation: 0.1
+    dilatational_ratio: 0.0
+    denominator_floor: 1.0e-14
+    max_coefficient: 0.0
+    report_interval: 100
 ```
 
 | 指定子 | 値・意味 |
 |---|---|
 | `type` | `none`または`petersen_livescu` |
-| `spectrum` | `full_spectrum`または`low_wavenumber` |
-| `fft_backend` | 通常は`auto`。明示時は`2decomp_fftw`または`cufft` |
-| `k_cutoff` | `low_wavenumber`で保持する物理波数。条件は`abs(k) < k_cutoff` |
-| `target_dissipation` | ソレノイダルとダイラテーショナルを合わせた目標注入率 |
-| `dilatational_ratio` | 目標値`epsilon_d / epsilon_s` |
-| `denominator_floor` | 係数計算でゼロ割を防ぐ下限 |
-| `max_coefficient` | 係数の絶対値上限。`0`は制限なし |
-| `report_interval` | Forcing評価回数ごとの診断間隔。`0`は非表示 |
+| `petersen_livescu.spectrum` | `full_spectrum`または`low_wavenumber` |
+| `petersen_livescu.fft_backend` | 通常は`auto`。明示時は`2decomp_fftw`または`cufft` |
+| `petersen_livescu.k_cutoff` | `low_wavenumber`で保持する物理波数。条件は`abs(k) < k_cutoff` |
+| `petersen_livescu.target_dissipation` | ソレノイダルとダイラテーショナルを合わせた目標注入率 |
+| `petersen_livescu.dilatational_ratio` | 目標値`epsilon_d / epsilon_s` |
+| `petersen_livescu.denominator_floor` | 係数計算でゼロ割を防ぐ下限 |
+| `petersen_livescu.max_coefficient` | 係数の絶対値上限。`0`は制限なし |
+| `petersen_livescu.report_interval` | Forcing評価回数ごとの診断間隔。`0`は非表示 |
 
 `scheme`は既存caseとの後方互換用エイリアスとしてのみ残している。新しい
 case設計では`type`を使用する。

@@ -42,11 +42,11 @@ set(
 set_property(CACHE NSE_MPI_PROVIDER PROPERTY STRINGS AUTO MSMPI SYSTEM)
 
 set(
-  NSE_CONVECTIVE_BACKEND "keep_family"
+  NSE_CONVECTIVE_BACKEND "runtime"
   CACHE STRING
   "Convective-flux backend compiled into the NSE solver"
 )
-set_property(CACHE NSE_CONVECTIVE_BACKEND PROPERTY STRINGS keep_family)
+set_property(CACHE NSE_CONVECTIVE_BACKEND PROPERTY STRINGS runtime keep_family)
 set(
   NSE_VISCOUS_SCHEME "central6"
   CACHE STRING
@@ -62,9 +62,12 @@ set_property(CACHE NSE_BOUNDARY_SCHEME PROPERTY STRINGS periodic)
 set(
   NSE_INIT_FFT_BACKEND "none"
   CACHE STRING
-  "Initial-condition FFT backend: none or 2decomp_fftw"
+  "Initial-condition FFT backend: none, 2decomp_fftw, or cufft"
 )
-set_property(CACHE NSE_INIT_FFT_BACKEND PROPERTY STRINGS none 2decomp_fftw)
+set_property(
+  CACHE NSE_INIT_FFT_BACKEND
+  PROPERTY STRINGS none 2decomp_fftw cufft
+)
 set(
   NSE_FORCING_FFT_BACKEND "none"
   CACHE STRING
@@ -100,10 +103,11 @@ if(NSE_GPU_BACKEND STREQUAL "cuda" AND NSE_USE_MPI)
   )
 endif()
 if(NOT NSE_INIT_FFT_BACKEND STREQUAL "none" AND
-   NOT NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw")
+   NOT NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw" AND
+   NOT NSE_INIT_FFT_BACKEND STREQUAL "cufft")
   message(FATAL_ERROR
     "Unsupported NSE_INIT_FFT_BACKEND='${NSE_INIT_FFT_BACKEND}'. "
-    "Available backends: none, 2decomp_fftw"
+    "Available backends: none, 2decomp_fftw, cufft"
   )
 endif()
 if(NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw" AND NOT NSE_USE_MPI)
@@ -115,6 +119,12 @@ if(NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw" AND
    NOT NSE_GPU_BACKEND STREQUAL "none")
   message(FATAL_ERROR
     "The 2decomp_fftw initialization backend is currently CPU/MPI only."
+  )
+endif()
+if(NSE_INIT_FFT_BACKEND STREQUAL "cufft" AND
+   NOT NSE_GPU_BACKEND STREQUAL "cuda")
+  message(FATAL_ERROR
+    "The cufft initialization backend requires NSE_GPU_BACKEND=cuda."
   )
 endif()
 if(NOT NSE_FORCING_FFT_BACKEND STREQUAL "none" AND
@@ -139,12 +149,20 @@ if(NSE_FORCING_FFT_BACKEND STREQUAL "cufft" AND
   )
 endif()
 
-if(NSE_CONVECTIVE_BACKEND STREQUAL "keep_family")
-  set(NSE_CONVECTIVE_SOURCE src/numerics/convective/mod_convective_keep.f90)
+if(NSE_CONVECTIVE_BACKEND STREQUAL "runtime" OR
+   NSE_CONVECTIVE_BACKEND STREQUAL "keep_family")
+  set(
+    NSE_CONVECTIVE_SOURCES
+    src/numerics/reconstruction/mod_reconstruction_weno5z.f90
+    src/numerics/riemann/mod_riemann_roe.f90
+    src/numerics/convective/mod_convective_keep.f90
+    src/numerics/convective/mod_convective_weno5z_roe.f90
+    src/numerics/convective/mod_convective_dispatch.f90
+  )
 else()
   message(FATAL_ERROR
     "Unsupported NSE_CONVECTIVE_BACKEND='${NSE_CONVECTIVE_BACKEND}'. "
-    "Available backends: keep_family"
+    "Available backend: runtime"
   )
 endif()
 
@@ -193,6 +211,9 @@ if(NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw" OR
   if(NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw")
     set(NSE_INIT_FFT_SOURCE src/init/mod_init_hit_spectral_2decomp.f90)
   endif()
+endif()
+if(NSE_INIT_FFT_BACKEND STREQUAL "cufft")
+  set(NSE_INIT_FFT_SOURCE src/init/mod_init_hit_spectral_cufft.f90)
 endif()
 
 set(NSE_FORCING_SOURCE src/forcing/mod_nse_forcing_stub.f90)
@@ -262,6 +283,7 @@ set(
   ${NSE_MPI_SOURCE}
   ${NSE_OPENMP_RUNTIME_SOURCE}
   src/init/mod_init_taylor_green.f90
+  src/init/mod_hit_isotropy_math.f90
   ${NSE_INIT_FFT_SOURCE}
   src/init/mod_nse_initial_conditions.f90
   src/io/mod_slf_output.f90
@@ -271,7 +293,7 @@ if(NSE_GPU_BACKEND STREQUAL "cuda")
 else()
   list(APPEND NSE_DEFAULT_CORE_SOURCES
     ${NSE_BOUNDARY_SOURCE}
-    ${NSE_CONVECTIVE_SOURCE}
+    ${NSE_CONVECTIVE_SOURCES}
     ${NSE_VISCOUS_SOURCE}
     ${NSE_FORCING_SOURCE}
     src/numerics/mod_nse_spatial_operator.f90
@@ -376,6 +398,12 @@ if(NSE_GPU_BACKEND STREQUAL "cuda")
   target_link_libraries(nse_cuda_bridge PRIVATE CUDA::cudart)
   if(NSE_FORCING_FFT_BACKEND STREQUAL "cufft")
     target_compile_definitions(nse_cuda_bridge PRIVATE NSE_FORCING_CUFFT=1)
+  endif()
+  if(NSE_INIT_FFT_BACKEND STREQUAL "cufft")
+    target_compile_definitions(nse_cuda_bridge PRIVATE NSE_INIT_CUFFT=1)
+  endif()
+  if(NSE_FORCING_FFT_BACKEND STREQUAL "cufft" OR
+     NSE_INIT_FFT_BACKEND STREQUAL "cufft")
     target_link_libraries(nse_cuda_bridge PRIVATE CUDA::cufft)
   endif()
   target_link_libraries(nse_core PUBLIC nse_cuda_bridge)
@@ -434,6 +462,27 @@ if(BUILD_TESTING AND NSE_ENABLE_CUFFTMP_CONTRACT_TESTS)
 endif()
 if(BUILD_TESTING)
   add_executable(
+    nse_test_hit_parameter_resolution
+    tests/test_hit_parameter_resolution.f90
+  )
+  set_target_properties(
+    nse_test_hit_parameter_resolution
+    PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/hit_parameter_test"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+  )
+  target_link_libraries(nse_test_hit_parameter_resolution PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_hit_parameter_resolution)
+  add_test(
+    NAME nse_hit_parameter_resolution
+    COMMAND $<TARGET_FILE:nse_test_hit_parameter_resolution>
+  )
+  set_tests_properties(
+    nse_hit_parameter_resolution
+    PROPERTIES PASS_REGULAR_EXPRESSION "HIT parameter resolution test passed"
+  )
+
+  add_executable(
     nse_test_forcing_coefficients
     tests/test_forcing_coefficients.f90
   )
@@ -457,6 +506,22 @@ if(BUILD_TESTING)
   )
 endif()
 if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "none")
+  add_executable(nse_test_hit_isotropy_math tests/test_hit_isotropy_math.f90)
+  set_target_properties(
+    nse_test_hit_isotropy_math
+    PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/hit_isotropy_test"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+  )
+  target_link_libraries(nse_test_hit_isotropy_math PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_hit_isotropy_math)
+  add_test(NAME nse_hit_isotropy_math
+    COMMAND $<TARGET_FILE:nse_test_hit_isotropy_math>)
+  set_tests_properties(
+    nse_hit_isotropy_math
+    PROPERTIES PASS_REGULAR_EXPRESSION "HIT isotropy tensor test passed"
+  )
+
   add_executable(nse_test_keep6_accuracy tests/test_keep6_accuracy.f90)
   set_target_properties(
     nse_test_keep6_accuracy
@@ -472,6 +537,43 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "none")
     nse_keep6_accuracy
     PROPERTIES
       PASS_REGULAR_EXPRESSION "KEEP selectable-order accuracy test passed"
+  )
+
+  add_executable(nse_test_weno5z_roe tests/test_weno5z_roe.f90)
+  set_target_properties(
+    nse_test_weno5z_roe
+    PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/weno5z_roe_test"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+  )
+  target_link_libraries(nse_test_weno5z_roe PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_weno5z_roe)
+  add_test(NAME nse_weno5z_roe
+    COMMAND $<TARGET_FILE:nse_test_weno5z_roe>)
+  set_tests_properties(
+    nse_weno5z_roe
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION "WENO5-Z/Roe tests passed"
+  )
+
+  if(NSE_USE_MPI)
+    add_test(
+      NAME nse_weno5z_roe_smoke
+      COMMAND mpiexec -n 4 $<TARGET_FILE:nse_solver>
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_weno5z_roe_small.dat"
+    )
+  else()
+    add_test(
+      NAME nse_weno5z_roe_smoke
+      COMMAND $<TARGET_FILE:nse_solver>
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_weno5z_roe_small.dat"
+    )
+  endif()
+  set_tests_properties(
+    nse_weno5z_roe_smoke
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION "NSE calculation completed successfully:"
+      FAIL_REGULAR_EXPRESSION "floating-point exceptions are signalling"
   )
 endif()
 if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "none" AND
@@ -527,6 +629,22 @@ if(BUILD_TESTING AND NSE_USE_MPI AND NSE_GPU_BACKEND STREQUAL "none")
   )
 endif()
 if(BUILD_TESTING AND NSE_USE_MPI AND
+   NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw")
+  add_test(
+    NAME nse_hit_targets_2decomp_smoke
+    COMMAND mpiexec -n 4 $<TARGET_FILE:nse_solver>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_hit_targets_small.dat"
+  )
+  set_tests_properties(
+    nse_hit_targets_2decomp_smoke
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION
+        "hit_integral_reynolds =;NSE calculation completed successfully:"
+      FAIL_REGULAR_EXPRESSION
+        "floating-point exceptions are signalling"
+  )
+endif()
+if(BUILD_TESTING AND NSE_USE_MPI AND
    NSE_FORCING_FFT_BACKEND STREQUAL "2decomp_fftw")
   add_test(
     NAME nse_forcing_2decomp_smoke
@@ -552,7 +670,7 @@ if(BUILD_TESTING AND NSE_USE_MPI AND
       PASS_REGULAR_EXPRESSION
         "NSE calculation completed successfully:"
       FAIL_REGULAR_EXPRESSION
-        "floating-point exceptions are signalling"
+        "floating-point exceptions are signalling;HIT low-wavenumber isotropy did not converge"
   )
 endif()
 if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda")
@@ -574,7 +692,11 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda")
   add_executable(
     nse_test_cuda_keep_compare
     tests/test_cuda_keep_compare.f90
+    src/numerics/reconstruction/mod_reconstruction_weno5z.f90
+    src/numerics/riemann/mod_riemann_roe.f90
     src/numerics/convective/mod_convective_keep.f90
+    src/numerics/convective/mod_convective_weno5z_roe.f90
+    src/numerics/convective/mod_convective_dispatch.f90
   )
   set_target_properties(
     nse_test_cuda_keep_compare
@@ -588,18 +710,28 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda")
     COMMAND $<TARGET_FILE:nse_test_cuda_keep_compare> 6)
   set_tests_properties(
     nse_cuda_keep_compare
-    PROPERTIES PASS_REGULAR_EXPRESSION "CUDA KEEP comparison passed"
+    PROPERTIES PASS_REGULAR_EXPRESSION "CUDA convective comparison passed"
   )
   add_test(NAME nse_cuda_keep2_compare
     COMMAND $<TARGET_FILE:nse_test_cuda_keep_compare> 2)
   set_tests_properties(
     nse_cuda_keep2_compare
-    PROPERTIES PASS_REGULAR_EXPRESSION "CUDA KEEP comparison passed"
+    PROPERTIES PASS_REGULAR_EXPRESSION "CUDA convective comparison passed"
+  )
+  add_test(NAME nse_cuda_weno5z_roe_compare
+    COMMAND $<TARGET_FILE:nse_test_cuda_keep_compare> 5)
+  set_tests_properties(
+    nse_cuda_weno5z_roe_compare
+    PROPERTIES PASS_REGULAR_EXPRESSION "CUDA convective comparison passed"
   )
   add_executable(
     nse_test_cuda_viscous_compare
     tests/test_cuda_viscous_compare.f90
+    src/numerics/reconstruction/mod_reconstruction_weno5z.f90
+    src/numerics/riemann/mod_riemann_roe.f90
     src/numerics/convective/mod_convective_keep.f90
+    src/numerics/convective/mod_convective_weno5z_roe.f90
+    src/numerics/convective/mod_convective_dispatch.f90
     src/numerics/viscous/mod_viscous_central6.f90
   )
   set_target_properties(
@@ -625,6 +757,45 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda")
     nse_cuda_tgv_smoke
     PROPERTIES PASS_REGULAR_EXPRESSION "# step time dt"
   )
+  add_test(
+    NAME nse_cuda_weno5z_roe_smoke
+    COMMAND $<TARGET_FILE:nse_solver>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_cuda_weno5z_roe_small.dat"
+  )
+  set_tests_properties(
+    nse_cuda_weno5z_roe_smoke
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION "NSE calculation completed successfully:"
+      FAIL_REGULAR_EXPRESSION "CUDA backend failure;floating-point exceptions are signalling"
+  )
+  if(NSE_INIT_FFT_BACKEND STREQUAL "cufft")
+    add_test(
+      NAME nse_cuda_hit_smoke
+      COMMAND $<TARGET_FILE:nse_solver>
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_hit_cuda_small.dat"
+    )
+    set_tests_properties(
+      nse_cuda_hit_smoke
+      PROPERTIES
+        PASS_REGULAR_EXPRESSION
+          "Single-GPU spectral HIT initialization"
+        FAIL_REGULAR_EXPRESSION
+          "CUDA HIT initialization error;CUDA backend failure"
+    )
+    add_test(
+      NAME nse_cuda_hit_targets_smoke
+      COMMAND $<TARGET_FILE:nse_solver>
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_hit_targets_small.dat"
+    )
+    set_tests_properties(
+      nse_cuda_hit_targets_smoke
+      PROPERTIES
+        PASS_REGULAR_EXPRESSION
+          "hit_integral_reynolds =;NSE calculation completed successfully:"
+        FAIL_REGULAR_EXPRESSION
+          "CUDA HIT initialization error;CUDA backend failure"
+    )
+  endif()
   if(NSE_FORCING_FFT_BACKEND STREQUAL "cufft")
     add_test(
       NAME nse_cuda_forcing_smoke

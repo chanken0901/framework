@@ -5308,6 +5308,20 @@ end subroutine mp_send_recv_jk_5_r8
 
 !-----------------------------------------------------------------------------
 
+subroutine mp_sendrecv_r8(sendbuf, sendcount, sendtype, destination, &
+    sendtag, recvbuf, recvcount, recvtype, source, recvtag, communicator, &
+    status, ierr)
+  implicit none
+  real*8, intent(in) :: sendbuf(*)
+  integer, intent(in) :: sendcount, sendtype, destination, sendtag
+  real*8, intent(out) :: recvbuf(*)
+  integer, intent(in) :: recvcount, recvtype, source, recvtag, communicator
+  integer, intent(out) :: status(MPI_STATUS_SIZE), ierr
+
+  call MPI_Sendrecv(sendbuf, sendcount, sendtype, destination, sendtag, &
+    recvbuf, recvcount, recvtype, source, recvtag, communicator, status, ierr)
+end subroutine mp_sendrecv_r8
+
 end module module_mpi
 !-----------------------------------------------------------------------------
 !=============================================================================

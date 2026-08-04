@@ -1,23 +1,33 @@
 module mod_init_hit_spectral
   use, intrinsic :: iso_fortran_env, only : int64
+  use, intrinsic :: iso_c_binding, only : c_char, c_double_complex, c_int, &
+    c_null_char
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config
   use mod_hit_isotropy_math, only : isotropy_error_3x3, &
     symmetric_inverse_sqrt_3x3
-  use module_mpi, only : my_rank, root, nprocs, ndiv_ny, ndiv_nz, &
-    jjsta, jjend, kksta, kkend, mp_allmaxr8, mp_allsumr8, &
-    MPI_COMM_WORLD, MPI_INTEGER, MPI_DOUBLE_PRECISION, MPI_SUM
-  use decomp_2d, only : decomp_info, decomp_2d_init, decomp_2d_finalize, &
-    alloc_x, alloc_z, xstart, xend, zstart, zend
-  use decomp_2d_fft, only : decomp_2d_fft_init, decomp_2d_fft_finalize, &
-    decomp_2d_fft_3d, decomp_2d_fft_get_ph
-  use decomp_2d_constants, only : mytype, PHYSICAL_IN_X, &
-    DECOMP_2D_FFT_BACKWARD
   implicit none
   private
 
   public :: initialize_hit_spectral
+
+  interface
+    function c_nse_cuda_inverse_complex_3d(nx, ny, nz, device, field) &
+        bind(C, name="nse_cuda_inverse_complex_3d") result(status)
+      import :: c_double_complex, c_int
+      integer(c_int), value :: nx, ny, nz, device
+      complex(c_double_complex), intent(inout) :: field(*)
+      integer(c_int) :: status
+    end function c_nse_cuda_inverse_complex_3d
+
+    subroutine c_nse_cuda_get_last_error(buffer, buffer_size) &
+        bind(C, name="nse_cuda_get_last_error")
+      import :: c_char, c_int
+      character(kind=c_char), intent(out) :: buffer(*)
+      integer(c_int), value :: buffer_size
+    end subroutine c_nse_cuda_get_last_error
+  end interface
 
 contains
 
@@ -27,9 +37,8 @@ contains
     integer, intent(in) :: js, je, ks, ke
     real(dp), intent(inout) :: q(1-sim%nghost:, js-sim%nghost:, &
       ks-sim%nghost:, :)
-    type(decomp_info), pointer :: ph
-    complex(mytype), allocatable :: work_x(:,:,:)
-    complex(mytype), allocatable :: u_hat(:,:,:), v_hat(:,:,:), w_hat(:,:,:)
+    complex(c_double_complex), allocatable :: u_hat(:,:,:)
+    complex(c_double_complex), allocatable :: v_hat(:,:,:), w_hat(:,:,:)
     real(dp) :: target_rms, turbulent_mach, measured_rms, scale
     real(dp) :: velocity_square_sum
     real(dp) :: spectral_divergence, imaginary_residual(3)
@@ -40,8 +49,9 @@ contains
     if (nse%nv /= 5) then
       error stop 'Spectral HIT initialization requires five conserved variables'
     end if
-    if (storage_size(0.0_mytype) /= storage_size(0.0_dp)) then
-      error stop '2DECOMP&FFT precision must match mod_precision dp'
+    if (storage_size(cmplx(0.0_dp, 0.0_dp, kind=c_double_complex)) /= &
+        2*storage_size(0.0_dp)) then
+      error stop 'cuFFT complex precision must match mod_precision dp'
     end if
     if (sim%lx <= 0.0_dp .or. sim%ly <= 0.0_dp .or. sim%lz <= 0.0_dp) then
       error stop 'Spectral HIT initialization requires positive domain lengths'
@@ -58,18 +68,9 @@ contains
     end if
     turbulent_mach = sqrt(3.0_dp) * target_rms
 
-    ! The NSE MPI layout is an x-pencil: x is local-complete while y and z
-    ! are divided by ndiv_ny and ndiv_nz. Use the same process grid here.
-    call decomp_2d_init(sim%nx, sim%ny, sim%nz, ndiv_ny, ndiv_nz, &
-      complex_pool=.true.)
-    call decomp_2d_fft_init(PHYSICAL_IN_X)
-    ph => decomp_2d_fft_get_ph()
-
-    call validate_decomp_x_extent(sim)
-    call alloc_x(work_x, ph, .true.)
-    call alloc_z(u_hat, ph, .true.)
-    call alloc_z(v_hat, ph, .true.)
-    call alloc_z(w_hat, ph, .true.)
+    allocate(u_hat(sim%nx,sim%ny,sim%nz))
+    allocate(v_hat(sim%nx,sim%ny,sim%nz))
+    allocate(w_hat(sim%nx,sim%ny,sim%nz))
 
     call generate_hit_fourier_field(u_hat, v_hat, w_hat, sim, nse, &
       spectral_divergence)
@@ -79,12 +80,12 @@ contains
     call measure_spectral_divergence(u_hat, v_hat, w_hat, sim, &
       spectral_divergence)
 
-    call inverse_component_to_state(u_hat, work_x, q, sim, js, je, ks, &
-      ke, 2, imaginary_residual(1))
-    call inverse_component_to_state(v_hat, work_x, q, sim, js, je, ks, &
-      ke, 3, imaginary_residual(2))
-    call inverse_component_to_state(w_hat, work_x, q, sim, js, je, ks, &
-      ke, 4, imaginary_residual(3))
+    call inverse_component_to_state(u_hat, q, sim, js, je, ks, ke, 2, &
+      imaginary_residual(1))
+    call inverse_component_to_state(v_hat, q, sim, js, je, ks, ke, 3, &
+      imaginary_residual(2))
+    call inverse_component_to_state(w_hat, q, sim, js, je, ks, ke, 4, &
+      imaginary_residual(3))
 
     velocity_square_sum = 0.0_dp
     do k = ks, ke
@@ -95,7 +96,6 @@ contains
         end do
       end do
     end do
-    call mp_allsumr8(velocity_square_sum)
     measured_rms = sqrt(velocity_square_sum / &
       (3.0_dp * real(sim%nx,dp) * real(sim%ny,dp) * real(sim%nz,dp)))
     if (measured_rms <= tiny(1.0_dp)) then
@@ -121,10 +121,9 @@ contains
       end do
     end do
 
-    if (my_rank == root) then
-      write(*,'(A)') '# Distributed spectral HIT initialization'
+    write(*,'(A)') '# Single-GPU spectral HIT initialization'
       write(*,'(A,A)') '# spectrum: ', trim(nse%hit_spectrum)
-      write(*,'(A,I0,A,I0)') '# 2DECOMP process grid: ', ndiv_ny, ' x ', ndiv_nz
+      write(*,'(A)') '# inverse FFT backend: cuFFT Z2Z'
       write(*,'(A)') '# Fourier coefficients: direct transverse-mode construction'
       write(*,'(A,A)') '# low-wavenumber isotropy: ', &
         trim(nse%hit_isotropy_mode)
@@ -149,32 +148,19 @@ contains
         write(*,'(A)') '# WARNING: the requested HIT field is initially supersonic.'
         write(*,'(A)') '# hit_rms_velocity is nondimensional, not a velocity in m/s.'
       end if
-    end if
-
-    deallocate(work_x, u_hat, v_hat, w_hat)
-    nullify(ph)
-    call decomp_2d_fft_finalize
-    call decomp_2d_finalize
+    deallocate(u_hat, v_hat, w_hat)
   end subroutine initialize_hit_spectral
-
-  subroutine validate_decomp_x_extent(sim)
-    type(simulation_config), intent(in) :: sim
-
-    if (xstart(1) /= 1 .or. xend(1) /= sim%nx) then
-      error stop '2DECOMP physical layout is not an x-pencil'
-    end if
-  end subroutine validate_decomp_x_extent
 
   subroutine generate_hit_fourier_field(u_hat, v_hat, w_hat, sim, nse, &
       max_divergence)
-    complex(mytype), intent(out) :: u_hat(zstart(1):, zstart(2):, zstart(3):)
-    complex(mytype), intent(out) :: v_hat(zstart(1):, zstart(2):, zstart(3):)
-    complex(mytype), intent(out) :: w_hat(zstart(1):, zstart(2):, zstart(3):)
+    complex(c_double_complex), intent(out) :: u_hat(:,:,:)
+    complex(c_double_complex), intent(out) :: v_hat(:,:,:)
+    complex(c_double_complex), intent(out) :: w_hat(:,:,:)
     type(simulation_config), intent(in) :: sim
     type(nse_config), intent(in) :: nse
     real(dp), intent(out) :: max_divergence
-    complex(mytype) :: a_mode, b_mode, phase_a, phase_b
-    complex(mytype) :: u_canonical, v_canonical, w_canonical
+    complex(c_double_complex) :: a_mode, b_mode, phase_a, phase_b
+    complex(c_double_complex) :: u_canonical, v_canonical, w_canonical
     real(dp) :: pi, kx, ky, kz, kxy, kmag, amplitude
     real(dp) :: e1x, e1y, e1z, e2x, e2y, e2z
     real(dp) :: theta_a, theta_b, theta_mix, local_divergence
@@ -187,11 +173,11 @@ contains
     cutoff_z = floor(nse%hit_dealias_fraction * real(sim%nz/2,dp))
     max_divergence = 0.0_dp
 
-    do k = zstart(3), zend(3)
+    do k = 1, sim%nz
       mz = signed_mode(k, sim%nz)
-      do j = zstart(2), zend(2)
+      do j = 1, sim%ny
         my = signed_mode(j, sim%ny)
-        do i = zstart(1), zend(1)
+        do i = 1, sim%nx
           mx = signed_mode(i, sim%nx)
 
           if ((mx == 0 .and. my == 0 .and. mz == 0) .or. &
@@ -200,9 +186,9 @@ contains
               is_nyquist_mode(mx,sim%nx) .or. &
               is_nyquist_mode(my,sim%ny) .or. &
               is_nyquist_mode(mz,sim%nz)) then
-            u_hat(i,j,k) = cmplx(0.0_dp, 0.0_dp, kind=mytype)
-            v_hat(i,j,k) = cmplx(0.0_dp, 0.0_dp, kind=mytype)
-            w_hat(i,j,k) = cmplx(0.0_dp, 0.0_dp, kind=mytype)
+            u_hat(i,j,k) = cmplx(0.0_dp, 0.0_dp, kind=c_double_complex)
+            v_hat(i,j,k) = cmplx(0.0_dp, 0.0_dp, kind=c_double_complex)
+            w_hat(i,j,k) = cmplx(0.0_dp, 0.0_dp, kind=c_double_complex)
             cycle
           end if
 
@@ -243,8 +229,10 @@ contains
             nse%hit_seed, 2)
           theta_mix = 2.0_dp*pi*deterministic_uniform(cmx, cmy, cmz, &
             nse%hit_seed, 3)
-          phase_a = cmplx(cos(theta_a), sin(theta_a), kind=mytype)
-          phase_b = cmplx(cos(theta_b), sin(theta_b), kind=mytype)
+          phase_a = cmplx(cos(theta_a), sin(theta_a), &
+            kind=c_double_complex)
+          phase_b = cmplx(cos(theta_b), sin(theta_b), &
+            kind=c_double_complex)
           a_mode = amplitude * cos(theta_mix) * phase_a
           b_mode = amplitude * sin(theta_mix) * phase_b
 
@@ -270,17 +258,13 @@ contains
         end do
       end do
     end do
-    call mp_allmaxr8(max_divergence)
   end subroutine generate_hit_fourier_field
 
   subroutine enforce_low_wavenumber_isotropy(u_hat, v_hat, w_hat, sim, &
       nse, initial_error, final_error, iterations, shells_used)
-    complex(mytype), intent(inout) :: u_hat(zstart(1):, zstart(2):, &
-      zstart(3):)
-    complex(mytype), intent(inout) :: v_hat(zstart(1):, zstart(2):, &
-      zstart(3):)
-    complex(mytype), intent(inout) :: w_hat(zstart(1):, zstart(2):, &
-      zstart(3):)
+    complex(c_double_complex), intent(inout) :: u_hat(:,:,:)
+    complex(c_double_complex), intent(inout) :: v_hat(:,:,:)
+    complex(c_double_complex), intent(inout) :: w_hat(:,:,:)
     type(simulation_config), intent(in) :: sim
     type(nse_config), intent(in) :: nse
     real(dp), intent(out) :: initial_error, final_error
@@ -301,8 +285,7 @@ contains
     mode = trim(adjustl(nse%hit_isotropy_mode))
     if (mode == 'none') return
     if (mode /= 'projected_shell') then
-      if (my_rank == root) write(*,'(A,A)') &
-        'ERROR: unsupported HIT isotropy mode: ', trim(mode)
+      write(*,'(A,A)') 'ERROR: unsupported HIT isotropy mode: ', trim(mode)
       error stop 'unsupported HIT isotropy mode'
     end if
 
@@ -357,7 +340,7 @@ contains
         call symmetric_inverse_sqrt_3x3(reynolds(:,:,shell), &
           transforms(:,:,shell), success)
         if (.not. success) then
-          if (my_rank == root) write(*,'(A,I0)') &
+          write(*,'(A,I0)') &
             'ERROR: singular HIT Reynolds tensor in shell ', shell
           error stop 'failed to construct HIT isotropy transform'
         end if
@@ -390,11 +373,9 @@ contains
     end do
 
     if (final_error > nse%hit_isotropy_tolerance) then
-      if (my_rank == root) then
-        write(*,'(A,ES16.8,A,ES16.8)') &
-          'ERROR: HIT shell isotropy did not converge: error=', final_error, &
-          ', tolerance=', nse%hit_isotropy_tolerance
-      end if
+      write(*,'(A,ES16.8,A,ES16.8)') &
+        'ERROR: HIT shell isotropy did not converge: error=', final_error, &
+        ', tolerance=', nse%hit_isotropy_tolerance
       error stop 'HIT low-wavenumber isotropy did not converge'
     end if
 
@@ -417,13 +398,13 @@ contains
 
     pi = acos(-1.0_dp)
     local_modes = 0
-    do k = zstart(3), zend(3)
+    do k = 1, sim%nz
       mz = signed_mode(k, sim%nz)
       kz = 2.0_dp*pi*real(mz,dp) / sim%lz
-      do j = zstart(2), zend(2)
+      do j = 1, sim%ny
         my = signed_mode(j, sim%ny)
         ky = 2.0_dp*pi*real(my,dp) / sim%ly
-        do i = zstart(1), zend(1)
+        do i = 1, sim%nx
           mx = signed_mode(i, sim%nx)
           kx = 2.0_dp*pi*real(mx,dp) / sim%lx
           kmag = sqrt(kx*kx + ky*ky + kz*kz)
@@ -437,13 +418,13 @@ contains
     allocate(mode_kx(max(1,local_modes)), mode_ky(max(1,local_modes)))
     allocate(mode_kz(max(1,local_modes)))
     position = 0
-    do k = zstart(3), zend(3)
+    do k = 1, sim%nz
       mz = signed_mode(k, sim%nz)
       kz = 2.0_dp*pi*real(mz,dp) / sim%lz
-      do j = zstart(2), zend(2)
+      do j = 1, sim%ny
         my = signed_mode(j, sim%ny)
         ky = 2.0_dp*pi*real(my,dp) / sim%ly
-        do i = zstart(1), zend(1)
+        do i = 1, sim%nx
           mx = signed_mode(i, sim%nx)
           kx = 2.0_dp*pi*real(mx,dp) / sim%lx
           kmag = sqrt(kx*kx + ky*ky + kz*kz)
@@ -467,17 +448,16 @@ contains
 
   subroutine compute_shell_reynolds(u_hat, v_hat, w_hat, mode_i, mode_j, &
       mode_k, mode_shell, local_modes, maximum_shell, reynolds)
-    complex(mytype), intent(in) :: u_hat(zstart(1):, zstart(2):, zstart(3):)
-    complex(mytype), intent(in) :: v_hat(zstart(1):, zstart(2):, zstart(3):)
-    complex(mytype), intent(in) :: w_hat(zstart(1):, zstart(2):, zstart(3):)
+    complex(c_double_complex), intent(in) :: u_hat(:,:,:)
+    complex(c_double_complex), intent(in) :: v_hat(:,:,:)
+    complex(c_double_complex), intent(in) :: w_hat(:,:,:)
     integer, intent(in) :: mode_i(:), mode_j(:), mode_k(:), mode_shell(:)
     integer, intent(in) :: local_modes, maximum_shell
     real(dp), intent(out) :: reynolds(3,3,maximum_shell)
-    real(dp) :: local_reynolds(3,3,maximum_shell)
-    complex(mytype) :: velocity(3)
-    integer :: n, shell, component, other, ierr
+    complex(c_double_complex) :: velocity(3)
+    integer :: n, shell, component, other
 
-    local_reynolds = 0.0_dp
+    reynolds = 0.0_dp
     do n = 1, local_modes
       shell = mode_shell(n)
       velocity = [u_hat(mode_i(n),mode_j(n),mode_k(n)), &
@@ -485,32 +465,26 @@ contains
         w_hat(mode_i(n),mode_j(n),mode_k(n))]
       do other = 1, 3
         do component = 1, 3
-          local_reynolds(component,other,shell) = &
-            local_reynolds(component,other,shell) + &
+          reynolds(component,other,shell) = &
+            reynolds(component,other,shell) + &
             real(velocity(component)*conjg(velocity(other)),dp)
         end do
       end do
     end do
-
-    call MPI_ALLREDUCE(local_reynolds, reynolds, size(local_reynolds), &
-      MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
-    if (ierr /= 0) error stop 'MPI_Allreduce failed for HIT shell statistics'
   end subroutine compute_shell_reynolds
 
   subroutine transform_and_project_modes(u_hat, v_hat, w_hat, mode_i, &
       mode_j, mode_k, mode_shell, mode_kx, mode_ky, mode_kz, local_modes, &
       transforms)
-    complex(mytype), intent(inout) :: u_hat(zstart(1):, zstart(2):, &
-      zstart(3):)
-    complex(mytype), intent(inout) :: v_hat(zstart(1):, zstart(2):, &
-      zstart(3):)
-    complex(mytype), intent(inout) :: w_hat(zstart(1):, zstart(2):, &
-      zstart(3):)
+    complex(c_double_complex), intent(inout) :: u_hat(:,:,:)
+    complex(c_double_complex), intent(inout) :: v_hat(:,:,:)
+    complex(c_double_complex), intent(inout) :: w_hat(:,:,:)
     integer, intent(in) :: mode_i(:), mode_j(:), mode_k(:), mode_shell(:)
     real(dp), intent(in) :: mode_kx(:), mode_ky(:), mode_kz(:)
     integer, intent(in) :: local_modes
     real(dp), intent(in) :: transforms(:,:,:)
-    complex(mytype) :: velocity(3), transformed(3), wave_dot_velocity
+    complex(c_double_complex) :: velocity(3), transformed(3)
+    complex(c_double_complex) :: wave_dot_velocity
     real(dp) :: kx, ky, kz, k_squared
     integer :: n, shell, component, other
 
@@ -519,7 +493,7 @@ contains
       velocity = [u_hat(mode_i(n),mode_j(n),mode_k(n)), &
         v_hat(mode_i(n),mode_j(n),mode_k(n)), &
         w_hat(mode_i(n),mode_j(n),mode_k(n))]
-      transformed = cmplx(0.0_dp, 0.0_dp, kind=mytype)
+      transformed = cmplx(0.0_dp, 0.0_dp, kind=c_double_complex)
       do other = 1, 3
         do component = 1, 3
           transformed(component) = transformed(component) + &
@@ -545,12 +519,9 @@ contains
 
   subroutine scale_shell_modes(u_hat, v_hat, w_hat, mode_i, mode_j, &
       mode_k, mode_shell, local_modes, shell_scale)
-    complex(mytype), intent(inout) :: u_hat(zstart(1):, zstart(2):, &
-      zstart(3):)
-    complex(mytype), intent(inout) :: v_hat(zstart(1):, zstart(2):, &
-      zstart(3):)
-    complex(mytype), intent(inout) :: w_hat(zstart(1):, zstart(2):, &
-      zstart(3):)
+    complex(c_double_complex), intent(inout) :: u_hat(:,:,:)
+    complex(c_double_complex), intent(inout) :: v_hat(:,:,:)
+    complex(c_double_complex), intent(inout) :: w_hat(:,:,:)
     integer, intent(in) :: mode_i(:), mode_j(:), mode_k(:), mode_shell(:)
     integer, intent(in) :: local_modes
     real(dp), intent(in) :: shell_scale(:)
@@ -589,9 +560,9 @@ contains
 
   subroutine measure_spectral_divergence(u_hat, v_hat, w_hat, sim, &
       maximum_divergence)
-    complex(mytype), intent(in) :: u_hat(zstart(1):, zstart(2):, zstart(3):)
-    complex(mytype), intent(in) :: v_hat(zstart(1):, zstart(2):, zstart(3):)
-    complex(mytype), intent(in) :: w_hat(zstart(1):, zstart(2):, zstart(3):)
+    complex(c_double_complex), intent(in) :: u_hat(:,:,:)
+    complex(c_double_complex), intent(in) :: v_hat(:,:,:)
+    complex(c_double_complex), intent(in) :: w_hat(:,:,:)
     type(simulation_config), intent(in) :: sim
     real(dp), intent(out) :: maximum_divergence
     real(dp) :: pi, kx, ky, kz
@@ -599,13 +570,13 @@ contains
 
     pi = acos(-1.0_dp)
     maximum_divergence = 0.0_dp
-    do k = zstart(3), zend(3)
+    do k = 1, sim%nz
       mz = signed_mode(k, sim%nz)
       kz = 2.0_dp*pi*real(mz,dp) / sim%lz
-      do j = zstart(2), zend(2)
+      do j = 1, sim%ny
         my = signed_mode(j, sim%ny)
         ky = 2.0_dp*pi*real(my,dp) / sim%ly
-        do i = zstart(1), zend(1)
+        do i = 1, sim%nx
           mx = signed_mode(i, sim%nx)
           kx = 2.0_dp*pi*real(mx,dp) / sim%lx
           maximum_divergence = max(maximum_divergence, &
@@ -613,7 +584,6 @@ contains
         end do
       end do
     end do
-    call mp_allmaxr8(maximum_divergence)
   end subroutine measure_spectral_divergence
 
   real(dp) function spectrum_mode_amplitude(kmag, nse) result(amplitude)
@@ -711,140 +681,49 @@ contains
     is_nyquist = (modulo(n,2) == 0 .and. abs(mode) == n/2)
   end function is_nyquist_mode
 
-  subroutine inverse_component_to_state(field_hat, work_x, q, sim, &
-      js, je, ks, ke, variable, imaginary_residual)
-    complex(mytype), intent(inout) :: field_hat(zstart(1):, zstart(2):, &
-      zstart(3):)
-    complex(mytype), intent(inout) :: work_x(xstart(1):, xstart(2):, &
-      xstart(3):)
+  subroutine inverse_component_to_state(field_hat, q, sim, js, je, ks, &
+      ke, variable, imaginary_residual)
+    complex(c_double_complex), intent(inout) :: field_hat(:,:,:)
     type(simulation_config), intent(in) :: sim
     integer, intent(in) :: js, je, ks, ke, variable
     real(dp), intent(out) :: imaginary_residual
     real(dp), intent(inout) :: q(1-sim%nghost:, js-sim%nghost:, &
       ks-sim%nghost:, :)
     real(dp) :: fft_normalization
+    integer(c_int) :: status
+    integer :: i, j, k
 
-    call decomp_2d_fft_3d(field_hat, work_x, DECOMP_2D_FFT_BACKWARD)
+    status = c_nse_cuda_inverse_complex_3d(int(sim%nx,c_int), &
+      int(sim%ny,c_int), int(sim%nz,c_int), int(sim%cuda_device,c_int), &
+      field_hat)
+    if (status /= 0_c_int) call report_cuda_error()
+
     fft_normalization = 1.0_dp / &
       (real(sim%nx,dp) * real(sim%ny,dp) * real(sim%nz,dp))
-    imaginary_residual = maxval(abs(aimag(work_x))) * fft_normalization
-    call mp_allmaxr8(imaginary_residual)
-    call redistribute_decomp_x_to_nse(work_x, q, sim, js, je, ks, ke, &
-      variable, fft_normalization)
+    imaginary_residual = maxval(abs(aimag(field_hat))) * fft_normalization
+    do k = ks, ke
+      do j = js, je
+        do i = 1, sim%nx
+          q(i,j,k,variable) = real(field_hat(i,j,k),dp) * fft_normalization
+        end do
+      end do
+    end do
   end subroutine inverse_component_to_state
 
-  subroutine redistribute_decomp_x_to_nse(work_x, q, sim, js, je, ks, &
-      ke, variable, normalization)
-    complex(mytype), intent(in) :: work_x(xstart(1):, xstart(2):, &
-      xstart(3):)
-    type(simulation_config), intent(in) :: sim
-    integer, intent(in) :: js, je, ks, ke, variable
-    real(dp), intent(in) :: normalization
-    real(dp), intent(inout) :: q(1-sim%nghost:, js-sim%nghost:, &
-      ks-sim%nghost:, :)
-    integer, allocatable :: send_counts(:), recv_counts(:)
-    integer, allocatable :: send_displs(:), recv_displs(:)
-    integer, allocatable :: source_bounds(:,:)
-    real(dp), allocatable :: send_buffer(:), recv_buffer(:)
-    integer :: local_bounds(4)
-    integer :: dest, source, dest_j, dest_k
-    integer :: ylo, yhi, zlo, zhi
-    integer :: i, j, k, position, ierr
-    integer :: send_total, recv_total, expected
+  subroutine report_cuda_error()
+    character(kind=c_char) :: buffer(1024)
+    character(len=1024) :: message
+    integer :: i
 
-    allocate(send_counts(0:nprocs-1), recv_counts(0:nprocs-1))
-    allocate(send_displs(0:nprocs-1), recv_displs(0:nprocs-1))
-    allocate(source_bounds(4,0:nprocs-1))
-
-    local_bounds = [xstart(2), xend(2), xstart(3), xend(3)]
-    call MPI_ALLGATHER(local_bounds, 4, MPI_INTEGER, source_bounds, 4, &
-      MPI_INTEGER, MPI_COMM_WORLD, ierr)
-    if (ierr /= 0) error stop 'MPI_Allgather failed during HIT redistribution'
-
-    do dest = 0, nprocs - 1
-      dest_j = modulo(dest, ndiv_ny)
-      dest_k = dest / ndiv_ny
-      ylo = max(xstart(2), jjsta(dest_j))
-      yhi = min(xend(2), jjend(dest_j))
-      zlo = max(xstart(3), kksta(dest_k))
-      zhi = min(xend(3), kkend(dest_k))
-      send_counts(dest) = overlap_size(sim%nx, ylo, yhi, zlo, zhi)
+    buffer = c_null_char
+    message = ''
+    call c_nse_cuda_get_last_error(buffer, int(size(buffer),c_int))
+    do i = 1, size(buffer)
+      if (buffer(i) == c_null_char) exit
+      message(i:i) = achar(iachar(buffer(i)))
     end do
-
-    do source = 0, nprocs - 1
-      ylo = max(js, source_bounds(1,source))
-      yhi = min(je, source_bounds(2,source))
-      zlo = max(ks, source_bounds(3,source))
-      zhi = min(ke, source_bounds(4,source))
-      recv_counts(source) = overlap_size(sim%nx, ylo, yhi, zlo, zhi)
-    end do
-
-    send_displs(0) = 0
-    recv_displs(0) = 0
-    do source = 1, nprocs - 1
-      send_displs(source) = send_displs(source-1) + send_counts(source-1)
-      recv_displs(source) = recv_displs(source-1) + recv_counts(source-1)
-    end do
-    send_total = sum(send_counts)
-    recv_total = sum(recv_counts)
-    expected = sim%nx * (je-js+1) * (ke-ks+1)
-    if (send_total /= size(work_x) .or. recv_total /= expected) then
-      error stop 'Invalid x-pencil overlap during HIT redistribution'
-    end if
-
-    allocate(send_buffer(max(1,send_total)))
-    allocate(recv_buffer(max(1,recv_total)))
-    do dest = 0, nprocs - 1
-      dest_j = modulo(dest, ndiv_ny)
-      dest_k = dest / ndiv_ny
-      ylo = max(xstart(2), jjsta(dest_j))
-      yhi = min(xend(2), jjend(dest_j))
-      zlo = max(xstart(3), kksta(dest_k))
-      zhi = min(xend(3), kkend(dest_k))
-      position = send_displs(dest)
-      do k = zlo, zhi
-        do j = ylo, yhi
-          do i = 1, sim%nx
-            position = position + 1
-            send_buffer(position) = real(work_x(i,j,k),dp) * normalization
-          end do
-        end do
-      end do
-    end do
-
-    call MPI_ALLTOALLV(send_buffer, send_counts, send_displs, &
-      MPI_DOUBLE_PRECISION, recv_buffer, recv_counts, recv_displs, &
-      MPI_DOUBLE_PRECISION, MPI_COMM_WORLD, ierr)
-    if (ierr /= 0) error stop 'MPI_Alltoallv failed during HIT redistribution'
-
-    do source = 0, nprocs - 1
-      ylo = max(js, source_bounds(1,source))
-      yhi = min(je, source_bounds(2,source))
-      zlo = max(ks, source_bounds(3,source))
-      zhi = min(ke, source_bounds(4,source))
-      position = recv_displs(source)
-      do k = zlo, zhi
-        do j = ylo, yhi
-          do i = 1, sim%nx
-            position = position + 1
-            q(i,j,k,variable) = recv_buffer(position)
-          end do
-        end do
-      end do
-    end do
-
-    deallocate(send_counts, recv_counts, send_displs, recv_displs)
-    deallocate(source_bounds, send_buffer, recv_buffer)
-  end subroutine redistribute_decomp_x_to_nse
-
-  pure integer function overlap_size(nx, ylo, yhi, zlo, zhi) result(count)
-    integer, intent(in) :: nx, ylo, yhi, zlo, zhi
-
-    if (yhi < ylo .or. zhi < zlo) then
-      count = 0
-    else
-      count = nx * (yhi-ylo+1) * (zhi-zlo+1)
-    end if
-  end function overlap_size
+    write(*,'(A,A)') 'CUDA HIT initialization error: ', trim(message)
+    error stop 'CUDA HIT initialization failure'
+  end subroutine report_cuda_error
 
 end module mod_init_hit_spectral

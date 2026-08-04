@@ -22,18 +22,25 @@ python ..\..\ScriptLibrary\BuildSolver\build_model.py `
 初期条件、移流スキーム、粘性項、境界条件の追加方法は
 [`docs/NSE_MODULE_DESIGN.md`](docs/NSE_MODULE_DESIGN.md)を参照してください。
 
-## 選択可能なKEEP対流項
+## 選択可能な対流項
 
 CPU/MPI/OpenMP版と単一GPU CUDA版のKEEP対流項は、2次精度と6次精度を
 実行時に選択できます。既定値は6次精度です。どちらも対称な二点KEEP流束を
 保存形に合成し、KEEPの運動エネルギー・内部エネルギー保存構造を維持します。
 
+CPU/MPI/OpenMP版では、特性空間の5次精度WENO-Z再構築とRoe数値流束を
+組み合わせた`weno5z_roe`も選択できます。Roe流束にはHarten-Hyman型の
+entropy fixを適用します。単一GPU CUDA版でも同じWENO/Roe離散式を利用できます。
+
 ```yaml
 numerics:
-  convective_scheme: keep6  # keep2 または keep6
+  # keep2, keep6, weno5z_roe
+  convective_scheme: weno5z_roe
 ```
 
-次数はスキーム名に含めて指定します。`keep` 単独の指定は使用できません。
+次数とRiemann solverはスキーム名に含めて指定します。`keep`や`weno`単独の
+指定は使用できません。実装と検証内容は
+[`docs/NSE_WENO5Z_ROE.md`](docs/NSE_WENO5Z_ROE.md)を参照してください。
 
 現在の周期境界実装との共通化のため、どちらの精度でもゴーストセル数は3です。
 

@@ -3,7 +3,8 @@ program main
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config, init_simulation_config, &
     print_simulation_config, should_output
-  use mod_model_config, only : nse_config, init_nse_config, print_nse_config
+  use mod_model_config, only : nse_config, init_nse_config, &
+    print_nse_config, resolve_nse_flow_parameters
   use mod_input_reader, only : read_all_inputs
   use mod_grid_fvm, only : build_uniform_grid
   use mod_nse_field, only : allocate_nse_fields, deallocate_nse_fields, &
@@ -33,6 +34,7 @@ program main
   call init_simulation_config(sim)
   call init_nse_config(nse)
   call read_all_inputs(trim(input_path), sim, nse=nse)
+  call resolve_nse_flow_parameters(nse, sim%initial_condition)
   sim%rank = my_rank
   sim%nprocs = nprocs
   sim%use_mpi = .true.

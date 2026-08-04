@@ -14,23 +14,27 @@ program test_cuda_keep_compare
   real(dp), allocatable :: q_cpu(:,:,:,:), q_gpu(:,:,:,:)
   real(dp), allocatable :: q0(:,:,:,:), rhs(:,:,:,:), fface(:,:,:,:)
   real(dp) :: x, y, z, rho, u, v, w, pressure
-  real(dp) :: gpu_dt, cpu_dt, field_error
-  integer :: i, j, k, keep_order
-  character(len=16) :: order_argument
+  real(dp) :: gpu_dt, cpu_dt, field_error, comparison_tolerance
+  integer :: i, j, k, scheme_code
+  character(len=16) :: scheme_argument
 
   call init_simulation_config(sim)
   call init_nse_config(nse)
-  keep_order = 6
-  call get_command_argument(1, order_argument)
-  if (len_trim(order_argument) > 0) read(order_argument,*) keep_order
-  if (keep_order /= 2 .and. keep_order /= 6) then
-    error stop 'CUDA KEEP comparison order must be 2 or 6'
+  scheme_code = 6
+  call get_command_argument(1, scheme_argument)
+  if (len_trim(scheme_argument) > 0) read(scheme_argument,*) scheme_code
+  if (scheme_code /= 2 .and. scheme_code /= 5 .and. scheme_code /= 6) then
+    error stop 'CUDA comparison scheme code must be 2, 5, or 6'
   end if
-  if (keep_order == 2) then
+  if (scheme_code == 2) then
     nse%convective_scheme = 'keep2'
+  else if (scheme_code == 5) then
+    nse%convective_scheme = 'weno5z_roe'
   else
     nse%convective_scheme = 'keep6'
   end if
+  comparison_tolerance = 2.0e-12_dp
+  if (scheme_code == 5) comparison_tolerance = 2.0e-10_dp
   sim%nx = 7
   sim%ny = 6
   sim%nz = 5
@@ -93,15 +97,15 @@ program test_cuda_keep_compare
   call nse_gpu_download(gpu, q_gpu)
   field_error = maxval(abs(q_gpu(1:sim%nx,1:sim%ny,1:sim%nz,:) - &
     q_cpu(1:sim%nx,1:sim%ny,1:sim%nz,:)))
-  if (field_error > 2.0e-12_dp) then
-    write(*,'(A,ES24.16)') "KEEP/SSPRK3 field error: ", field_error
-    error stop "CUDA KEEP step differs from CPU reference"
+  if (field_error > comparison_tolerance) then
+    write(*,'(A,ES24.16)') "Convective/SSPRK3 field error: ", field_error
+    error stop "CUDA convective step differs from CPU reference"
   end if
 
   call nse_gpu_finalize(gpu)
   deallocate(q_cpu, q_gpu, q0, rhs, fface)
   write(*,'(A,I0,A,ES16.8)') &
-    "CUDA KEEP comparison passed; order = ", keep_order, &
+    "CUDA convective comparison passed; scheme code = ", scheme_code, &
     ", max error = ", field_error
 
 contains

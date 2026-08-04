@@ -28,6 +28,9 @@ from pathlib import Path
 import numpy as np
 
 
+TOOL_VERSION = "2.0.0"
+
+
 @dataclass
 class SLFData:
     """SLFヘッダー情報とFortran順の変数配列をまとめる読み込み結果。"""
@@ -496,8 +499,115 @@ def group_by_step(files: list[Path]) -> dict[int, list[Path]]:
     return dict(sorted(groups.items()))
 
 
+def complete_step_groups(
+    groups: dict[int, list[Path]],
+    meta: dict,
+) -> dict[int, list[Path]]:
+    """Drop time steps that do not yet have one file for every MPI rank."""
+    if all(
+        parse_step_rank(path)[1] is None
+        for files in groups.values()
+        for path in files
+    ):
+        return groups
+    parallel = meta.get("parallel", {}) if isinstance(meta, dict) else {}
+    expected = int(parallel.get("mpi_nprocs", 1))
+    if expected <= 1:
+        return groups
+
+    complete: dict[int, list[Path]] = {}
+    for step, files in groups.items():
+        ranks = {parse_step_rank(path)[1] for path in files}
+        ranks.discard(None)
+        if len(files) == expected and len(ranks) == expected:
+            complete[step] = files
+        else:
+            print(
+                f"WARNING: skipping incomplete step {step}: "
+                f"found {len(files)} files/{len(ranks)} ranks, expected {expected}",
+                file=sys.stderr,
+            )
+    return complete
+
+
+def select_step_groups(
+    groups: dict[int, list[Path]],
+    specification: str,
+) -> dict[int, list[Path]]:
+    """Parse all, latest, comma-separated steps, or inclusive start:stop:stride."""
+    if not groups:
+        return {}
+    spec = specification.strip().lower()
+    if spec == "all":
+        return groups
+    if spec == "latest":
+        latest = max(groups)
+        return {latest: groups[latest]}
+
+    available = sorted(groups)
+    selected: set[int] = set()
+    for token in (item.strip() for item in spec.split(",")):
+        if not token:
+            continue
+        if ":" not in token:
+            selected.add(int(token))
+            continue
+
+        parts = token.split(":")
+        if len(parts) not in {2, 3}:
+            raise ValueError(f"Invalid step range: {token!r}")
+        start = int(parts[0]) if parts[0] else available[0]
+        stop = int(parts[1]) if parts[1] else available[-1]
+        stride = int(parts[2]) if len(parts) == 3 and parts[2] else 1
+        if stride <= 0:
+            raise ValueError(f"Step stride must be positive: {token!r}")
+        selected.update(
+            step
+            for step in available
+            if start <= step <= stop and (step - start) % stride == 0
+        )
+
+    missing = sorted(step for step in selected if step not in groups)
+    if missing:
+        raise ValueError(
+            f"Requested steps are not available: {missing}; available={available}"
+        )
+    result = {step: groups[step] for step in available if step in selected}
+    if not result:
+        raise ValueError(f"No steps matched {specification!r}; available={available}")
+    return result
+
+
+def print_inspection(
+    input_path: Path,
+    meta_path: Path | None,
+    files: list[Path],
+    groups: dict[int, list[Path]],
+    first: SLFData,
+    meta: dict,
+    derive_mode: str,
+    requested_fields: list[str] | None,
+    stride: int,
+    layout: str,
+) -> None:
+    grid = get_global_grid(meta, first)
+    steps = list(groups)
+    rank_wise = any(parse_step_rank(path)[1] is not None for path in files)
+    print(f"[INFO] SLF ParaView converter version: {TOOL_VERSION}")
+    print(f"[INFO] input: {input_path.resolve()}")
+    print(f"[INFO] meta: {meta_path.resolve() if meta_path is not None else 'not found'}")
+    print(f"[INFO] layout: {layout} ({'rank-wise' if rank_wise else 'global'})")
+    print(f"[INFO] SLF files: {len(files)}")
+    print(f"[INFO] selected steps: {steps}")
+    print(f"[INFO] source fields: {first.names}")
+    print(f"[INFO] derive mode: {derive_mode}")
+    print(f"[INFO] requested fields: {requested_fields or 'all'}")
+    print(f"[INFO] global grid: {grid}; spatial stride: {stride}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Merge SolverLibrary .slf files into full-domain ParaView .vti files")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {TOOL_VERSION}")
     parser.add_argument("input", help="Input .slf file or directory containing .slf files")
     parser.add_argument("-o", "--output-dir", default="paraview", help="Output directory")
     parser.add_argument("--meta", default=None, help="Path to meta.json. Default: input_dir/meta.json or parent/meta.json if found")
@@ -519,8 +629,21 @@ def main(argv: list[str] | None = None) -> int:
         default=1,
         help="Keep every Nth grid cell along each axis. Use 2 for a lighter preview. Default: 1",
     )
+    parser.add_argument(
+        "--steps",
+        default="all",
+        help=(
+            "Steps to convert: all, latest, comma-separated values, or "
+            "inclusive start:stop:stride. Example: 0:1000:100"
+        ),
+    )
     parser.add_argument("--gamma", type=float, default=1.4)
     parser.add_argument("--pvd-name", default="collection.pvd")
+    parser.add_argument(
+        "--inspect-only",
+        action="store_true",
+        help="Validate input and show the selected SLF files/steps without writing VTI/PVD files",
+    )
     args = parser.parse_args(argv)
 
     if args.stride < 1:
@@ -532,8 +655,12 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--fields must be 'all' or a comma-separated list")
 
     in_path = Path(args.input)
+    if not in_path.exists():
+        parser.error(f"Input path does not exist: {in_path}")
     if args.meta:
         meta_path = Path(args.meta)
+        if not meta_path.exists():
+            parser.error(f"meta.json does not exist: {meta_path}")
     else:
         candidates = [in_path / "meta.json", in_path.parent / "meta.json"] if in_path.is_dir() else [
             in_path.parent / "meta.json",
@@ -549,11 +676,46 @@ def main(argv: list[str] | None = None) -> int:
         if case_name:
             print(f"Looked for {case_name}_field_*.slf, then *.slf", file=sys.stderr)
         return 1
-    first = read_slf(files[0])
+    try:
+        first = read_slf(files[0])
+    except (OSError, EOFError, ValueError) as exc:
+        parser.error(str(exc))
     derive_mode = infer_derive_mode(args.derive, meta, first)
     rank_lookup = build_rank_range_lookup(meta)
 
-    groups = group_by_step(files)
+    rank_wise = any(parse_step_rank(path)[1] is not None for path in files)
+    if rank_wise and not rank_lookup:
+        parser.error(
+            "Rank-wise SLF conversion requires meta.json with parallel.rank_ranges. "
+            "Pass --meta <output/meta.json>."
+        )
+
+    all_groups = group_by_step(files)
+    groups = complete_step_groups(all_groups, meta)
+    if not groups:
+        parser.error(
+            "No complete time steps are available. The simulation may still be writing rank files, "
+            "or meta.json may contain the wrong mpi_nprocs value."
+        )
+    try:
+        groups = select_step_groups(groups, args.steps)
+    except ValueError as exc:
+        parser.error(str(exc))
+    print_inspection(
+        in_path,
+        meta_path,
+        files,
+        groups,
+        first,
+        meta,
+        derive_mode,
+        requested_fields,
+        args.stride,
+        args.layout,
+    )
+    if args.inspect_only:
+        print("[OK] Inspection completed; no VTI/PVD files were written.")
+        return 0
     out_dir = Path(args.output_dir)
     datasets: list[tuple[float, Path]] = []
 
@@ -572,7 +734,7 @@ def main(argv: list[str] | None = None) -> int:
         datasets.append((time, out.relative_to(out_dir)))
         print(
             f"Wrote merged full-domain VTI: {out}  shape={data.shape}  "
-            f"derive={derive_mode}  stride={args.stride}"
+            f"derive={derive_mode}  stride={args.stride}  fields={names}"
         )
 
     pvd = out_dir / args.pvd_name

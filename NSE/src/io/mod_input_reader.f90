@@ -136,15 +136,23 @@ contains
 
     integer :: nv, nghost
     real(dp) :: gamma, cfl, small_rho, small_p, rho0, mach, reynolds, prandtl
+    real(dp) :: hit_turbulent_mach, hit_turbulent_reynolds
     real(dp) :: hit_rms_velocity, hit_peak_wavenumber
     real(dp) :: hit_integral_length, hit_kolmogorov_length
-    real(dp) :: hit_dealias_fraction
+    real(dp) :: hit_johnsen_length_scale_ratio
+    real(dp) :: hit_pope_energy_constant, hit_pope_large_scale_constant
+    real(dp) :: hit_pope_dissipation_constant
+    real(dp) :: hit_pope_large_scale_exponent
+    real(dp) :: hit_pope_dissipation_exponent
+    real(dp) :: hit_dealias_fraction, hit_isotropy_k_cutoff
+    real(dp) :: hit_isotropy_tolerance
     real(dp) :: forcing_k_cutoff, forcing_target_dissipation
     real(dp) :: forcing_dilatational_ratio, forcing_denominator_floor
     real(dp) :: forcing_max_coefficient
-    integer :: hit_seed
+    integer :: hit_seed, hit_isotropy_max_iterations
     integer :: forcing_report_interval
     character(len=32) :: convective_scheme, viscous_scheme, hit_spectrum
+    character(len=32) :: hit_isotropy_mode
     character(len=32) :: boundary_condition, time_integrator
     character(len=32) :: forcing_scheme, forcing_spectrum, forcing_fft_backend
     integer :: u, ios
@@ -152,8 +160,14 @@ contains
     namelist /nse/ nv, nghost, gamma, cfl, small_rho, small_p, rho0, mach, &
       reynolds, prandtl, convective_scheme, viscous_scheme, &
       boundary_condition, time_integrator, hit_spectrum, hit_seed, &
-      hit_rms_velocity, hit_peak_wavenumber, hit_integral_length, &
-      hit_kolmogorov_length, hit_dealias_fraction, forcing_scheme, &
+      hit_turbulent_mach, hit_turbulent_reynolds, hit_rms_velocity, &
+      hit_peak_wavenumber, hit_integral_length, hit_kolmogorov_length, &
+      hit_johnsen_length_scale_ratio, hit_pope_energy_constant, &
+      hit_pope_large_scale_constant, hit_pope_dissipation_constant, &
+      hit_pope_large_scale_exponent, hit_pope_dissipation_exponent, &
+      hit_dealias_fraction, hit_isotropy_mode, &
+      hit_isotropy_k_cutoff, hit_isotropy_tolerance, &
+      hit_isotropy_max_iterations, forcing_scheme, &
       forcing_spectrum, forcing_fft_backend, forcing_k_cutoff, &
       forcing_target_dissipation, forcing_dilatational_ratio, &
       forcing_denominator_floor, forcing_max_coefficient, &
@@ -170,11 +184,27 @@ contains
     time_integrator = cfg%time_integrator
     hit_spectrum = cfg%hit_spectrum
     hit_seed = cfg%hit_seed
+    hit_turbulent_mach = cfg%hit_turbulent_mach
+    hit_turbulent_reynolds = cfg%hit_turbulent_reynolds
     hit_rms_velocity = cfg%hit_rms_velocity
     hit_peak_wavenumber = cfg%hit_peak_wavenumber
     hit_integral_length = cfg%hit_integral_length
     hit_kolmogorov_length = cfg%hit_kolmogorov_length
+    hit_johnsen_length_scale_ratio = &
+      cfg%hit_johnsen_length_scale_ratio
+    hit_pope_energy_constant = cfg%hit_pope_energy_constant
+    hit_pope_large_scale_constant = cfg%hit_pope_large_scale_constant
+    hit_pope_dissipation_constant = &
+      cfg%hit_pope_dissipation_constant
+    hit_pope_large_scale_exponent = &
+      cfg%hit_pope_large_scale_exponent
+    hit_pope_dissipation_exponent = &
+      cfg%hit_pope_dissipation_exponent
     hit_dealias_fraction = cfg%hit_dealias_fraction
+    hit_isotropy_mode = cfg%hit_isotropy_mode
+    hit_isotropy_k_cutoff = cfg%hit_isotropy_k_cutoff
+    hit_isotropy_tolerance = cfg%hit_isotropy_tolerance
+    hit_isotropy_max_iterations = cfg%hit_isotropy_max_iterations
     forcing_scheme = cfg%forcing_scheme
     forcing_spectrum = cfg%forcing_spectrum
     forcing_fft_backend = cfg%forcing_fft_backend
@@ -206,11 +236,27 @@ contains
     cfg%time_integrator = time_integrator
     cfg%hit_spectrum = hit_spectrum
     cfg%hit_seed = hit_seed
+    cfg%hit_turbulent_mach = hit_turbulent_mach
+    cfg%hit_turbulent_reynolds = hit_turbulent_reynolds
     cfg%hit_rms_velocity = hit_rms_velocity
     cfg%hit_peak_wavenumber = hit_peak_wavenumber
     cfg%hit_integral_length = hit_integral_length
     cfg%hit_kolmogorov_length = hit_kolmogorov_length
+    cfg%hit_johnsen_length_scale_ratio = &
+      hit_johnsen_length_scale_ratio
+    cfg%hit_pope_energy_constant = hit_pope_energy_constant
+    cfg%hit_pope_large_scale_constant = hit_pope_large_scale_constant
+    cfg%hit_pope_dissipation_constant = &
+      hit_pope_dissipation_constant
+    cfg%hit_pope_large_scale_exponent = &
+      hit_pope_large_scale_exponent
+    cfg%hit_pope_dissipation_exponent = &
+      hit_pope_dissipation_exponent
     cfg%hit_dealias_fraction = hit_dealias_fraction
+    cfg%hit_isotropy_mode = hit_isotropy_mode
+    cfg%hit_isotropy_k_cutoff = hit_isotropy_k_cutoff
+    cfg%hit_isotropy_tolerance = hit_isotropy_tolerance
+    cfg%hit_isotropy_max_iterations = hit_isotropy_max_iterations
     cfg%forcing_scheme = forcing_scheme
     cfg%forcing_spectrum = forcing_spectrum
     cfg%forcing_fft_backend = forcing_fft_backend

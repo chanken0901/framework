@@ -10,6 +10,10 @@ module mod_nse_gpu
   implicit none
   private
 
+  integer(c_int), parameter :: cuda_convective_keep2 = 1_c_int
+  integer(c_int), parameter :: cuda_convective_keep6 = 2_c_int
+  integer(c_int), parameter :: cuda_convective_weno5z_roe = 3_c_int
+
   type, public :: nse_gpu_context
     private
     type(c_ptr) :: handle = c_null_ptr
@@ -26,7 +30,7 @@ module mod_nse_gpu
 
   interface
     function c_nse_cuda_create(handle, nx, ny, nz, nghost, nvar, device, &
-        keep_order, viscous_enabled, forcing_enabled, forcing_spectrum, &
+        convective_scheme, viscous_enabled, forcing_enabled, forcing_spectrum, &
         forcing_report_interval, gamma, cfl, small_rho, small_p, reynolds, &
         prandtl, dx, dy, dz, forcing_k_cutoff, forcing_target_dissipation, &
         forcing_dilatational_ratio, forcing_denominator_floor, &
@@ -35,7 +39,7 @@ module mod_nse_gpu
       import :: c_ptr, c_int, c_double
       type(c_ptr), intent(out) :: handle
       integer(c_int), value :: nx, ny, nz, nghost, nvar, device
-      integer(c_int), value :: keep_order, viscous_enabled
+      integer(c_int), value :: convective_scheme, viscous_enabled
       integer(c_int), value :: forcing_enabled, forcing_spectrum
       integer(c_int), value :: forcing_report_interval
       real(c_double), value :: gamma, cfl, small_rho, small_p
@@ -104,15 +108,15 @@ contains
   subroutine validate_nse_gpu_configuration(sim, nse)
     type(simulation_config), intent(in) :: sim
     type(nse_config), intent(in) :: nse
-    integer :: selected_order
+    integer(c_int) :: selected_scheme
 
-    if (nse%nv /= 5) error stop "CUDA KEEP backend requires five variables"
+    if (nse%nv /= 5) error stop "CUDA backend requires five variables"
     if (sim%nghost < 3) then
-      error stop "selectable-order CUDA KEEP backend requires three ghost cells"
+      error stop "CUDA convective schemes require three ghost cells"
     end if
-    selected_order = requested_keep_order(nse)
-    if (selected_order /= 2 .and. selected_order /= 6) then
-      error stop "CUDA KEEP scheme must be keep2 or keep6"
+    selected_scheme = requested_cuda_convective_scheme(nse)
+    if (selected_scheme == 0_c_int) then
+      error stop "CUDA convective scheme must be keep2, keep6, or weno5z_roe"
     end if
     if (trim(adjustl(nse%viscous_scheme)) /= "none" .and. &
         trim(adjustl(nse%viscous_scheme)) /= "central6") then
@@ -144,7 +148,7 @@ contains
     type(nse_gpu_context), intent(inout) :: context
     type(simulation_config), intent(in) :: sim
     type(nse_config), intent(in) :: nse
-    integer(c_int) :: status, viscous_enabled, keep_order
+    integer(c_int) :: status, viscous_enabled, convective_scheme
     integer(c_int) :: forcing_enabled, forcing_spectrum
 
     call validate_nse_gpu_configuration(sim, nse)
@@ -159,7 +163,7 @@ contains
     if (trim(adjustl(nse%viscous_scheme)) == "central6") then
       viscous_enabled = 1_c_int
     end if
-    keep_order = int(requested_keep_order(nse), c_int)
+    convective_scheme = requested_cuda_convective_scheme(nse)
     forcing_enabled = 0_c_int
     forcing_spectrum = 0_c_int
     if (forcing_is_enabled(nse)) then
@@ -175,7 +179,7 @@ contains
     status = c_nse_cuda_create(context%handle, int(sim%nx, c_int), &
       int(sim%ny, c_int), int(sim%nz, c_int), int(sim%nghost, c_int), &
       int(nse%nv, c_int), int(sim%cuda_device, c_int), &
-      keep_order, viscous_enabled, forcing_enabled, forcing_spectrum, &
+      convective_scheme, viscous_enabled, forcing_enabled, forcing_spectrum, &
       int(nse%forcing_report_interval, c_int), &
       nse%gamma, nse%cfl, nse%small_rho, nse%small_p, nse%reynolds, &
       nse%prandtl, sim%dx, sim%dy, sim%dz, nse%forcing_k_cutoff, &
@@ -184,18 +188,21 @@ contains
     call require_success(status, "initialize NSE CUDA context")
   end subroutine nse_gpu_initialize
 
-  pure integer function requested_keep_order(nse) result(order)
+  pure integer(c_int) function requested_cuda_convective_scheme(nse) &
+      result(scheme)
     type(nse_config), intent(in) :: nse
 
     select case (trim(adjustl(nse%convective_scheme)))
     case ("keep2")
-      order = 2
+      scheme = cuda_convective_keep2
     case ("keep6")
-      order = 6
+      scheme = cuda_convective_keep6
+    case ("weno5z_roe")
+      scheme = cuda_convective_weno5z_roe
     case default
-      order = 0
+      scheme = 0_c_int
     end select
-  end function requested_keep_order
+  end function requested_cuda_convective_scheme
 
   subroutine nse_gpu_upload(context, q)
     type(nse_gpu_context), intent(in) :: context

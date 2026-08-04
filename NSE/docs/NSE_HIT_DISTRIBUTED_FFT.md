@@ -98,48 +98,90 @@ initial_condition = 'hit_spectral'
 `&nse`でスペクトル条件を指定する。
 
 ```fortran
-hit_spectrum = 'johnsen'
+hit_spectrum = 'pope'
 hit_seed = 13579
-hit_rms_velocity = 0.1
-hit_peak_wavenumber = 4.0
+hit_turbulent_mach = 0.5
+hit_turbulent_reynolds = 30.0
 hit_integral_length = 1.0
-hit_kolmogorov_length = 0.02
+hit_pope_energy_constant = 1.5
+hit_pope_large_scale_constant = 6.78
+hit_pope_dissipation_constant = 0.40
+hit_pope_large_scale_exponent = 2.0
+hit_pope_dissipation_exponent = 5.2
 hit_dealias_fraction = 0.6666666666666667
+hit_isotropy_mode = 'projected_shell'
+hit_isotropy_k_cutoff = 2.5
+hit_isotropy_tolerance = 1.0e-8
+hit_isotropy_max_iterations = 80
 ```
 
 ケースYAMLから生成する場合は次の形で指定する。
 
 ```yaml
 flow:
-  type: hit_spectral
+  type: hit
   hit:
-    spectrum: johnsen
+    turbulent_mach_number: 0.5
+    turbulent_reynolds_number: 30.0
     random_seed: 13579
-    rms_velocity: 0.1
-    peak_wavenumber: 4.0
-    integral_length: 1.0
-    kolmogorov_length: 0.02
     dealias_fraction: 0.6666666666666667
+    isotropy_mode: projected_shell
+    isotropy_k_cutoff: 2.5
+    isotropy_tolerance: 1.0e-8
+    isotropy_max_iterations: 80
+    spectrum:
+      type: pope
+      johnsen:
+        characteristic_length: 1.0
+        length_scale_ratio: 2.0
+      pope:
+        integral_length: 1.0
+        energy_constant: 1.5
+        large_scale_constant: 6.78
+        dissipation_constant: 0.40
+        large_scale_exponent: 2.0
+        dissipation_exponent: 5.2
 ```
 
 NSE共通雛形は`ScriptLibrary/RunEnvironment/case_templates/nse.yaml`にある。
 
 | パラメータ | 意味 |
 |---|---|
-| `hit_spectrum` | `johnsen`または`pope` |
-| `hit_seed` | 波数番号ベースの再現可能な乱数seed。MPI分割数に依存しない |
-| `hit_rms_velocity` | 無次元の1速度成分RMS。m/sではない。0以下なら`mach / sqrt(3)`を使用 |
-| `hit_peak_wavenumber` | Johnsen型スペクトルのピーク波数 |
-| `hit_integral_length` | Pope型スペクトルの積分長さ |
-| `hit_kolmogorov_length` | Pope型スペクトルのKolmogorov長さ |
-| `hit_dealias_fraction` | 各軸のNyquist波数に対する保持率 |
+| `turbulent_mach_number` | 初期乱流Mach数`M_t` |
+| `turbulent_reynolds_number` | 元コードの`Re_ini`に対応する`Re_lambda` |
+| `spectrum.type` | `johnsen`または`pope` |
+| `spectrum.johnsen.characteristic_length` | Johnsen型の代表長さ |
+| `spectrum.johnsen.length_scale_ratio` | 元コードの`L_lambda`。`k_peak=2 L_lambda/L` |
+| `spectrum.pope.integral_length` | Pope型の積分長さ |
+| `spectrum.pope.*constant/exponent` | `K_C`、`C_L`、`C_eta`、`p_0`、`beta` |
+| `random_seed` | 波数番号ベースの再現可能な乱数seed。MPI分割数に依存しない |
+| `dealias_fraction` | 各軸のNyquist波数に対する保持率 |
+| `isotropy_mode` | `projected_shell`で低波数シェルを等方化。`none`で無効化 |
+| `isotropy_k_cutoff` | 等方化する波数帯の上限。`0 < |k| < cutoff`を処理 |
+| `isotropy_tolerance` | シェル別Reynolds応力の最大等方性誤差 |
+| `isotropy_max_iterations` | 射影付き等方化の最大反復回数 |
 
-動作確認用入力は`tests/data/input_hit_2decomp_small.dat`にある。
+`Re_lambda`から粘性と散逸尺度を次のように導出する。ここで`u'`は
+1成分RMS、`L`は選択したスペクトルブロックの代表長さである。
+
+```text
+u'        = M_t / sqrt(3)
+Re_L      = 3 Re_lambda^2 / 20
+nu        = sqrt(3/2) u' L / Re_L
+Re_solver = 1 / nu
+lambda    = L sqrt(10 / Re_L)
+eta       = L Re_L^(-3/4)
+```
+
+`physics.nse.prandtl_number`は独立に指定し、熱拡散には
+`1/(Re_solver Pr)`として使われる。
+
+動作確認用入力は`tests/input_hit_targets_small.dat`にある。
 
 ```powershell
 mpiexec -n 4 `
   .\build\hit-2decomp\bin\solver.exe `
-  .\tests\data\input_hit_2decomp_small.dat
+  .\tests\input_hit_targets_small.dat
 ```
 
 正常なら、標準出力に次の診断値が表示される。
@@ -150,6 +192,13 @@ mpiexec -n 4 `
 - unscaled component RMS
 - target component RMS
 - initial turbulent Mach number
+- initial/final shell isotropy error
+
+`projected_shell`は各低波数シェルのReynolds応力を等方化した後、
+Helmholtz射影でスペクトル発散を除去し、シェル総エネルギーを等方化前の値へ戻す。
+したがって、成分ごとの独立なRMS正規化とは異なり、非圧縮条件と指定した
+エネルギースペクトルを維持する。指定した反復回数で許容誤差へ到達しない場合は、
+不十分な初期条件のまま計算を開始せずエラー終了する。
 
 ## 現在の物理モデル
 
@@ -157,11 +206,10 @@ mpiexec -n 4 `
 - 平均速度はゼロ。
 - 密度は`rho0`で一様。
 - 圧力は`rho0 / gamma`で一様。この無次元化では初期音速が1になる。
-- 1成分RMSを`u_rms`とすると、初期乱流Mach数は`sqrt(3) * u_rms`になる。
-- `hit_rms_velocity <= 0`の場合は、指定した`mach`が初期乱流Mach数になるよう
-  `hit_rms_velocity = mach / sqrt(3)`を使用する。
-- 例えば`hit_rms_velocity = 100`は100 m/sではなく、初期乱流Mach数約173の
-  超音速条件になるため、通常の低Mach HITには使用しない。
+- 1成分RMSは`hit_turbulent_mach / sqrt(3)`へ正規化される。
+- `mach`とソルバーの`reynolds`は、HIT目標値を指定した場合は導出値で上書きされる。
+- 旧形式の`hit_rms_velocity`直指定も読み込み互換のため残しているが、
+  新規ケースでは目標Mach数と`Re_lambda`を使用する。
 
 初期条件生成だけが擬スペクトル処理であり、その後の時間発展は現在の
 有限体積NSEソルバーを使用する。

@@ -5,7 +5,7 @@
 `cuda_single` profileは、現在のCPU版と同じ保存変数
 `rho, rho_u, rho_v, rho_w, rho_E`を使い、次の組み合わせをGPUで計算します。
 
-- 対流項: KEEP、2次精度または6次精度
+- 対流項: `keep2`、`keep6`、または特性空間`weno5z_roe`
 - 粘性項: 6次精度中心差分 `central6`、または `none`
 - 境界条件: 三方向周期境界
 - 時間積分: SSPRK3
@@ -27,7 +27,7 @@ CUDAカーネルで計算します。現在の`cuda_single`は単一GPU専用で
 - 粘性計算用の基本変数 `u, v, w, T`
 - CFL評価用の局所最大波速度
 
-各時間ステップでは、周期ghost更新、CFL・粘性時間刻み評価、KEEP流束、
+各時間ステップでは、周期ghost更新、CFL・粘性時間刻み評価、選択した対流流束、
 三方向の流束発散、粘性・熱伝導項、SSPRK3の3段階更新をCUDAカーネルで
 実行します。SLF出力時だけ`Q`をCPUへ戻します。
 
@@ -92,11 +92,11 @@ solver:
   cuda_device: 0
 ```
 
-KEEPの空間精度はCPU版と共通のケース設定で選びます。
+対流流束はCPU版と共通のケース設定で選びます。
 
 ```yaml
 numerics:
-  convective_scheme: keep6  # keep2 または keep6
+  convective_scheme: weno5z_roe  # keep2, keep6, weno5z_roe
 ```
 
 CPU版とCUDA版のどちらも`keep`単独の指定は使用できません。
@@ -174,7 +174,7 @@ python .\tools\postprocess_case.py
 2. 一定流がSSPRK3の1ステップ後も保存されること
 3. 周期ghostセルが反対側の物理セルと一致すること
 4. GPUのCFL時間刻みがCPU計算と一致すること
-5. 2次・6次の非一様な三次元KEEP・SSPRK3結果がCPU参照実装と一致すること
+5. KEEP2、KEEP6、WENO5-Z/Roeの三次元SSPRK3結果がCPU参照実装と一致すること
 6. 非一様な三次元場の`central6`粘性項と時間刻みがCPU参照実装と一致すること
-7. 8立方Taylor-Green渦の2ステップsmoke test
+7. 8立方Taylor-Green渦のKEEPおよびWENO5-Z/Roe 2ステップsmoke test
 8. 従来の`cpu_mpi` profileが引き続きビルドできること

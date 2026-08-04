@@ -3,8 +3,8 @@ module mod_nse_boundary
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config
   use module_mpi, only : ndiv_ny, ndiv_nz, itable, jjsta, kksta, j_sta, &
-    mp_send_recv_pre_r8_Vec, MPI_COMM_WORLD, MPI_DOUBLE_PRECISION, &
-    MPI_STATUS_SIZE
+    mp_send_recv_pre_r8_Vec, mp_sendrecv_r8, MPI_COMM_WORLD, &
+    MPI_DOUBLE_PRECISION, MPI_STATUS_SIZE
   implicit none
   private
 
@@ -105,7 +105,7 @@ contains
             end do
           end do
         end do
-        call MPI_Sendrecv(sendbuf(ilo,1,ks,1), count, MPI_DOUBLE_PRECISION, partner, 1, &
+        call mp_sendrecv_r8(sendbuf(ilo,1,ks,1), count, MPI_DOUBLE_PRECISION, partner, 1, &
           recv_high(ilo,1,ks,1), count, MPI_DOUBLE_PRECISION, partner, 1, &
           MPI_COMM_WORLD, status, ierr)
         if (ierr /= 0) error stop 'periodic y-high exchange failed'
@@ -120,7 +120,7 @@ contains
             end do
           end do
         end do
-        call MPI_Sendrecv(sendbuf(ilo,1,ks,1), count, MPI_DOUBLE_PRECISION, partner, 1, &
+        call mp_sendrecv_r8(sendbuf(ilo,1,ks,1), count, MPI_DOUBLE_PRECISION, partner, 1, &
           recv_low(ilo,1,ks,1), count, MPI_DOUBLE_PRECISION, partner, 1, &
           MPI_COMM_WORLD, status, ierr)
         if (ierr /= 0) error stop 'periodic y-low exchange failed'
@@ -198,7 +198,7 @@ contains
             end do
           end do
         end do
-        call MPI_Sendrecv(sendbuf(ilo,jlo,1,1), count, MPI_DOUBLE_PRECISION, partner, 1, &
+        call mp_sendrecv_r8(sendbuf(ilo,jlo,1,1), count, MPI_DOUBLE_PRECISION, partner, 1, &
           recv_high(ilo,jlo,1,1), count, MPI_DOUBLE_PRECISION, partner, 1, &
           MPI_COMM_WORLD, status, ierr)
         if (ierr /= 0) error stop 'periodic z-high exchange failed'
@@ -213,7 +213,7 @@ contains
             end do
           end do
         end do
-        call MPI_Sendrecv(sendbuf(ilo,jlo,1,1), count, MPI_DOUBLE_PRECISION, partner, 1, &
+        call mp_sendrecv_r8(sendbuf(ilo,jlo,1,1), count, MPI_DOUBLE_PRECISION, partner, 1, &
           recv_low(ilo,jlo,1,1), count, MPI_DOUBLE_PRECISION, partner, 1, &
           MPI_COMM_WORLD, status, ierr)
         if (ierr /= 0) error stop 'periodic z-low exchange failed'

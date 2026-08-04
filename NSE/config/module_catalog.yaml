@@ -175,13 +175,50 @@ modules:
       - mpi
       - openmp
 
-  mod_convective_scheme:
+  mod_reconstruction_weno5z:
+    path: src/numerics/reconstruction/mod_reconstruction_weno5z.f90
+    role: library
+    requires:
+      - mod_precision
+
+  mod_riemann_roe:
+    path: src/numerics/riemann/mod_riemann_roe.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_model_config
+
+  mod_convective_keep:
     path: src/numerics/convective/mod_convective_keep.f90
     role: library
     requires:
       - mod_precision
       - mod_common_config
       - mod_model_config
+    features:
+      - openmp
+
+  mod_convective_weno5z_roe:
+    path: src/numerics/convective/mod_convective_weno5z_roe.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_reconstruction_weno5z
+      - mod_riemann_roe
+    features:
+      - openmp
+
+  mod_convective_scheme:
+    path: src/numerics/convective/mod_convective_dispatch.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_convective_keep
+      - mod_convective_weno5z_roe
     features:
       - openmp
 

@@ -1,6 +1,6 @@
 #include <cuda_runtime.h>
 #include <cub/device/device_reduce.cuh>
-#if defined(NSE_FORCING_CUFFT)
+#if defined(NSE_FORCING_CUFFT) || defined(NSE_INIT_CUFFT)
 #include <cufft.h>
 #endif
 
@@ -20,6 +20,10 @@
 
 namespace {
 
+constexpr int convective_keep2 = 1;
+constexpr int convective_keep6 = 2;
+constexpr int convective_weno5z_roe = 3;
+
 thread_local std::string last_error;
 
 struct GridView {
@@ -37,7 +41,7 @@ struct NseCudaContext {
   GridView grid{};
   int nvar = 0;
   int device = 0;
-  int keep_order = 6;
+  int convective_scheme = convective_keep6;
   double gamma = 0.0;
   double cfl = 0.0;
   double small_rho = 0.0;
@@ -92,7 +96,7 @@ bool check_cuda(cudaError_t status, const char* operation) {
   return false;
 }
 
-#if defined(NSE_FORCING_CUFFT)
+#if defined(NSE_FORCING_CUFFT) || defined(NSE_INIT_CUFFT)
 bool check_cufft(cufftResult status, const char* operation) {
   if (status == CUFFT_SUCCESS) {
     return true;
@@ -490,6 +494,8 @@ __global__ void rhs_keep_kernel(
         result[variable];
   }
 }
+
+#include "nse_cuda_weno5z_roe.cuh"
 
 __global__ void viscous_central6_kernel(
     const double* primitive,
@@ -1111,19 +1117,35 @@ bool launch_periodic(NseCudaContext* context) {
 }
 
 bool launch_rhs(NseCudaContext* context) {
-  rhs_keep_kernel<<<block_count(context->physical_count), 256>>>(
-      context->q,
-      context->rhs,
-      context->grid,
-      context->keep_order,
-      context->gamma,
-      context->small_rho,
-      context->small_p,
-      1.0 / context->dx,
-      1.0 / context->dy,
-      1.0 / context->dz,
-      context->physical_count);
-  if (!check_cuda(cudaGetLastError(), "KEEP right-hand-side kernel")) {
+  if (context->convective_scheme == convective_weno5z_roe) {
+    rhs_weno5z_roe_kernel<<<block_count(context->physical_count), 256>>>(
+        context->q,
+        context->rhs,
+        context->grid,
+        context->gamma,
+        context->small_rho,
+        context->small_p,
+        1.0 / context->dx,
+        1.0 / context->dy,
+        1.0 / context->dz,
+        context->physical_count);
+  } else {
+    const int keep_order =
+        context->convective_scheme == convective_keep2 ? 2 : 6;
+    rhs_keep_kernel<<<block_count(context->physical_count), 256>>>(
+        context->q,
+        context->rhs,
+        context->grid,
+        keep_order,
+        context->gamma,
+        context->small_rho,
+        context->small_p,
+        1.0 / context->dx,
+        1.0 / context->dy,
+        1.0 / context->dz,
+        context->physical_count);
+  }
+  if (!check_cuda(cudaGetLastError(), "convective right-hand-side kernel")) {
     return false;
   }
   if (context->viscous_enabled) {
@@ -1177,6 +1199,73 @@ bool launch_stage(NseCudaContext* context, double dt, int stage) {
 
 }  // namespace
 
+#if defined(NSE_INIT_CUFFT)
+NSE_CUDA_EXPORT int nse_cuda_inverse_complex_3d(
+    int nx,
+    int ny,
+    int nz,
+    int device,
+    cufftDoubleComplex* host_field) {
+  last_error.clear();
+  if (nx <= 0 || ny <= 0 || nz <= 0 || host_field == nullptr) {
+    set_error("invalid cuFFT HIT initialization argument");
+    return 1;
+  }
+
+  const std::size_t nx_size = static_cast<std::size_t>(nx);
+  const std::size_t ny_size = static_cast<std::size_t>(ny);
+  const std::size_t nz_size = static_cast<std::size_t>(nz);
+  if (nx_size > std::numeric_limits<std::size_t>::max() / ny_size
+      || nx_size * ny_size
+          > std::numeric_limits<std::size_t>::max() / nz_size) {
+    set_error("cuFFT HIT grid size overflows size_t");
+    return 1;
+  }
+  const std::size_t count = nx_size * ny_size * nz_size;
+  if (count > std::numeric_limits<std::size_t>::max()
+          / sizeof(cufftDoubleComplex)) {
+    set_error("cuFFT HIT buffer size overflows size_t");
+    return 1;
+  }
+  const std::size_t bytes = count * sizeof(cufftDoubleComplex);
+
+  cufftDoubleComplex* device_field = nullptr;
+  cufftHandle plan = 0;
+  const auto cleanup = [&]() {
+    if (plan != 0) {
+      cufftDestroy(plan);
+    }
+    cudaFree(device_field);
+  };
+
+  if (!check_cuda(cudaSetDevice(device), "select CUDA HIT device")
+      || !check_cuda(
+          cudaMalloc(reinterpret_cast<void**>(&device_field), bytes),
+          "allocate CUDA HIT Fourier field")
+      || !check_cuda(
+          cudaMemcpy(
+              device_field, host_field, bytes, cudaMemcpyHostToDevice),
+          "upload CUDA HIT Fourier field")
+      || !check_cufft(
+          cufftPlan3d(&plan, nz, ny, nx, CUFFT_Z2Z),
+          "create CUDA HIT inverse FFT plan")
+      || !check_cufft(
+          cufftExecZ2Z(
+              plan, device_field, device_field, CUFFT_INVERSE),
+          "execute CUDA HIT inverse FFT")
+      || !check_cuda(
+          cudaMemcpy(
+              host_field, device_field, bytes, cudaMemcpyDeviceToHost),
+          "download CUDA HIT velocity field")) {
+    cleanup();
+    return 1;
+  }
+
+  cleanup();
+  return 0;
+}
+#endif
+
 NSE_CUDA_EXPORT int nse_cuda_create(
     void** handle,
     int nx,
@@ -1185,7 +1274,7 @@ NSE_CUDA_EXPORT int nse_cuda_create(
     int nghost,
     int nvar,
     int device,
-    int keep_order,
+    int convective_scheme,
     int viscous_enabled,
     int forcing_enabled,
     int forcing_spectrum,
@@ -1211,11 +1300,13 @@ NSE_CUDA_EXPORT int nse_cuda_create(
   }
   *handle = nullptr;
   if (nx <= 0 || ny <= 0 || nz <= 0 || nghost < 3 || nvar != 5) {
-    set_error("selectable-order CUDA KEEP requires three ghosts and five variables");
+    set_error("CUDA convective schemes require three ghosts and five variables");
     return 1;
   }
-  if (keep_order != 2 && keep_order != 6) {
-    set_error("CUDA KEEP scheme must be KEEP2 or KEEP6");
+  if (convective_scheme != convective_keep2
+      && convective_scheme != convective_keep6
+      && convective_scheme != convective_weno5z_roe) {
+    set_error("CUDA convective scheme must be KEEP2, KEEP6, or WENO5Z_ROE");
     return 1;
   }
   if (gamma <= 1.0 || cfl <= 0.0 || dx <= 0.0 || dy <= 0.0 || dz <= 0.0) {
@@ -1273,7 +1364,7 @@ NSE_CUDA_EXPORT int nse_cuda_create(
     return 1;
   }
   context->nvar = nvar;
-  context->keep_order = keep_order;
+  context->convective_scheme = convective_scheme;
   context->gamma = gamma;
   context->cfl = cfl;
   context->small_rho = small_rho;

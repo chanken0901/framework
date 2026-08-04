@@ -1,6 +1,6 @@
 &simulation
   equation = "NSE"
-  case_name = "hit_forcing_mpi_smoke"
+  case_name = "hit_cuda_smoke"
   initial_condition = "hit_spectral"
   nx = 16
   ny = 16
@@ -18,13 +18,14 @@
   cfl = 0.5
   use_fixed_dt = .true.
   output_frequency = 0
-  output_dir = "hit-forcing-smoke-output"
   write_initial = .false.
   write_meta = .false.
+  cuda_device = 0
 /
 
 &nse
   nv = 5
+  nghost = 3
   gamma = 1.4
   cfl = 0.5
   small_rho = 1.0e-12
@@ -46,11 +47,5 @@
   hit_isotropy_k_cutoff = 2.5
   hit_isotropy_tolerance = 1.0e-8
   hit_isotropy_max_iterations = 80
-  forcing_scheme = "petersen_livescu"
-  forcing_spectrum = "low_wavenumber"
-  forcing_fft_backend = "2decomp_fftw"
-  forcing_k_cutoff = 6.0
-  forcing_target_dissipation = 0.01
-  forcing_dilatational_ratio = 0.0
-  forcing_report_interval = 1
+  forcing_scheme = "none"
 /

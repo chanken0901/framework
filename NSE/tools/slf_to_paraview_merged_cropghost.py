@@ -28,6 +28,9 @@ from pathlib import Path
 import numpy as np
 
 
+TOOL_VERSION = "2.0.0"
+
+
 @dataclass
 class SLFData:
     """SLFヘッダー情報とFortran順の変数配列をまとめる読み込み結果。"""
@@ -498,6 +501,12 @@ def complete_step_groups(
     meta: dict,
 ) -> dict[int, list[Path]]:
     """実行中にまだ全rankが書き終わっていないステップを除外する。"""
+    if all(
+        parse_step_rank(path)[1] is None
+        for files in groups.values()
+        for path in files
+    ):
+        return groups
     parallel = meta.get("parallel", {}) if isinstance(meta, dict) else {}
     expected = int(parallel.get("mpi_nprocs", 1))
     if expected <= 1:
@@ -568,8 +577,36 @@ def select_step_groups(
     return result
 
 
+def print_inspection(
+    input_path: Path,
+    meta_path: Path | None,
+    files: list[Path],
+    groups: dict[int, list[Path]],
+    first: SLFData,
+    meta: dict,
+    derive_mode: str,
+    requested_fields: list[str] | None,
+    stride: int,
+    layout: str,
+) -> None:
+    grid = get_global_grid(meta, first)
+    steps = list(groups)
+    rank_wise = any(parse_step_rank(path)[1] is not None for path in files)
+    print(f"[INFO] SLF ParaView converter version: {TOOL_VERSION}")
+    print(f"[INFO] input: {input_path.resolve()}")
+    print(f"[INFO] meta: {meta_path.resolve() if meta_path is not None else 'not found'}")
+    print(f"[INFO] layout: {layout} ({'rank-wise' if rank_wise else 'global'})")
+    print(f"[INFO] SLF files: {len(files)}")
+    print(f"[INFO] selected steps: {steps}")
+    print(f"[INFO] source fields: {first.names}")
+    print(f"[INFO] derive mode: {derive_mode}")
+    print(f"[INFO] requested fields: {requested_fields or 'all'}")
+    print(f"[INFO] global grid: {grid}; spatial stride: {stride}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Merge SolverLibrary .slf files into full-domain ParaView .vti files")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {TOOL_VERSION}")
     parser.add_argument("input", help="Input .slf file or directory containing .slf files")
     parser.add_argument("-o", "--output-dir", default="paraview", help="Output directory")
     parser.add_argument("--meta", default=None, help="Path to meta.json. Default: input_dir/meta.json or parent/meta.json if found")
@@ -601,6 +638,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--gamma", type=float, default=1.4)
     parser.add_argument("--pvd-name", default="collection.pvd")
+    parser.add_argument(
+        "--inspect-only",
+        action="store_true",
+        help="Validate input and show the selected SLF files/steps without writing VTI/PVD files",
+    )
     args = parser.parse_args(argv)
 
     if args.stride < 1:
@@ -612,8 +654,12 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--fields must be 'all' or a comma-separated list")
 
     in_path = Path(args.input)
+    if not in_path.exists():
+        parser.error(f"Input path does not exist: {in_path}")
     if args.meta:
         meta_path = Path(args.meta)
+        if not meta_path.exists():
+            parser.error(f"meta.json does not exist: {meta_path}")
     else:
         candidates = [in_path / "meta.json", in_path.parent / "meta.json"] if in_path.is_dir() else [
             in_path.parent / "meta.json",
@@ -629,15 +675,46 @@ def main(argv: list[str] | None = None) -> int:
         if case_name:
             print(f"Looked for {case_name}_field_*.slf, then *.slf", file=sys.stderr)
         return 1
-    first = read_slf(files[0])
+    try:
+        first = read_slf(files[0])
+    except (OSError, EOFError, ValueError) as exc:
+        parser.error(str(exc))
     derive_mode = infer_derive_mode(args.derive, meta, first)
     rank_lookup = build_rank_range_lookup(meta)
 
-    groups = complete_step_groups(group_by_step(files), meta)
+    rank_wise = any(parse_step_rank(path)[1] is not None for path in files)
+    if rank_wise and not rank_lookup:
+        parser.error(
+            "Rank-wise SLF conversion requires meta.json with parallel.rank_ranges. "
+            "Pass --meta <output/meta.json>."
+        )
+
+    all_groups = group_by_step(files)
+    groups = complete_step_groups(all_groups, meta)
+    if not groups:
+        parser.error(
+            "No complete time steps are available. The simulation may still be writing rank files, "
+            "or meta.json may contain the wrong mpi_nprocs value."
+        )
     try:
         groups = select_step_groups(groups, args.steps)
     except ValueError as exc:
         parser.error(str(exc))
+    print_inspection(
+        in_path,
+        meta_path,
+        files,
+        groups,
+        first,
+        meta,
+        derive_mode,
+        requested_fields,
+        args.stride,
+        args.layout,
+    )
+    if args.inspect_only:
+        print("[OK] Inspection completed; no VTI/PVD files were written.")
+        return 0
     out_dir = Path(args.output_dir)
     datasets: list[tuple[float, Path]] = []
 

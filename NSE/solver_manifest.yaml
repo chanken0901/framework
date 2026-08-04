@@ -53,6 +53,7 @@ components:
     cmake_role: library
     files:
       - src/init/mod_init_taylor_green.f90
+      - src/init/mod_hit_isotropy_math.f90
       - src/init/mod_nse_initial_conditions.f90
 
   initial_hit_stub:
@@ -65,15 +66,24 @@ components:
     files:
       - src/init/mod_init_hit_spectral_2decomp.f90
 
+  initial_hit_cufft:
+    cmake_role: library
+    files:
+      - src/init/mod_init_hit_spectral_cufft.f90
+
   boundary_periodic:
     cmake_role: library
     files:
       - src/boundary/mod_boundary_periodic.f90
 
-  convective_keep:
+  convective_runtime:
     cmake_role: library
     files:
+      - src/numerics/reconstruction/mod_reconstruction_weno5z.f90
+      - src/numerics/riemann/mod_riemann_roe.f90
       - src/numerics/convective/mod_convective_keep.f90
+      - src/numerics/convective/mod_convective_weno5z_roe.f90
+      - src/numerics/convective/mod_convective_dispatch.f90
 
   viscous_none:
     cmake_role: library
@@ -114,12 +124,17 @@ components:
   runtime_tools:
     files:
       - tools/slf_to_paraview_merged_cropghost.py
+      - tools/nse_turbulence_statistics.py
+      - docs/NSE_MODULE_DESIGN.md
+      - docs/NSE_WENO5Z_ROE.md
+      - docs/NSE_TURBULENCE_STATISTICS.md
 
   cuda_backend:
     cmake_role: library
     files:
       - src/gpu/mod_nse_gpu_cuda.f90
       - src/gpu/nse_cuda_bridge.cu
+      - src/gpu/nse_cuda_weno5z_roe.cuh
 
   main_cpu:
     cmake_role: executable
@@ -137,20 +152,30 @@ components:
       - tests/test_cuda_keep_compare.f90
       - tests/test_cuda_viscous_compare.f90
       - tests/input_tgv_cuda_small.dat
+      - tests/input_tgv_cuda_weno5z_roe_small.dat
       - tests/input_tgv_cuda_forcing_small.dat
+      - tests/input_hit_cuda_small.dat
       - tests/test_forcing_coefficients.f90
+      - src/numerics/reconstruction/mod_reconstruction_weno5z.f90
+      - src/numerics/riemann/mod_riemann_roe.f90
       - src/numerics/convective/mod_convective_keep.f90
+      - src/numerics/convective/mod_convective_weno5z_roe.f90
+      - src/numerics/convective/mod_convective_dispatch.f90
       - src/numerics/viscous/mod_viscous_central6.f90
 
   tests_cpu:
     files:
       - tests/test_keep6_accuracy.f90
+      - tests/test_weno5z_roe.f90
+      - tests/input_tgv_weno5z_roe_small.dat
       - tests/test_viscous_central6.f90
       - tests/test_boundary_periodic.f90
       - tests/input_tgv_viscous_small.dat
       - tests/input_tgv_forcing_small.dat
       - tests/input_hit_forcing_small.dat
+      - tests/test_hit_isotropy_math.f90
       - tests/test_forcing_coefficients.f90
+      - tests/test_nse_turbulence_statistics.py
 
 profiles:
   cpu_mpi:
@@ -162,7 +187,7 @@ profiles:
       - initial_conditions
       - initial_hit_stub
       - boundary_periodic
-      - convective_keep
+      - convective_runtime
       - viscous_central6
       - forcing_none
       - spatial_operator
@@ -179,7 +204,7 @@ profiles:
       NSE_USE_MPI: true
       NSE_ENABLE_OPENMP: true
       NSE_GPU_BACKEND: none
-      NSE_CONVECTIVE_BACKEND: keep_family
+      NSE_CONVECTIVE_BACKEND: runtime
       NSE_VISCOUS_SCHEME: central6
       NSE_BOUNDARY_SCHEME: periodic
       NSE_INIT_FFT_BACKEND: none
@@ -194,7 +219,7 @@ profiles:
       - initial_conditions
       - initial_hit_2decomp_fftw
       - boundary_periodic
-      - convective_keep
+      - convective_runtime
       - viscous_central6
       - forcing_2decomp_fftw
       - spatial_operator
@@ -211,20 +236,20 @@ profiles:
       NSE_USE_MPI: true
       NSE_ENABLE_OPENMP: true
       NSE_GPU_BACKEND: none
-      NSE_CONVECTIVE_BACKEND: keep_family
+      NSE_CONVECTIVE_BACKEND: runtime
       NSE_VISCOUS_SCHEME: central6
       NSE_BOUNDARY_SCHEME: periodic
       NSE_INIT_FFT_BACKEND: 2decomp_fftw
       NSE_FORCING_FFT_BACKEND: 2decomp_fftw
 
   cuda_single:
-    description: Single-GPU CUDA KEEP and SSPRK3 backend
+    description: Single-GPU CUDA convective schemes and SSPRK3 backend
     components:
       - core
       - mpi_stub
       - serial_runtime
       - initial_conditions
-      - initial_hit_stub
+      - initial_hit_cufft
       - cuda_backend
       - forcing_cufftmp_contract
       - runtime_tools
@@ -242,5 +267,5 @@ profiles:
       NSE_CONVECTIVE_BACKEND: keep_family
       NSE_VISCOUS_SCHEME: central6
       NSE_BOUNDARY_SCHEME: periodic
-      NSE_INIT_FFT_BACKEND: none
+      NSE_INIT_FFT_BACKEND: cufft
       NSE_FORCING_FFT_BACKEND: cufft
