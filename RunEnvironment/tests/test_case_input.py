@@ -12,6 +12,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from case_input import (  # noqa: E402
     CaseInputError,
     _validate_solver_selection,
+    derive_nse_hit_transport,
     render_nse,
 )
 from yaml_support import load_yaml  # noqa: E402
@@ -173,6 +174,14 @@ class NseCaseInputTests(unittest.TestCase):
 
         self.assertIn('convective_scheme = "keep2"', text)
 
+    def test_renders_weno5z_roe_selection_for_cpu(self) -> None:
+        case = self.case()
+        case["numerics"]["flux"] = "WENO5Z_ROE"
+
+        text = render_nse(case, self.manifest, "cpu_mpi")
+
+        self.assertIn('convective_scheme = "weno5z_roe"', text)
+
     def test_rejects_keep_without_order_suffix(self) -> None:
         case = self.case()
         case["numerics"]["flux"] = "KEEP"
@@ -203,6 +212,10 @@ class NseCaseInputTests(unittest.TestCase):
                 "integral_length": 1.0,
                 "kolmogorov_length": 0.02,
                 "dealias_fraction": 2.0 / 3.0,
+                "isotropy_mode": "projected_shell",
+                "isotropy_k_cutoff": 2.5,
+                "isotropy_tolerance": 1.0e-8,
+                "isotropy_max_iterations": 80,
             },
         }
 
@@ -213,23 +226,135 @@ class NseCaseInputTests(unittest.TestCase):
         self.assertIn("hit_seed = 24680", text)
         self.assertIn("hit_rms_velocity = 0.1", text)
         self.assertIn("hit_peak_wavenumber = 4", text)
+        self.assertIn('hit_isotropy_mode = "projected_shell"', text)
+        self.assertIn("hit_isotropy_k_cutoff = 2.5", text)
+        self.assertIn("hit_isotropy_tolerance = 1e-08", text)
+        self.assertIn("hit_isotropy_max_iterations = 80", text)
         _validate_solver_selection(
             case, self.manifest, "cpu_mpi_2decomp_fftw"
         )
+
+    def test_renders_target_driven_johnsen_hit_input(self) -> None:
+        case = self.case()
+        case["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
+        case["flow"] = {
+            "type": "hit",
+            "hit": {
+                "turbulent_mach_number": 0.3,
+                "turbulent_reynolds_number": 40.0,
+                "random_seed": 24680,
+                "spectrum": {
+                    "type": "johnsen",
+                    "johnsen": {
+                        "characteristic_length": 2.0,
+                        "length_scale_ratio": 2.5,
+                    },
+                    "pope": {"integral_length": 1.0},
+                },
+            },
+        }
+
+        text = render_nse(case, self.manifest, "cpu_mpi_2decomp_fftw")
+        derived = derive_nse_hit_transport(0.3, 40.0, 2.0)
+
+        self.assertIn('hit_spectrum = "johnsen"', text)
+        self.assertIn("hit_turbulent_mach = 0.29999999999999999", text)
+        self.assertIn("hit_turbulent_reynolds = 40", text)
+        self.assertIn("hit_johnsen_length_scale_ratio = 2.5", text)
+        self.assertIn("hit_peak_wavenumber = 2.5", text)
+        self.assertIn(
+            f"reynolds = {format(derived['solver_reynolds'], '.17g')}", text
+        )
+
+    def test_renders_target_driven_pope_hit_input(self) -> None:
+        case = self.case()
+        case["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
+        case["flow"] = {
+            "type": "hit",
+            "hit": {
+                "turbulent_mach_number": 0.5,
+                "taylor_reynolds_number": 30.0,
+                "spectrum": {
+                    "type": "pope",
+                    "johnsen": {
+                        "characteristic_length": 1.0,
+                        "length_scale_ratio": 2.0,
+                    },
+                    "pope": {
+                        "integral_length": 1.0,
+                        "energy_constant": 1.5,
+                        "large_scale_constant": 6.78,
+                        "dissipation_constant": 0.4,
+                        "large_scale_exponent": 2.0,
+                        "dissipation_exponent": 5.2,
+                    },
+                },
+            },
+        }
+
+        text = render_nse(case, self.manifest, "cpu_mpi_2decomp_fftw")
+        derived = derive_nse_hit_transport(0.5, 30.0, 1.0)
+
+        self.assertIn('hit_spectrum = "pope"', text)
+        self.assertIn("hit_pope_energy_constant = 1.5", text)
+        self.assertIn("hit_pope_large_scale_constant = 6.7800000000000002", text)
+        self.assertIn("hit_pope_dissipation_exponent = 5.2000000000000002", text)
+        self.assertIn(
+            "hit_kolmogorov_length = "
+            f"{format(derived['kolmogorov_length'], '.17g')}",
+            text,
+        )
+
+    def test_rejects_unknown_hit_spectrum_type(self) -> None:
+        case = self.case()
+        case["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
+        case["flow"] = {
+            "type": "hit",
+            "hit": {
+                "turbulent_mach_number": 0.5,
+                "turbulent_reynolds_number": 30.0,
+                "spectrum": {"type": "poppe"},
+            },
+        }
+
+        with self.assertRaisesRegex(CaseInputError, "spectrum.type"):
+            render_nse(case, self.manifest, "cpu_mpi_2decomp_fftw")
+
+    def test_rejects_hit_target_missing_reynolds_number(self) -> None:
+        case = self.case()
+        case["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
+        case["flow"] = {
+            "type": "hit",
+            "hit": {
+                "turbulent_mach_number": 0.5,
+                "spectrum": {
+                    "type": "johnsen",
+                    "johnsen": {
+                        "characteristic_length": 1.0,
+                        "length_scale_ratio": 2.0,
+                    },
+                },
+            },
+        }
+
+        with self.assertRaisesRegex(CaseInputError, "turbulent_reynolds_number"):
+            render_nse(case, self.manifest, "cpu_mpi_2decomp_fftw")
 
     def test_renders_petersen_livescu_forcing(self) -> None:
         case = self.case()
         case["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
         case["forcing"] = {
             "type": "petersen_livescu",
-            "spectrum": "low_wavenumber",
-            "fft_backend": "2decomp_fftw",
-            "k_cutoff": 2.5,
-            "target_dissipation": 0.1,
-            "dilatational_ratio": 0.25,
-            "denominator_floor": 1.0e-14,
-            "max_coefficient": 20.0,
-            "report_interval": 50,
+            "petersen_livescu": {
+                "spectrum": "low_wavenumber",
+                "fft_backend": "2decomp_fftw",
+                "k_cutoff": 2.5,
+                "target_dissipation": 0.1,
+                "dilatational_ratio": 0.25,
+                "denominator_floor": 1.0e-14,
+                "max_coefficient": 20.0,
+                "report_interval": 50,
+            },
         }
 
         text = render_nse(case, self.manifest, "cpu_mpi_2decomp_fftw")
@@ -247,9 +372,11 @@ class NseCaseInputTests(unittest.TestCase):
         case["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
         case["forcing"] = {
             "type": "Petersen-Livescu",
-            "spectrum": "Low Wavenumber",
-            "fft_backend": "2decomp-fftw",
-            "target_dissipation": 0.1,
+            "petersen_livescu": {
+                "spectrum": "Low Wavenumber",
+                "fft_backend": "2decomp-fftw",
+                "target_dissipation": 0.1,
+            },
         }
 
         text = render_nse(case, self.manifest, "cpu_mpi_2decomp_fftw")
@@ -258,11 +385,42 @@ class NseCaseInputTests(unittest.TestCase):
         self.assertIn('forcing_spectrum = "low_wavenumber"', text)
         self.assertIn('forcing_fft_backend = "2decomp_fftw"', text)
 
+    def test_normalizes_full_wavenumber_forcing_alias(self) -> None:
+        case = self.case()
+        case["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
+        case["forcing"] = {
+            "type": "petersen_livescu",
+            "petersen_livescu": {
+                "spectrum": "full_wavenumber",
+                "target_dissipation": 0.1,
+            },
+        }
+
+        text = render_nse(case, self.manifest, "cpu_mpi_2decomp_fftw")
+
+        self.assertIn('forcing_spectrum = "full_spectrum"', text)
+
+    def test_rejects_unknown_forcing_spectrum(self) -> None:
+        case = self.case()
+        case["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
+        case["forcing"] = {
+            "type": "petersen_livescu",
+            "petersen_livescu": {
+                "spectrum": "full_wavenumbar",
+                "target_dissipation": 0.1,
+            },
+        }
+
+        with self.assertRaisesRegex(
+            CaseInputError, "forcing.petersen_livescu.spectrum"
+        ):
+            render_nse(case, self.manifest, "cpu_mpi_2decomp_fftw")
+
     def test_rejects_forcing_with_profile_without_fft_backend(self) -> None:
         case = self.case()
         case["forcing"] = {
             "type": "petersen_livescu",
-            "target_dissipation": 0.1,
+            "petersen_livescu": {"target_dissipation": 0.1},
         }
 
         with self.assertRaisesRegex(
@@ -281,6 +439,55 @@ class NseCaseInputTests(unittest.TestCase):
         text = render_nse(case, self.manifest, "cpu_mpi_2decomp_fftw")
 
         self.assertIn('forcing_scheme = "petersen_livescu"', text)
+
+    def test_ignores_inactive_petersen_livescu_settings(self) -> None:
+        case = self.case()
+        case["forcing"] = {
+            "type": "none",
+            "petersen_livescu": {
+                "target_dissipation": 0.1,
+                "fft_backend": "2decomp_fftw",
+            },
+        }
+
+        text = render_nse(case, self.manifest, "cpu_mpi")
+
+        self.assertIn('forcing_scheme = "none"', text)
+        self.assertNotIn("forcing_target_dissipation", text)
+
+    def test_rejects_unknown_forcing_type(self) -> None:
+        case = self.case()
+        case["forcing"] = {"type": "petersen_livecu"}
+
+        with self.assertRaisesRegex(CaseInputError, "unknown forcing.type"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_misspelled_type_specific_forcing_key(self) -> None:
+        case = self.case()
+        case["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
+        case["forcing"] = {
+            "type": "petersen_livescu",
+            "petersen_livescu": {
+                "target_disipation": 0.1,
+            },
+        }
+
+        with self.assertRaisesRegex(
+            CaseInputError, "unknown forcing.petersen_livescu key"
+        ):
+            render_nse(case, self.manifest, "cpu_mpi_2decomp_fftw")
+
+    def test_rejects_mixed_nested_and_legacy_forcing_settings(self) -> None:
+        case = self.case()
+        case["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
+        case["forcing"] = {
+            "type": "petersen_livescu",
+            "target_dissipation": 0.1,
+            "petersen_livescu": {"target_dissipation": 0.2},
+        }
+
+        with self.assertRaisesRegex(CaseInputError, "mixes the new"):
+            render_nse(case, self.manifest, "cpu_mpi_2decomp_fftw")
 
     def test_renders_nse_single_gpu_input(self) -> None:
         case = self.case(mpi_processes=1)
@@ -301,6 +508,23 @@ class NseCaseInputTests(unittest.TestCase):
         self.assertIn("use_openmp = .false.", text)
         self.assertIn("cuda_device = 2", text)
         _validate_solver_selection(case, self.manifest, "cuda_single")
+
+    def test_renders_weno5z_roe_for_cuda_profile(self) -> None:
+        case = self.case(mpi_processes=1)
+        case["solver"].update(
+            {
+                "profile": "cuda_single",
+                "use_mpi": False,
+                "use_openmp": False,
+                "use_cuda": True,
+                "omp_threads": 1,
+            }
+        )
+        case["numerics"]["flux"] = "WENO5Z_ROE"
+
+        text = render_nse(case, self.manifest, "cuda_single")
+
+        self.assertIn('convective_scheme = "weno5z_roe"', text)
 
     def test_rejects_too_few_nse_mpi_processes(self) -> None:
         with self.assertRaisesRegex(CaseInputError, "at least 4"):

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -69,11 +70,23 @@ NSE_KEYS = (
     "time_integrator",
     "hit_spectrum",
     "hit_seed",
+    "hit_turbulent_mach",
+    "hit_turbulent_reynolds",
     "hit_rms_velocity",
     "hit_peak_wavenumber",
     "hit_integral_length",
     "hit_kolmogorov_length",
+    "hit_johnsen_length_scale_ratio",
+    "hit_pope_energy_constant",
+    "hit_pope_large_scale_constant",
+    "hit_pope_dissipation_constant",
+    "hit_pope_large_scale_exponent",
+    "hit_pope_dissipation_exponent",
     "hit_dealias_fraction",
+    "hit_isotropy_mode",
+    "hit_isotropy_k_cutoff",
+    "hit_isotropy_tolerance",
+    "hit_isotropy_max_iterations",
     "forcing_scheme",
     "forcing_spectrum",
     "forcing_fft_backend",
@@ -90,6 +103,74 @@ NSE_ALIASES = {
     "reynolds_number": "reynolds",
     "prandtl_number": "prandtl",
 }
+
+NSE_HIT_SPECTRUM_SCHEMAS: dict[str, dict[str, Any]] = {
+    "johnsen": {
+        "parameters": ("characteristic_length", "length_scale_ratio"),
+        "required": ("characteristic_length", "length_scale_ratio"),
+        "namelist": {
+            "characteristic_length": "hit_integral_length",
+            "length_scale_ratio": "hit_johnsen_length_scale_ratio",
+        },
+    },
+    "pope": {
+        "parameters": (
+            "integral_length",
+            "energy_constant",
+            "large_scale_constant",
+            "dissipation_constant",
+            "large_scale_exponent",
+            "dissipation_exponent",
+        ),
+        "required": ("integral_length",),
+        "namelist": {
+            "integral_length": "hit_integral_length",
+            "energy_constant": "hit_pope_energy_constant",
+            "large_scale_constant": "hit_pope_large_scale_constant",
+            "dissipation_constant": "hit_pope_dissipation_constant",
+            "large_scale_exponent": "hit_pope_large_scale_exponent",
+            "dissipation_exponent": "hit_pope_dissipation_exponent",
+        },
+    },
+}
+NSE_HIT_SPECTRUM_TYPES = set(NSE_HIT_SPECTRUM_SCHEMAS)
+
+NSE_FORCING_SCHEMAS: dict[str, dict[str, Any]] = {
+    "petersen_livescu": {
+        "parameters": (
+            "spectrum",
+            "fft_backend",
+            "k_cutoff",
+            "target_dissipation",
+            "dilatational_ratio",
+            "denominator_floor",
+            "max_coefficient",
+            "report_interval",
+        ),
+        "required": ("target_dissipation",),
+        "selectors": {
+            "spectrum": {
+                "allowed": ("full_spectrum", "low_wavenumber"),
+                "aliases": {"full_wavenumber": "full_spectrum"},
+            },
+            "fft_backend": {
+                "allowed": ("auto", "2decomp_fftw", "cufft"),
+                "aliases": {},
+            },
+        },
+        "namelist": {
+            "spectrum": "forcing_spectrum",
+            "fft_backend": "forcing_fft_backend",
+            "k_cutoff": "forcing_k_cutoff",
+            "target_dissipation": "forcing_target_dissipation",
+            "dilatational_ratio": "forcing_dilatational_ratio",
+            "denominator_floor": "forcing_denominator_floor",
+            "max_coefficient": "forcing_max_coefficient",
+            "report_interval": "forcing_report_interval",
+        },
+    }
+}
+NSE_FORCING_TYPES = {"none", *NSE_FORCING_SCHEMAS}
 
 GPE_ALIASES = {
     "interaction_strength": "g",
@@ -140,6 +221,362 @@ def _append(lines: list[str], values: list[tuple[str, Any]]) -> None:
 def _canonical_selector(value: str) -> str:
     """Normalize human-readable selector spelling to the solver convention."""
     return "_".join(value.strip().lower().replace("-", " ").split())
+
+
+def _positive_float(value: Any, label: str, *, allow_zero: bool = False) -> float:
+    if isinstance(value, bool):
+        raise CaseInputError(f"{label} must be a number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise CaseInputError(f"{label} must be a number") from exc
+    if not math.isfinite(number):
+        raise CaseInputError(f"{label} must be finite")
+    outside_range = number < 0.0 if allow_zero else number <= 0.0
+    if outside_range:
+        comparison = "non-negative" if allow_zero else "positive"
+        raise CaseInputError(f"{label} must be {comparison}")
+    return number
+
+
+def derive_nse_hit_transport(
+    turbulent_mach: Any,
+    turbulent_reynolds: Any,
+    characteristic_length: Any,
+) -> dict[str, float]:
+    """Resolve the original HIT Re_lambda scaling in solver units."""
+
+    mach = _positive_float(turbulent_mach, "HIT turbulent Mach number")
+    re_lambda = _positive_float(
+        turbulent_reynolds, "HIT turbulent Reynolds number (Re_lambda)"
+    )
+    length = _positive_float(characteristic_length, "HIT characteristic length")
+    component_rms = mach / (3.0**0.5)
+    integral_reynolds = 3.0 * re_lambda * re_lambda / 20.0
+    velocity_scale = (1.5**0.5) * component_rms
+    kinematic_viscosity = velocity_scale * length / integral_reynolds
+    return {
+        "turbulent_mach": mach,
+        "turbulent_reynolds": re_lambda,
+        "component_rms": component_rms,
+        "integral_reynolds": integral_reynolds,
+        "kinematic_viscosity": kinematic_viscosity,
+        "solver_reynolds": 1.0 / kinematic_viscosity,
+        "taylor_microscale": length * (10.0 / integral_reynolds) ** 0.5,
+        "kolmogorov_length": length * integral_reynolds ** (-0.75),
+    }
+
+
+def _resolve_legacy_nse_hit(hit: dict[str, Any]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    aliases = {
+        "hit_spectrum": ("spectrum",),
+        "hit_seed": ("random_seed",),
+        "hit_rms_velocity": ("rms_velocity",),
+        "hit_peak_wavenumber": ("peak_wavenumber",),
+        "hit_integral_length": ("integral_length",),
+        "hit_kolmogorov_length": ("kolmogorov_length",),
+        "hit_dealias_fraction": ("dealias_fraction",),
+        "hit_isotropy_mode": ("isotropy_mode",),
+        "hit_isotropy_k_cutoff": ("isotropy_k_cutoff",),
+        "hit_isotropy_tolerance": ("isotropy_tolerance",),
+        "hit_isotropy_max_iterations": ("isotropy_max_iterations",),
+    }
+    for target, candidates in aliases.items():
+        for source in candidates:
+            value = hit.get(source)
+            if value not in {None, ""}:
+                values[target] = value
+                break
+
+    turbulent_mach = hit.get("turbulent_mach_number")
+    turbulent_reynolds = hit.get(
+        "turbulent_reynolds_number", hit.get("taylor_reynolds_number")
+    )
+    if turbulent_mach not in {None, ""} and turbulent_reynolds not in {None, ""}:
+        length = hit.get("integral_length")
+        if length in {None, ""}:
+            raise CaseInputError(
+                "legacy HIT targets require flow.hit.integral_length"
+            )
+        derived = derive_nse_hit_transport(
+            turbulent_mach, turbulent_reynolds, length
+        )
+        values.update(
+            {
+                "mach": derived["turbulent_mach"],
+                "reynolds": derived["solver_reynolds"],
+                "hit_turbulent_mach": derived["turbulent_mach"],
+                "hit_turbulent_reynolds": derived["turbulent_reynolds"],
+                "hit_rms_velocity": derived["component_rms"],
+                "hit_kolmogorov_length": derived["kolmogorov_length"],
+            }
+        )
+    elif turbulent_mach not in {None, ""}:
+        values["mach"] = _positive_float(
+            turbulent_mach, "flow.hit.turbulent_mach_number"
+        )
+    elif turbulent_reynolds not in {None, ""}:
+        raise CaseInputError(
+            "flow.hit.turbulent_reynolds_number also requires "
+            "flow.hit.turbulent_mach_number"
+        )
+    return values
+
+
+def _resolve_nse_hit(case: dict[str, Any]) -> dict[str, Any]:
+    flow_type = _canonical_selector(str(nested(case, "flow.type", "")))
+    if flow_type not in {
+        "hit",
+        "hit_spectral",
+        "homogeneous_isotropic_turbulence",
+    }:
+        return {}
+
+    hit = _mapping(nested(case, "flow.hit", {}), "flow.hit")
+    spectrum_value = hit.get("spectrum")
+    if not isinstance(spectrum_value, dict):
+        return _resolve_legacy_nse_hit(hit)
+
+    common_keys = {
+        "turbulent_mach_number",
+        "turbulent_reynolds_number",
+        "taylor_reynolds_number",
+        "random_seed",
+        "dealias_fraction",
+        "isotropy_mode",
+        "isotropy_k_cutoff",
+        "isotropy_tolerance",
+        "isotropy_max_iterations",
+    }
+    unknown_hit = sorted(set(hit) - common_keys - {"spectrum"})
+    if unknown_hit:
+        raise CaseInputError(
+            f"unknown flow.hit key(s): {', '.join(unknown_hit)}"
+        )
+
+    turbulent_mach = hit.get("turbulent_mach_number")
+    turbulent_reynolds = hit.get("turbulent_reynolds_number")
+    taylor_reynolds = hit.get("taylor_reynolds_number")
+    if turbulent_reynolds not in {None, ""} and taylor_reynolds not in {None, ""}:
+        turbulent_value = _positive_float(
+            turbulent_reynolds, "flow.hit.turbulent_reynolds_number"
+        )
+        taylor_value = _positive_float(
+            taylor_reynolds, "flow.hit.taylor_reynolds_number"
+        )
+        if turbulent_value != taylor_value:
+            raise CaseInputError(
+                "flow.hit turbulent_reynolds_number and "
+                "taylor_reynolds_number disagree"
+            )
+        turbulent_reynolds = turbulent_value
+    if turbulent_reynolds in {None, ""}:
+        turbulent_reynolds = taylor_reynolds
+    if turbulent_mach in {None, ""} or turbulent_reynolds in {None, ""}:
+        raise CaseInputError(
+            "flow.hit requires turbulent_mach_number and "
+            "turbulent_reynolds_number"
+        )
+
+    spectrum = _mapping(spectrum_value, "flow.hit.spectrum")
+    allowed_spectrum_keys = {"type", *NSE_HIT_SPECTRUM_TYPES}
+    unknown_spectrum = sorted(set(spectrum) - allowed_spectrum_keys)
+    if unknown_spectrum:
+        raise CaseInputError(
+            "unknown flow.hit.spectrum key(s): "
+            f"{', '.join(unknown_spectrum)}"
+        )
+    raw_type = spectrum.get("type")
+    if raw_type in {None, ""}:
+        raise CaseInputError("flow.hit.spectrum.type is required")
+    spectrum_type = _canonical_selector(str(raw_type))
+    spectrum_type = {"k4_gaussian": "johnsen"}.get(
+        spectrum_type, spectrum_type
+    )
+    if spectrum_type not in NSE_HIT_SPECTRUM_TYPES:
+        raise CaseInputError(
+            f"unknown flow.hit.spectrum.type={raw_type!r}; available: "
+            f"{sorted(NSE_HIT_SPECTRUM_TYPES)}"
+        )
+    if spectrum_type not in spectrum:
+        raise CaseInputError(
+            f"flow.hit.spectrum.type={spectrum_type!r} requires the "
+            f"flow.hit.spectrum.{spectrum_type} mapping"
+        )
+
+    schema = NSE_HIT_SPECTRUM_SCHEMAS[spectrum_type]
+    selected = _mapping(
+        spectrum[spectrum_type], f"flow.hit.spectrum.{spectrum_type}"
+    )
+    parameter_keys = set(schema["parameters"])
+    unknown_selected = sorted(set(selected) - parameter_keys)
+    if unknown_selected:
+        raise CaseInputError(
+            f"unknown flow.hit.spectrum.{spectrum_type} key(s): "
+            f"{', '.join(unknown_selected)}; available: "
+            f"{sorted(parameter_keys)}"
+        )
+    for required in schema["required"]:
+        if selected.get(required) in {None, ""}:
+            raise CaseInputError(
+                f"flow.hit.spectrum.{spectrum_type}.{required} is required"
+            )
+
+    length_key = "characteristic_length"
+    if spectrum_type == "pope":
+        length_key = "integral_length"
+    length = _positive_float(
+        selected[length_key],
+        f"flow.hit.spectrum.{spectrum_type}.{length_key}",
+    )
+    derived = derive_nse_hit_transport(
+        turbulent_mach, turbulent_reynolds, length
+    )
+    values: dict[str, Any] = {
+        "hit_spectrum": spectrum_type,
+        "hit_turbulent_mach": derived["turbulent_mach"],
+        "hit_turbulent_reynolds": derived["turbulent_reynolds"],
+        "hit_rms_velocity": derived["component_rms"],
+        "hit_integral_length": length,
+        "hit_kolmogorov_length": derived["kolmogorov_length"],
+        "mach": derived["turbulent_mach"],
+        "reynolds": derived["solver_reynolds"],
+    }
+    common_namelist = {
+        "random_seed": "hit_seed",
+        "dealias_fraction": "hit_dealias_fraction",
+        "isotropy_mode": "hit_isotropy_mode",
+        "isotropy_k_cutoff": "hit_isotropy_k_cutoff",
+        "isotropy_tolerance": "hit_isotropy_tolerance",
+        "isotropy_max_iterations": "hit_isotropy_max_iterations",
+    }
+    for source, target in common_namelist.items():
+        if hit.get(source) not in {None, ""}:
+            values[target] = hit[source]
+    for source, target in schema["namelist"].items():
+        if selected.get(source) not in {None, ""}:
+            values[target] = selected[source]
+    values["hit_integral_length"] = length
+
+    if spectrum_type == "johnsen":
+        ratio = _positive_float(
+            selected["length_scale_ratio"],
+            "flow.hit.spectrum.johnsen.length_scale_ratio",
+        )
+        values["hit_johnsen_length_scale_ratio"] = ratio
+        values["hit_peak_wavenumber"] = 2.0 * ratio / length
+    else:
+        positive_parameters = {
+            "energy_constant",
+            "large_scale_constant",
+            "dissipation_constant",
+            "dissipation_exponent",
+        }
+        for name in positive_parameters.intersection(selected):
+            normalized = _positive_float(
+                selected[name], f"flow.hit.spectrum.pope.{name}"
+            )
+            values[schema["namelist"][name]] = normalized
+        if "large_scale_exponent" in selected:
+            normalized = _positive_float(
+                selected["large_scale_exponent"],
+                "flow.hit.spectrum.pope.large_scale_exponent",
+                allow_zero=True,
+            )
+            values["hit_pope_large_scale_exponent"] = normalized
+    return values
+
+
+def _resolve_nse_forcing(case: dict[str, Any]) -> dict[str, Any]:
+    forcing = _mapping(nested(case, "forcing", {}), "forcing")
+    legacy_parameters = set(
+        NSE_FORCING_SCHEMAS["petersen_livescu"]["parameters"]
+    )
+    allowed_root = {
+        "type",
+        "scheme",
+        *NSE_FORCING_SCHEMAS,
+        *legacy_parameters,
+    }
+    unknown_root = sorted(set(forcing) - allowed_root)
+    if unknown_root:
+        raise CaseInputError(
+            "unknown forcing key(s): "
+            f"{', '.join(unknown_root)}; available root keys are "
+            "type and petersen_livescu"
+        )
+
+    if "type" in forcing and "scheme" in forcing:
+        type_value = _canonical_selector(str(forcing["type"]))
+        scheme_value = _canonical_selector(str(forcing["scheme"]))
+        if type_value != scheme_value:
+            raise CaseInputError(
+                "forcing.type and legacy forcing.scheme select different types"
+            )
+    raw_type = forcing.get("type", forcing.get("scheme", "none"))
+    forcing_type = _canonical_selector(str(raw_type))
+    if forcing_type not in NSE_FORCING_TYPES:
+        raise CaseInputError(
+            f"unknown forcing.type={raw_type!r}; available: "
+            f"{sorted(NSE_FORCING_TYPES)}"
+        )
+
+    values: dict[str, Any] = {"forcing_scheme": forcing_type}
+    if forcing_type == "none":
+        return values
+
+    schema = NSE_FORCING_SCHEMAS[forcing_type]
+    parameter_keys = set(schema["parameters"])
+    legacy_keys = sorted(legacy_parameters.intersection(forcing))
+    if forcing_type in forcing:
+        if legacy_keys:
+            raise CaseInputError(
+                f"forcing mixes the new forcing.{forcing_type} mapping with "
+                f"legacy flat key(s): {', '.join(legacy_keys)}"
+            )
+        selected = dict(
+            _mapping(forcing[forcing_type], f"forcing.{forcing_type}")
+        )
+        unknown_selected = sorted(set(selected) - parameter_keys)
+        if unknown_selected:
+            raise CaseInputError(
+                f"unknown forcing.{forcing_type} key(s): "
+                f"{', '.join(unknown_selected)}; available: "
+                f"{sorted(parameter_keys)}"
+            )
+    elif forcing_type == "petersen_livescu" and legacy_keys:
+        selected = dict(forcing)
+    else:
+        raise CaseInputError(
+            f"forcing.type={forcing_type!r} requires the "
+            f"forcing.{forcing_type} mapping"
+        )
+
+    for required in schema["required"]:
+        if selected.get(required) in {None, ""}:
+            raise CaseInputError(
+                f"forcing.{forcing_type}.{required} is required"
+            )
+
+    for parameter, selector in schema.get("selectors", {}).items():
+        value = selected.get(parameter)
+        if value in {None, ""}:
+            continue
+        normalized = _canonical_selector(str(value))
+        normalized = selector.get("aliases", {}).get(normalized, normalized)
+        if normalized not in selector["allowed"]:
+            raise CaseInputError(
+                f"forcing.{forcing_type}.{parameter}={value!r} is invalid; "
+                f"available: {list(selector['allowed'])}"
+            )
+        selected[parameter] = normalized
+
+    for source, target in schema["namelist"].items():
+        value = selected.get(source)
+        if value not in {None, ""}:
+            values[target] = value
+    return values
 
 
 def _profile_settings(
@@ -309,7 +746,7 @@ def render_nse(
     if "convective_order" in nse or "convective_order" in numerics:
         raise CaseInputError(
             "convective_order is no longer supported; set "
-            "numerics.convective_scheme to KEEP2 or KEEP6"
+            "numerics.convective_scheme to KEEP2, KEEP6, or WENO5Z_ROE"
         )
     for source, target in NSE_ALIASES.items():
         if target not in nse and source in nse:
@@ -334,48 +771,19 @@ def render_nse(
                     break
     if "cfl" not in nse:
         nse["cfl"] = nested(case, "time.cfl")
-    hit = _mapping(nested(case, "flow.hit", {}), "flow.hit")
-    hit_aliases = {
-        "hit_spectrum": ("spectrum",),
-        "hit_seed": ("random_seed",),
-        "hit_rms_velocity": ("rms_velocity", "turbulent_mach_number"),
-        "hit_peak_wavenumber": ("peak_wavenumber",),
-        "hit_integral_length": ("integral_length",),
-        "hit_kolmogorov_length": ("kolmogorov_length",),
-        "hit_dealias_fraction": ("dealias_fraction",),
-    }
-    for target, candidates in hit_aliases.items():
+    hit_values = _resolve_nse_hit(case)
+    nse.update(hit_values)
+    forcing_values = _resolve_nse_forcing(case)
+    for target, value in forcing_values.items():
         if target not in nse or nse[target] in {None, ""}:
-            for source in candidates:
-                value = hit.get(source)
-                if value not in {None, ""}:
-                    nse[target] = value
-                    break
-    forcing = _mapping(nested(case, "forcing", {}), "forcing")
-    forcing_aliases = {
-        "forcing_scheme": ("type", "scheme"),
-        "forcing_spectrum": ("spectrum",),
-        "forcing_fft_backend": ("fft_backend",),
-        "forcing_k_cutoff": ("k_cutoff",),
-        "forcing_target_dissipation": ("target_dissipation",),
-        "forcing_dilatational_ratio": ("dilatational_ratio",),
-        "forcing_denominator_floor": ("denominator_floor",),
-        "forcing_max_coefficient": ("max_coefficient",),
-        "forcing_report_interval": ("report_interval",),
-    }
-    for target, candidates in forcing_aliases.items():
-        if target not in nse or nse[target] in {None, ""}:
-            for source in candidates:
-                value = forcing.get(source)
-                if value not in {None, ""}:
-                    nse[target] = value
-                    break
+            nse[target] = value
     for key in (
         "convective_scheme",
         "viscous_scheme",
         "boundary_condition",
         "time_integrator",
         "hit_spectrum",
+        "hit_isotropy_mode",
         "forcing_scheme",
         "forcing_spectrum",
         "forcing_fft_backend",
@@ -400,12 +808,20 @@ def render_nse(
             )
         if requested_forcing_backend not in {"auto", forcing_backend}:
             raise CaseInputError(
-                f"forcing.fft_backend={requested_forcing_backend!r} does not match "
+                "forcing.petersen_livescu.fft_backend="
+                f"{requested_forcing_backend!r} does not match "
                 f"profile {profile_name!r} backend {forcing_backend!r}"
             )
     if nse.get("convective_scheme") == "keep":
         raise CaseInputError(
             "convective_scheme=KEEP is no longer supported; use KEEP2 or KEEP6"
+        )
+    convective_scheme = str(nse.get("convective_scheme", "keep6"))
+    allowed_convective_schemes = {"keep2", "keep6", "weno5z_roe"}
+    if convective_scheme not in allowed_convective_schemes:
+        raise CaseInputError(
+            f"unsupported numerics.convective_scheme={convective_scheme!r}; "
+            "use KEEP2, KEEP6, or WENO5Z_ROE"
         )
     if nse.get("time_integrator") in {"rk3", "ssp_rk3", "ssp-rk3"}:
         nse["time_integrator"] = "ssprk3"

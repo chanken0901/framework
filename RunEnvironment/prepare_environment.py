@@ -106,6 +106,39 @@ def _numbered_case_destination(
         number += 1
 
 
+def _requested_case_destination(
+    root: Path,
+    model: str,
+    requested_case_id: str,
+    width: int = 4,
+    start: int = 1,
+) -> tuple[Path, str]:
+    if width < 1:
+        raise EnvironmentError("destination.case_number_width must be positive")
+    if start < 1:
+        raise EnvironmentError("destination.case_number_start must be positive")
+
+    model_name = re.sub(r"[^0-9A-Za-z_-]+", "_", model.strip().lower()).strip("_")
+    if not model_name:
+        raise EnvironmentError("model.name cannot form a case directory name")
+
+    case_text = requested_case_id.strip().lower()
+    if case_text.startswith("case"):
+        case_text = case_text[4:]
+    if not case_text.isdigit():
+        raise EnvironmentError(
+            "--case-id must be a case number such as case0015 or 0015"
+        )
+    number = int(case_text)
+    if number < start:
+        raise EnvironmentError(
+            f"--case-id must be case{start:0{width}d} or greater"
+        )
+
+    case_id = f"case{number:0{width}d}"
+    return root / f"{model_name}_{case_id}", case_id
+
+
 def _global_case_index_path(
     destination_cfg: dict[str, Any],
     design_path: Path,
@@ -491,7 +524,19 @@ Set `solver.mpi_processes` and `solver.omp_threads` in
 
 ## ParaView preview
 
-Convert the latest complete SLF step with a spatial stride of two:
+Run these commands from this generated environment root. First verify the
+postprocessing tool, display the child command, and inspect the selected SLFs:
+
+```powershell
+Test-Path .\\environment.lock.json
+python .\\tools\\postprocess_case.py --version
+python .\\tools\\postprocess_case.py --dry-run
+python .\\tools\\postprocess_case.py --inspect-only --steps latest
+```
+
+Version 2.0.0 or later supports the same step selection and inspection flow for
+both GPE and NSE. Convert the latest complete SLF step with a spatial stride of
+two:
 
 ```powershell
 python .\\tools\\postprocess_case.py
@@ -503,6 +548,27 @@ Convert selected full-resolution steps:
 python .\\tools\\postprocess_case.py --steps 0,1000 --stride 1
 ```
 
+The step syntax is `all`, `latest`, a comma-separated list such as
+`0,500,1000`, or an inclusive range such as `0:1000:100`. ParaView output is
+written below `cases/{case_id}/paraview`; open `collection.pvd`. Incomplete MPI
+steps are skipped. A generated environment is a copy and does not automatically
+follow later FrameWork updates; regenerate it when the reported version is older.
+
+## NSE turbulence statistics
+
+Compute a CSV time series from every complete NSE SLF step. Gamma and the
+reference Reynolds number are read from `cases/{case_id}/case.yaml`:
+
+```powershell
+python .\\tools\\postprocess_case.py --task statistics
+```
+
+Run ParaView conversion and statistics together:
+
+```powershell
+python .\\tools\\postprocess_case.py --task all
+```
+
 ## Linux / HPC
 
 ```bash
@@ -511,6 +577,7 @@ python3 tools/run_case.py --validate-only
 python3 tools/run_case.py --build
 python3 tools/run_case.py --run
 python3 tools/postprocess_case.py
+python3 tools/postprocess_case.py --task statistics
 ```
 
 Build once before submitting production jobs. When `submit.slurm` exists, it
@@ -737,14 +804,38 @@ def prepare(args: argparse.Namespace) -> Path:
     if args.output:
         auto_case_number = False
     if auto_case_number:
-        output, allocated_case_id = _numbered_case_destination(
-            destination_root,
-            model,
-            int(destination_cfg.get("case_number_width", 4)),
-            int(destination_cfg.get("case_number_start", 1)),
-        )
+        width = int(destination_cfg.get("case_number_width", 4))
+        start = int(destination_cfg.get("case_number_start", 1))
+        if args.overwrite:
+            if not args.case_id:
+                raise EnvironmentError(
+                    "--overwrite with automatic case numbering requires "
+                    "--case-id (for example --case-id case0015), or use "
+                    "--output with the complete destination path"
+                )
+            output, allocated_case_id = _requested_case_destination(
+                destination_root, model, args.case_id, width, start
+            )
+            if not output.is_dir():
+                raise EnvironmentError(
+                    f"overwrite target does not exist: {output}"
+                )
+        else:
+            if args.case_id:
+                raise EnvironmentError(
+                    "--case-id selects an existing automatically numbered "
+                    "environment and must be used with --overwrite"
+                )
+            output, allocated_case_id = _numbered_case_destination(
+                destination_root, model, width, start
+            )
         case_cfg["id"] = allocated_case_id
     else:
+        if args.case_id:
+            raise EnvironmentError(
+                "--case-id is only valid with automatic case numbering; "
+                "use --output to select an explicit destination path"
+            )
         output = destination_root
     global_case_index = _global_case_index_path(
         destination_cfg, design_path, output
@@ -1032,6 +1123,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", help="Override destination.root")
     parser.add_argument("--model", help="Override model.name")
     parser.add_argument("--profile")
+    parser.add_argument(
+        "--case-id",
+        help="Existing automatic case number selected with --overwrite, for example case0015",
+    )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--archive", action="store_true")
     parser.add_argument("--archive-format", choices=["zip", "gztar"])

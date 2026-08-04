@@ -28,6 +28,44 @@ flow:
     mode_x: 1
     mode_y: 1
     mode_z: 1
+  hit:
+    # Re_lambda target, corresponding to Re_ini in the original HIT code.
+    turbulent_mach_number: 0.5
+    turbulent_reynolds_number: 30.0
+    random_seed: 13579
+    dealias_fraction: 0.6666666666666667
+    isotropy_mode: projected_shell
+    isotropy_k_cutoff: 2.5
+    isotropy_tolerance: 1.0e-8
+    isotropy_max_iterations: 80
+    spectrum:
+      # choices: johnsen, pope
+      type: johnsen
+      johnsen:
+        characteristic_length: 1.0
+        length_scale_ratio: 2.0
+      pope:
+        integral_length: 1.0
+        energy_constant: 1.5
+        large_scale_constant: 6.78
+        dissipation_constant: 0.40
+        large_scale_exponent: 2.0
+        dissipation_exponent: 5.2
+
+forcing:
+  # choices: none, petersen_livescu
+  type: none
+  petersen_livescu:
+    # choices: full_spectrum, low_wavenumber
+    spectrum: low_wavenumber
+    # choices: auto, 2decomp_fftw, cufft
+    fft_backend: auto
+    k_cutoff: 2.5
+    target_dissipation: 0.1
+    dilatational_ratio: 0.0
+    denominator_floor: 1.0e-14
+    max_coefficient: 0.0
+    report_interval: 100
 
 grid:
   nx: 64
@@ -59,6 +97,7 @@ solver:
 numerics:
   reconstruction:
   time_integration: RK3
+  # Options: KEEP2, KEEP6, WENO5Z_ROE (CPU/MPI/OpenMP only)
   flux: KEEP6
 
 storage:

@@ -17,8 +17,11 @@ physics:
     small_rho: 1.0e-12
     small_p: 1.0e-12
     rho0: 1.0
+    # Used directly by non-HIT flows. HIT derives these two solver values
+    # from flow.hit turbulent targets and the selected spectrum length.
     mach_number: 0.5
     reynolds_number: 100.0
+    # Thermal diffusion is coupled through 1 / (Re * Pr).
     prandtl_number: 0.72
 
 flow:
@@ -29,27 +32,48 @@ flow:
     mode_y: 1
     mode_z: 1
   hit:
-    spectrum: johnsen
+    # Initial turbulent targets. turbulent_reynolds_number is Re_lambda,
+    # matching Re_ini in the original HIT code.
+    turbulent_mach_number: 0.5
+    turbulent_reynolds_number: 30.0
     random_seed: 13579
-    rms_velocity: 0.1
-    peak_wavenumber: 4.0
-    integral_length: 1.0
-    kolmogorov_length: 0.02
     dealias_fraction: 0.6666666666666667
+    isotropy_mode: projected_shell
+    isotropy_k_cutoff: 2.5
+    isotropy_tolerance: 1.0e-8
+    isotropy_max_iterations: 80
+    spectrum:
+      # choices: johnsen, pope
+      type: johnsen
+      johnsen:
+        characteristic_length: 1.0
+        # Original L_lambda. k_peak = 2 * ratio / characteristic_length.
+        length_scale_ratio: 2.0
+      pope:
+        integral_length: 1.0
+        energy_constant: 1.5
+        large_scale_constant: 6.78
+        dissipation_constant: 0.40
+        large_scale_exponent: 2.0
+        dissipation_exponent: 5.2
 
 # Petersen-Livescu linear forcing. Set type to petersen_livescu for
 # statistically stationary periodic turbulence. CPU forcing requires the
 # cpu_mpi_2decomp_fftw profile; single-GPU forcing requires cuda_single.
 forcing:
+  # choices: none, petersen_livescu
   type: none
-  spectrum: low_wavenumber
-  fft_backend: auto
-  k_cutoff: 2.5
-  target_dissipation: 0.1
-  dilatational_ratio: 0.0
-  denominator_floor: 1.0e-14
-  max_coefficient: 0.0
-  report_interval: 100
+  petersen_livescu:
+    # choices: full_spectrum, low_wavenumber
+    spectrum: low_wavenumber
+    # choices: auto, 2decomp_fftw, cufft
+    fft_backend: auto
+    k_cutoff: 2.5
+    target_dissipation: 0.1
+    dilatational_ratio: 0.0
+    denominator_floor: 1.0e-14
+    max_coefficient: 0.0
+    report_interval: 100
 
 grid:
   nx: 64
@@ -82,6 +106,7 @@ solver:
 
 numerics:
   reconstruction: none
+  # Options: keep2, keep6, weno5z_roe
   convective_scheme: keep6
   viscous_scheme: central6
   boundary_condition: periodic

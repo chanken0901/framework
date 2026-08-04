@@ -14,6 +14,7 @@ from prepare_environment import (  # noqa: E402
     _global_case_index_path,
     _numbered_case_destination,
     _parallel_features,
+    _requested_case_destination,
     _slurm_script,
 )
 from yaml_support import load_yaml  # noqa: E402
@@ -40,6 +41,26 @@ class NumberedCaseDestinationTests(unittest.TestCase):
 
             self.assertEqual(output, root / "nse_case0001")
             self.assertEqual(case_id, "case0001")
+
+    def test_selects_an_existing_case_number_for_overwrite(self) -> None:
+        root = Path("C:/ResearchRuns")
+
+        output, case_id = _requested_case_destination(root, "nse", "case0015")
+
+        self.assertEqual(output, root / "nse_case0015")
+        self.assertEqual(case_id, "case0015")
+
+    def test_normalizes_a_numeric_overwrite_case_id(self) -> None:
+        root = Path("C:/ResearchRuns")
+
+        output, case_id = _requested_case_destination(root, "gpe", "15")
+
+        self.assertEqual(output, root / "gpe_case0015")
+        self.assertEqual(case_id, "case0015")
+
+    def test_rejects_an_invalid_overwrite_case_id(self) -> None:
+        with self.assertRaisesRegex(EnvironmentError, "--case-id"):
+            _requested_case_destination(Path("C:/ResearchRuns"), "nse", "latest")
 
     def test_global_index_must_be_outside_case_environment(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -135,6 +156,20 @@ class NseCaseTemplateTests(unittest.TestCase):
         self.assertIn("type: taylor_green", template)
         self.assertIn("taylor_green:", template)
         self.assertIn("hit:", template)
+
+    def test_forcing_conditions_use_type_specific_mapping(self) -> None:
+        template = (
+            SCRIPT_DIR / "case_templates" / "nse.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("forcing:\n  # choices: none, petersen_livescu", template)
+        self.assertIn("  type: none\n  petersen_livescu:\n", template)
+        self.assertIn(
+            "# choices: full_spectrum, low_wavenumber", template
+        )
+        self.assertIn("# choices: auto, 2decomp_fftw, cufft", template)
+        self.assertIn("    target_dissipation: 0.1", template)
+        self.assertNotIn("\n  target_dissipation: 0.1", template)
 
 
 if __name__ == "__main__":
