@@ -69,6 +69,21 @@ numerics:
 
 MPI・OpenMP対応の三次元Navier-Stokes方程式ソルバーです。
 
+## 新規clone時の外部依存取得
+
+`2decomp-fft`はGitサブモジュールとして管理しています。新しく取得する場合は、
+親リポジトリをサブモジュール込みでcloneしてください。
+
+```powershell
+git clone --recurse-submodules <SolverLibraryのURL>
+```
+
+すでに親リポジトリだけをclone済みの場合は、リポジトリのルートで次を実行します。
+
+```powershell
+git submodule update --init --recursive
+```
+
 ## 推奨ビルド
 
 通常はCMakeファイルを直接編集せず、`config/build.yaml`を設計書としてビルドします。

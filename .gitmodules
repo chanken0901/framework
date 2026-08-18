@@ -1,0 +1,4 @@
+[submodule "NSE/src/2decomp-fft"]
+	path = NSE/src/2decomp-fft
+	url = https://github.com/2decomp-fft/2decomp-fft.git
+	branch = dev
