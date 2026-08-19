@@ -1,0 +1,8 @@
+# Windows shortcuts
+*.lnk
+
+# Microsoft Office temporary files
+~$*
+
+# Locally stored literature
+参考文献/
