@@ -1,0 +1,52 @@
+{
+  "$schema": "./workflow.schema.json",
+  "schema_version": 1,
+  "project_root": ".",
+  "stages": {
+    "configure": true,
+    "build": true,
+    "test": false,
+    "run": true
+  },
+  "cmake": {
+    "command": "cmake",
+    "source_directory": ".",
+    "build_directory": "build/cufftmp",
+    "generator": "Ninja",
+    "definitions": {
+      "CMAKE_BUILD_TYPE": "Release",
+      "USE_MPI": true,
+      "FFT_BACKEND": "dft",
+      "GPU_BACKEND": "cufftmp",
+      "CUFFTMP_API": "auto",
+      "BUILD_TESTING": true
+    },
+    "configure_arguments": []
+  },
+  "build": {
+    "configuration": "Release",
+    "target": "gp3d_cufftmp",
+    "parallel_jobs": 8,
+    "clean_first": false,
+    "arguments": []
+  },
+  "test": {
+    "command": "ctest",
+    "configuration": "Release",
+    "arguments": ["--output-on-failure", "-R", "cufftmp"]
+  },
+  "run": {
+    "working_directory": ".",
+    "executable": "auto",
+    "input_file": "tests/cuda_smoke.nml",
+    "use_mpi_launcher": true,
+    "launcher": "mpirun",
+    "process_option": "-np",
+    "processes": 2,
+    "launcher_arguments": [],
+    "program_arguments": [],
+    "environment": {
+      "NVSHMEM_SYMMETRIC_SIZE": "8G"
+    }
+  }
+}

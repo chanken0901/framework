@@ -1,0 +1,46 @@
+&simulation
+  equation = "NSE"
+  case_name = "hit_targets_small"
+  initial_condition = "hit_spectral"
+  nx = 8
+  ny = 8
+  nz = 8
+  nghost = 3
+  x_min = 0.0
+  x_max = 6.283185307179586
+  y_min = 0.0
+  y_max = 6.283185307179586
+  z_min = 0.0
+  z_max = 6.283185307179586
+  dt = 1.0e-5
+  t_max = 1.0e-5
+  nsteps = 1
+  cfl = 0.5
+  use_fixed_dt = .true.
+  output_frequency = 100
+  output_dir = "hit-target-smoke-output"
+  write_initial = .false.
+  write_meta = .false.
+/
+
+&nse
+  gamma = 1.4
+  rho0 = 1.0
+  prandtl = 0.72
+  convective_scheme = "keep6"
+  viscous_scheme = "central6"
+  boundary_condition = "periodic"
+  time_integrator = "ssprk3"
+  hit_spectrum = "pope"
+  hit_seed = 13579
+  hit_turbulent_mach = 0.1
+  hit_turbulent_reynolds = 30.0
+  hit_integral_length = 1.0
+  hit_pope_energy_constant = 1.5
+  hit_pope_large_scale_constant = 6.78
+  hit_pope_dissipation_constant = 0.40
+  hit_pope_large_scale_exponent = 2.0
+  hit_pope_dissipation_exponent = 5.2
+  hit_dealias_fraction = 0.6666666666666667
+  hit_isotropy_mode = "none"
+/

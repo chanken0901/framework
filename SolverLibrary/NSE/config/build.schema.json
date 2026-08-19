@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NSE YAML build design",
+  "type": "object",
+  "required": ["schema_version", "design_id", "machine_profile", "solver", "build"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "design_id": {"type": "string", "minLength": 1},
+    "machine_profile": {"type": "string", "minLength": 1},
+    "module_catalog": {"type": "string", "default": "module_catalog.yaml"},
+    "solver": {
+      "type": "object",
+      "required": ["module_set", "executable_name"],
+      "properties": {
+        "module_set": {"type": "string"},
+        "executable_name": {"type": "string"},
+        "include_modules": {"type": "array", "items": {"type": "string"}},
+        "exclude_modules": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "build": {
+      "type": "object",
+      "required": ["configuration", "output_root", "directory_name"],
+      "properties": {
+        "configuration": {"enum": ["Debug", "Release", "RelWithDebInfo"]},
+        "output_root": {"type": "string"},
+        "directory_name": {"type": "string"},
+        "warnings": {"type": "boolean"},
+        "parallel_jobs": {"type": "integer", "minimum": 1},
+        "configure_fresh": {"type": "boolean"}
+      }
+    }
+  }
+}

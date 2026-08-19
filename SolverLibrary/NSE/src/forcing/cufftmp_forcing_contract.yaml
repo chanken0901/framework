@@ -1,0 +1,41 @@
+schema_version: 1
+backend: cufftmp
+status: test_only
+purpose: distributed Helmholtz decomposition for MPI plus CUDA forcing
+
+requirements:
+  host_gather_allowed: false
+  state_location: distributed_device_resident
+  precision: float64
+  communicator: mpi
+  fft_library: cufftmp
+  transform: complex_to_complex_3d
+  batches:
+    forward: 3
+    inverse: 3
+
+operations:
+  - initialize
+  - upload_or_alias_local_weighted_velocity
+  - forward_distributed_fft
+  - project_local_spectral_pencil
+  - allreduce_forcing_denominators
+  - inverse_distributed_fft
+  - add_local_momentum_rhs
+  - finalize
+
+configuration:
+  scheme: petersen_livescu
+  spectra:
+    - full_spectrum
+    - low_wavenumber
+  fft_backend: cufftmp
+
+activation_gate:
+  runtime_available: false
+  reason: cuFFTMp and CUDA-aware MPI are not available in the current test environment
+  required_before_activation:
+    - NVIDIA HPC SDK or supported CUDA C++ toolchain
+    - cuFFTMp matching the installed CUDA toolkit
+    - CUDA-aware MPI
+    - multi-GPU numerical comparison against the 2DECOMP backend
