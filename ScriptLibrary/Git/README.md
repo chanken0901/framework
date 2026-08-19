@@ -71,4 +71,3 @@ library_repositories.yaml
 - 作業前後に`git status`と`git diff`を確認する
 - 計算結果とビルド生成物をGitへ追加しない
 - NAS上の共有コピーでGit操作しない
-

@@ -55,4 +55,3 @@ git switch --detach v1.0.0-student
 
 詳細は[Git運用マニュアル](GIT運用マニュアル.md)を参照してください。
 
-

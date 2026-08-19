@@ -89,4 +89,3 @@ powershell -ExecutionPolicy Bypass -File .\migrate_to_monorepo.ps1 `
 - `pre-monorepo-2026-08-19`と`v1.0.0-student`を付け替えない
 - force pushで`main`の履歴を書き換えない
 
-

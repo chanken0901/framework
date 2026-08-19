@@ -642,4 +642,3 @@ git --version
 - GitHubでリポジトリをクローンする: `https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository`
 - GitHubでforkを作成・同期する: `https://docs.github.com/en/pull-requests/how-tos/work-with-forks/fork-a-repo`
 - GitHub認証の概要: `https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/about-authentication-to-github`
-

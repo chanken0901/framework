@@ -599,4 +599,3 @@ git --version
 - GitHub fork手順: `https://docs.github.com/en/pull-requests/how-tos/work-with-forks/fork-a-repo`
 - GitHub認証: `https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/about-authentication-to-github`
 - GitHub ruleset: `https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets`
-
