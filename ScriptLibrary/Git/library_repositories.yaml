@@ -1,5 +1,9 @@
-# ScriptLibraryとSolverLibraryのGit運用設計書。
-# remote_urlが空の場合は、各リポジトリに設定済みのoriginを使用する。
+# LEGACY CONFIGURATION ONLY
+#
+# FrameWorkは2026年8月19日にモノレポへ移行済みです。現行のframework.gitでは
+# ScriptLibraryとSolverLibraryを独立リポジトリとして操作しません。本ファイルは
+# 旧分離リポジトリの履歴確認用であり、学生の日常開発では使用しないでください。
+
 schema_version: 1
 
 framework_root: C:/Users/Owner/Documents/Codex/FrameWork
@@ -26,3 +30,4 @@ repositories:
     branch: main
     remote: origin
     remote_url: https://github.com/chanken0901/SolverLibrary.git
+
