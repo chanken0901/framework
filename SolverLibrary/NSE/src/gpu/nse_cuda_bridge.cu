@@ -1266,17 +1266,27 @@ bool launch_stage(NseCudaContext* context, double dt, int stage) {
 }  // namespace
 
 #if defined(NSE_INIT_CUFFT)
-NSE_CUDA_EXPORT int nse_cuda_inverse_complex_3d(
+int transform_cuda_hit_complex_3d(
     int nx,
     int ny,
     int nz,
     int device,
-    cufftDoubleComplex* host_field) {
+    cufftDoubleComplex* host_field,
+    int direction) {
   last_error.clear();
-  if (nx <= 0 || ny <= 0 || nz <= 0 || host_field == nullptr) {
+  if (nx <= 0 || ny <= 0 || nz <= 0 || host_field == nullptr
+      || (direction != CUFFT_FORWARD && direction != CUFFT_INVERSE)) {
     set_error("invalid cuFFT HIT initialization argument");
     return 1;
   }
+
+  const bool inverse = direction == CUFFT_INVERSE;
+  const char* plan_error = inverse
+      ? "create CUDA HIT inverse FFT plan"
+      : "create CUDA HIT forward FFT plan";
+  const char* execution_error = inverse
+      ? "execute CUDA HIT inverse FFT"
+      : "execute CUDA HIT forward FFT";
 
   const std::size_t nx_size = static_cast<std::size_t>(nx);
   const std::size_t ny_size = static_cast<std::size_t>(ny);
@@ -1314,11 +1324,11 @@ NSE_CUDA_EXPORT int nse_cuda_inverse_complex_3d(
           "upload CUDA HIT Fourier field")
       || !check_cufft(
           cufftPlan3d(&plan, nz, ny, nx, CUFFT_Z2Z),
-          "create CUDA HIT inverse FFT plan")
+          plan_error)
       || !check_cufft(
           cufftExecZ2Z(
-              plan, device_field, device_field, CUFFT_INVERSE),
-          "execute CUDA HIT inverse FFT")
+              plan, device_field, device_field, direction),
+          execution_error)
       || !check_cuda(
           cudaMemcpy(
               host_field, device_field, bytes, cudaMemcpyDeviceToHost),
@@ -1329,6 +1339,26 @@ NSE_CUDA_EXPORT int nse_cuda_inverse_complex_3d(
 
   cleanup();
   return 0;
+}
+
+NSE_CUDA_EXPORT int nse_cuda_inverse_complex_3d(
+    int nx,
+    int ny,
+    int nz,
+    int device,
+    cufftDoubleComplex* host_field) {
+  return transform_cuda_hit_complex_3d(
+      nx, ny, nz, device, host_field, CUFFT_INVERSE);
+}
+
+NSE_CUDA_EXPORT int nse_cuda_forward_complex_3d(
+    int nx,
+    int ny,
+    int nz,
+    int device,
+    cufftDoubleComplex* host_field) {
+  return transform_cuda_hit_complex_3d(
+      nx, ny, nz, device, host_field, CUFFT_FORWARD);
 }
 #endif
 

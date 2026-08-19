@@ -16,14 +16,32 @@
    `u_hat`、`v_hat`、`w_hat`を直接構築する。
 4. `u_hat(-k) = conjg(u_hat(k))`を明示的に課して、実数速度場を保証する。
 5. 2/3則を既定値として高波数成分を除く。
-6. 2DECOMP&FFTとFFTW3による分散逆FFTでx-pencilへ戻す。
-7. x-pencilを計算本体の領域分割へMPI再分配する。
-8. 全ランクの速度二乗和を集約し、1成分RMSを指定値へ正規化する。
-9. 一様密度・一様圧力と組み合わせて保存変数を構築する。
+6. Parsevalの関係から1成分RMSを評価し、波数空間速度を指定値へ正規化する。
+7. 波数空間で速度勾配を計算し、実空間で圧力Poisson方程式の右辺を構築する。
+8. 右辺を順FFTし、非ゼロ波数ごとにPoisson方程式を解いてから圧力を逆FFTする。
+9. 速度を逆FFTし、x-pencilを計算本体の領域分割へMPI再分配する。
+10. 一様密度、生成した速度・圧力から保存変数を構築する。
 
 実空間乱数場を先に生成して順FFTする処理は行わない。元コードと同じく、
-エネルギースペクトルと乱数から波数空間速度を直接生成し、逆FFTだけを
-ライブラリへ任せる。
+エネルギースペクトルと乱数から波数空間速度を直接生成する。順FFTは、
+速度場から作った圧力Poisson方程式の右辺を波数空間へ移すために使用する。
+
+## 初期圧力
+
+初期速度場を非圧縮とみなし、周期境界条件のもとで次のPoisson方程式を解く。
+
+```text
+∇²p = -rho0 (∂u_i/∂x_j)(∂u_j/∂x_i)
+```
+
+速度勾配はスペクトル微分で計算する。右辺の積は実空間で作り、順FFT後に
+`hit_dealias_fraction`と同じカットオフを適用する。非ゼロ波数では
+`p_hat = rho0 * source_hat / |k|²`とし、零波数は基準圧力
+`<p> = rho0 / gamma`に固定する。このため、圧力の空間平均と初期音速の基準は
+従来仕様を維持しつつ、圧力変動は速度場と整合する。
+
+初期圧力の最小値が`small_p`以下の場合は、不正な保存変数で時間発展を開始せず
+エラー終了する。この場合は主に`hit_turbulent_mach`と初期スペクトルを確認する。
 
 ## ビルド
 
@@ -192,6 +210,9 @@ mpiexec -n 4 `
 - 2DECOMP process grid
 - max spectral divergence
 - max inverse FFT imaginary residual
+- HIT pressure Poisson: periodic spectral solve
+- initial pressure min/max
+- max pressure Poisson imaginary residual
 - unscaled component RMS
 - target component RMS
 - initial turbulent Mach number
@@ -208,7 +229,7 @@ Helmholtz射影でスペクトル発散を除去し、シェル総エネルギ�
 - 速度場は完全にsolenoidalで、初期のdilatational成分はゼロ。
 - 平均速度はゼロ。
 - 密度は`rho0`で一様。
-- 圧力は`rho0 / gamma`で一様。この無次元化では初期音速が1になる。
+- 圧力の空間平均は`rho0 / gamma`。変動成分は速度場から周期Poisson方程式で求める。
 - 1成分RMSは`hit_turbulent_mach / sqrt(3)`へ正規化される。
 - `mach`とソルバーの`reynolds`は、HIT目標値を指定した場合は導出値で上書きされる。
 - 旧形式の`hit_rms_velocity`直指定も読み込み互換のため残しているが、
