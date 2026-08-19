@@ -95,10 +95,16 @@ solver:
   omp_threads: {{omp_threads}}
 
 numerics:
-  reconstruction:
   time_integration: RK3
-  # Options: KEEP2, KEEP6, WENO5Z_ROE (CPU/MPI/OpenMP only)
-  flux: KEEP6
+  # Options: keep2, keep6, weno5z_roe, hybrid
+  convective_scheme: keep6
+  # Used only when convective_scheme is hybrid.
+  hybrid:
+    smooth_scheme: keep6
+    shock_scheme: weno5z_roe
+    sensor: ducros_pressure
+    sensor_onset: 0.01
+    sensor_full: 0.10
 
 storage:
   raw_data_location: {{raw_data_location}}

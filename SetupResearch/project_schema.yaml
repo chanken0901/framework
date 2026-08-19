@@ -360,16 +360,13 @@ time:
 
 numerics:
   parameters:
-    flux:
-      default: Roe
-    reconstruction:
-      default: WENOZ
+    convective_scheme:
+      default: keep6
     time_integration:
       default: TVD_RK3
 
   duplicate_keys:
-    - flux
-    - reconstruction
+    - convective_scheme
     - time_integration
 
 # ============================================================
@@ -442,8 +439,7 @@ case_index:
       - nz
 
     numerics:
-      - flux
-      - reconstruction
+      - convective_scheme
       - time_integration
 
     storage:
@@ -465,8 +461,7 @@ case_index:
       - nx
       - ny
       - nz
-      - flux
-      - reconstruction
+      - convective_scheme
       - time_integration
 
     use_physics_duplicate_keys: true

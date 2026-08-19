@@ -42,7 +42,9 @@ python .\build_model.py .\build.yaml --model gpe --list-profiles
 
 | profile | 内容 |
 |---|---|
-| `cuda_single` | 単一GPUのCUDA KEEP・SSPRK3 |
+| `cpu_mpi` | MPI領域分割とOpenMP局所ループ |
+| `cpu_mpi_2decomp_fftw` | MPI/OpenMPと2DECOMP&FFTによるHIT初期化・Forcing |
+| `cuda_single` | 単一GPUのKEEP/WENO/ハイブリッド、`central6`粘性項、SSPRK3 |
 
 CUDA版のビルドとテスト:
 
@@ -50,10 +52,6 @@ CUDA版のビルドとテスト:
 python .\build_model.py .\build.yaml `
   --model nse --profile cuda_single --test
 ```
-
-| プロファイル | 内容 |
-|---|---|
-| `cpu_mpi` | MPI領域分割とOpenMP局所ループ |
 
 ### GPE
 

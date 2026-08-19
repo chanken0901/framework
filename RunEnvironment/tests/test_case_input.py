@@ -147,7 +147,7 @@ class NseCaseInputTests(unittest.TestCase):
                 "omp_threads": 2,
             },
             "numerics": {
-                "flux": "KEEP6",
+                "convective_scheme": "KEEP6",
                 "viscous_scheme": "none",
                 "boundary_condition": "periodic",
                 "time_integration": "RK3",
@@ -161,6 +161,8 @@ class NseCaseInputTests(unittest.TestCase):
         self.assertIn('initial_condition = "taylor_green"', text)
         self.assertIn('backend = "cpu_mpi"', text)
         self.assertIn('convective_scheme = "keep6"', text)
+        self.assertNotIn("hybrid_smooth_scheme", text)
+        self.assertNotIn("hybrid_shock_scheme", text)
         self.assertNotIn("convective_order", text)
         self.assertIn('viscous_scheme = "none"', text)
         self.assertIn('boundary_condition = "periodic"', text)
@@ -168,7 +170,7 @@ class NseCaseInputTests(unittest.TestCase):
 
     def test_renders_second_order_keep_selection(self) -> None:
         case = self.case()
-        case["numerics"]["flux"] = "KEEP2"
+        case["numerics"]["convective_scheme"] = "KEEP2"
 
         text = render_nse(case, self.manifest, "cpu_mpi")
 
@@ -176,15 +178,46 @@ class NseCaseInputTests(unittest.TestCase):
 
     def test_renders_weno5z_roe_selection_for_cpu(self) -> None:
         case = self.case()
-        case["numerics"]["flux"] = "WENO5Z_ROE"
+        case["numerics"]["convective_scheme"] = "WENO5Z_ROE"
 
         text = render_nse(case, self.manifest, "cpu_mpi")
 
         self.assertIn('convective_scheme = "weno5z_roe"', text)
 
+    def test_renders_hybrid_keep_weno_selection(self) -> None:
+        case = self.case()
+        case["numerics"]["convective_scheme"] = "HYBRID"
+        case["numerics"]["hybrid"] = {
+            "smooth_scheme": "KEEP6",
+            "shock_scheme": "WENO5Z_ROE",
+            "sensor": "DUCROS_PRESSURE",
+            "sensor_onset": 0.02,
+            "sensor_full": 0.15,
+        }
+
+        text = render_nse(case, self.manifest, "cpu_mpi")
+
+        self.assertIn('convective_scheme = "hybrid"', text)
+        self.assertIn('hybrid_smooth_scheme = "keep6"', text)
+        self.assertIn('hybrid_shock_scheme = "weno5z_roe"', text)
+        self.assertIn('hybrid_sensor = "ducros_pressure"', text)
+        self.assertIn("hybrid_sensor_onset = 0.02", text)
+        self.assertIn("hybrid_sensor_full = 0.14999999999999999", text)
+
+    def test_rejects_invalid_hybrid_sensor_thresholds(self) -> None:
+        case = self.case()
+        case["numerics"]["convective_scheme"] = "hybrid"
+        case["numerics"]["hybrid"] = {
+            "sensor_onset": 0.10,
+            "sensor_full": 0.05,
+        }
+
+        with self.assertRaisesRegex(CaseInputError, "sensor_onset < sensor_full"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
     def test_rejects_keep_without_order_suffix(self) -> None:
         case = self.case()
-        case["numerics"]["flux"] = "KEEP"
+        case["numerics"]["convective_scheme"] = "KEEP"
 
         with self.assertRaisesRegex(CaseInputError, "KEEP2 or KEEP6"):
             render_nse(case, self.manifest, "cpu_mpi")
@@ -194,6 +227,25 @@ class NseCaseInputTests(unittest.TestCase):
         case["numerics"]["convective_order"] = 2
 
         with self.assertRaisesRegex(CaseInputError, "no longer supported"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_legacy_flux_selector(self) -> None:
+        case = self.case()
+        case["numerics"]["flux"] = "KEEP6"
+
+        with self.assertRaisesRegex(
+            CaseInputError, r"numerics\.flux.*numerics\.convective_scheme"
+        ):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_unused_reconstruction_selector(self) -> None:
+        case = self.case()
+        case["numerics"]["reconstruction"] = "hybrid"
+
+        with self.assertRaisesRegex(
+            CaseInputError,
+            r"numerics\.reconstruction.*numerics\.convective_scheme",
+        ):
             render_nse(case, self.manifest, "cpu_mpi")
 
     def test_accepts_nse_mpi_openmp_profile(self) -> None:
@@ -520,7 +572,7 @@ class NseCaseInputTests(unittest.TestCase):
                 "omp_threads": 1,
             }
         )
-        case["numerics"]["flux"] = "WENO5Z_ROE"
+        case["numerics"]["convective_scheme"] = "WENO5Z_ROE"
 
         text = render_nse(case, self.manifest, "cuda_single")
 

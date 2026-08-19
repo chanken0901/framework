@@ -1,5 +1,8 @@
 # ライブラリGit運用
 
+> モノレポへの移行は[`MIGRATE_TO_MONOREPO.md`](MIGRATE_TO_MONOREPO.md)と
+> `migrate_to_monorepo.ps1`を使用します。既定はDryRunで、既存のFrameWorkを直接変更しません。
+
 ローカルFrameWork上の`ScriptLibrary`と`SolverLibrary`を、それぞれ独立して
 安全に操作します。NASはGit操作後に同期するミラーであり、Gitの作業場所にはしません。
 設定形式と安全検査だけを`manage_library_repositories.py`で共有します。

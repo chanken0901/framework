@@ -70,7 +70,7 @@ options:
         include_tests: false
     nse_cuda_single:
       label: NSE 単一GPU
-      description: 単一GPU上でKEEP対流項とSSPRK3をCUDA計算する。
+      description: 単一GPU上でKEEP、WENO5-Z/Roe、ハイブリッド対流項、6次粘性項、SSPRK3をCUDA計算する。
       values:
         name: nse
         profile: cuda_single

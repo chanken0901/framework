@@ -65,6 +65,11 @@ NSE_KEYS = (
     "reynolds",
     "prandtl",
     "convective_scheme",
+    "hybrid_smooth_scheme",
+    "hybrid_shock_scheme",
+    "hybrid_sensor",
+    "hybrid_sensor_onset",
+    "hybrid_sensor_full",
     "viscous_scheme",
     "boundary_condition",
     "time_integrator",
@@ -743,10 +748,18 @@ def render_nse(
     )
     nse = dict(_mapping(nested(case, "physics.nse", {}), "physics.nse"))
     numerics = _mapping(nested(case, "numerics", {}), "numerics")
+    hybrid = _mapping(numerics.get("hybrid", {}), "numerics.hybrid")
+    for legacy_key in ("flux", "reconstruction"):
+        if legacy_key in numerics:
+            raise CaseInputError(
+                f"numerics.{legacy_key} is no longer supported; use "
+                "numerics.convective_scheme"
+            )
     if "convective_order" in nse or "convective_order" in numerics:
         raise CaseInputError(
             "convective_order is no longer supported; set "
-            "numerics.convective_scheme to KEEP2, KEEP6, or WENO5Z_ROE"
+            "numerics.convective_scheme to KEEP2, KEEP6, WENO5Z_ROE, "
+            "or HYBRID"
         )
     for source, target in NSE_ALIASES.items():
         if target not in nse and source in nse:
@@ -754,7 +767,26 @@ def render_nse(
     numerical_aliases = {
         "convective_scheme": (
             numerics.get("convective_scheme"),
-            numerics.get("flux"),
+        ),
+        "hybrid_smooth_scheme": (
+            numerics.get("hybrid_smooth_scheme"),
+            hybrid.get("smooth_scheme"),
+        ),
+        "hybrid_shock_scheme": (
+            numerics.get("hybrid_shock_scheme"),
+            hybrid.get("shock_scheme"),
+        ),
+        "hybrid_sensor": (
+            numerics.get("hybrid_sensor"),
+            hybrid.get("sensor"),
+        ),
+        "hybrid_sensor_onset": (
+            numerics.get("hybrid_sensor_onset"),
+            hybrid.get("sensor_onset"),
+        ),
+        "hybrid_sensor_full": (
+            numerics.get("hybrid_sensor_full"),
+            hybrid.get("sensor_full"),
         ),
         "viscous_scheme": (numerics.get("viscous_scheme"),),
         "boundary_condition": (numerics.get("boundary_condition"),),
@@ -779,6 +811,9 @@ def render_nse(
             nse[target] = value
     for key in (
         "convective_scheme",
+        "hybrid_smooth_scheme",
+        "hybrid_shock_scheme",
+        "hybrid_sensor",
         "viscous_scheme",
         "boundary_condition",
         "time_integrator",
@@ -817,12 +852,58 @@ def render_nse(
             "convective_scheme=KEEP is no longer supported; use KEEP2 or KEEP6"
         )
     convective_scheme = str(nse.get("convective_scheme", "keep6"))
-    allowed_convective_schemes = {"keep2", "keep6", "weno5z_roe"}
+    allowed_convective_schemes = {"keep2", "keep6", "weno5z_roe", "hybrid"}
     if convective_scheme not in allowed_convective_schemes:
         raise CaseInputError(
             f"unsupported numerics.convective_scheme={convective_scheme!r}; "
-            "use KEEP2, KEEP6, or WENO5Z_ROE"
+            "use KEEP2, KEEP6, WENO5Z_ROE, or HYBRID"
         )
+    if convective_scheme == "hybrid":
+        hybrid_defaults = {
+            "hybrid_smooth_scheme": "keep6",
+            "hybrid_shock_scheme": "weno5z_roe",
+            "hybrid_sensor": "ducros_pressure",
+            "hybrid_sensor_onset": 0.01,
+            "hybrid_sensor_full": 0.10,
+        }
+        for key, value in hybrid_defaults.items():
+            if nse.get(key) in {None, ""}:
+                nse[key] = value
+        allowed_leaf_schemes = {"keep2", "keep6", "weno5z_roe"}
+        for key in ("hybrid_smooth_scheme", "hybrid_shock_scheme"):
+            if nse[key] not in allowed_leaf_schemes:
+                raise CaseInputError(
+                    f"unsupported numerics.hybrid.{key[len('hybrid_'):]}="
+                    f"{nse[key]!r}; use KEEP2, KEEP6, or WENO5Z_ROE"
+                )
+        if nse["hybrid_sensor"] != "ducros_pressure":
+            raise CaseInputError(
+                f"unsupported numerics.hybrid.sensor={nse['hybrid_sensor']!r}; "
+                "use DUCROS_PRESSURE"
+            )
+        onset = _positive_float(
+            nse["hybrid_sensor_onset"],
+            "numerics.hybrid.sensor_onset",
+            allow_zero=True,
+        )
+        full = _positive_float(
+            nse["hybrid_sensor_full"], "numerics.hybrid.sensor_full"
+        )
+        if full <= onset:
+            raise CaseInputError(
+                "numerics.hybrid requires 0 <= sensor_onset < sensor_full"
+            )
+        nse["hybrid_sensor_onset"] = onset
+        nse["hybrid_sensor_full"] = full
+    else:
+        for key in (
+            "hybrid_smooth_scheme",
+            "hybrid_shock_scheme",
+            "hybrid_sensor",
+            "hybrid_sensor_onset",
+            "hybrid_sensor_full",
+        ):
+            nse.pop(key, None)
     if nse.get("time_integrator") in {"rk3", "ssp_rk3", "ssp-rk3"}:
         nse["time_integrator"] = "ssprk3"
     lines = [

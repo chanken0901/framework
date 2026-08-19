@@ -105,9 +105,15 @@ solver:
   omp_threads: {{omp_threads}}
 
 numerics:
-  reconstruction: none
-  # Options: keep2, keep6, weno5z_roe
+  # Options: keep2, keep6, weno5z_roe, hybrid
   convective_scheme: keep6
+  # Used only when convective_scheme is hybrid.
+  hybrid:
+    smooth_scheme: keep6
+    shock_scheme: weno5z_roe
+    sensor: ducros_pressure
+    sensor_onset: 0.01
+    sensor_full: 0.10
   viscous_scheme: central6
   boundary_condition: periodic
   time_integrator: ssprk3

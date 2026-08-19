@@ -66,7 +66,7 @@ CASE_INDEX_COLUMNS = [
     "nx",
     "ny",
     "nz",
-    "reconstruction",
+    "convective_scheme",
     "time_integration",
     "raw_data_location",
     "used_in",
@@ -219,7 +219,9 @@ def append_case_index(case_index: Path, case_yaml_text: str) -> None:
         "nx": parse_simple_value_from_yaml(case_yaml_text, "grid.nx"),
         "ny": parse_simple_value_from_yaml(case_yaml_text, "grid.ny"),
         "nz": parse_simple_value_from_yaml(case_yaml_text, "grid.nz"),
-        "reconstruction": parse_simple_value_from_yaml(case_yaml_text, "numerics.reconstruction"),
+        "convective_scheme": parse_simple_value_from_yaml(
+            case_yaml_text, "numerics.convective_scheme"
+        ),
         "time_integration": parse_simple_value_from_yaml(case_yaml_text, "numerics.time_integration"),
         "raw_data_location": parse_simple_value_from_yaml(case_yaml_text, "storage.raw_data_location"),
         "created_at": now,

@@ -1,5 +1,25 @@
 # 外部実行環境ジェネレーター
 
+NSEの`case.yaml`では`numerics.convective_scheme`に`keep2`、`keep6`、
+`weno5z_roe`、`hybrid`を指定できる。ハイブリッド構成例は次のとおり。
+
+```yaml
+numerics:
+  convective_scheme: hybrid
+  hybrid:
+    smooth_scheme: keep6
+    shock_scheme: weno5z_roe
+    sensor: ducros_pressure
+    sensor_onset: 0.01
+    sensor_full: 0.10
+```
+
+非ハイブリッド計算では`convective_scheme`を`keep2`、`keep6`、または
+`weno5z_roe`にする。`hybrid`以下の項目はその場合使用されない。
+対流流束の選択項目は`numerics.convective_scheme`だけであり、旧
+`numerics.flux`と未使用だった`numerics.reconstruction`は受け付けない。
+旧項目が残っている場合は、設定を黙って無視せず移行エラーを表示する。
+
 ## NSE単一GPU
 
 NSEのCPU/MPI版と単一GPU版は、どちらも`environment.nse.yaml`を設計書の
@@ -63,16 +83,18 @@ solver:
   omp_threads: 4
 ```
 
-CPU逐次・MPI・OpenMP・単一GPU CUDA版では、`case.yaml`の対流流束を次の3種類から選べます。
+CPU逐次・MPI・OpenMP・単一GPU CUDA版では、`case.yaml`の対流流束を次の4種類から選べます。
 
 ```yaml
 numerics:
-  # keep2, keep6, weno5z_roe
+  # keep2, keep6, weno5z_roe, hybrid
   convective_scheme: weno5z_roe
 ```
 
-`weno5z_roe`は特性空間の5次精度WENO-Z再構築とRoe流束です。単一GPU CUDA版も
-対応しているため、`cuda_single`プロファイルでも同じ指定を使用できます。
+`weno5z_roe`は特性空間の5次精度WENO-Z再構築とRoe流束です。`hybrid`は
+滑らかな領域のKEEPと衝撃波領域のWENO5-Z/Roeをセンサーで連続的に混合します。
+どちらも単一GPU CUDA版に対応しており、`cuda_single`プロファイルでも同じ
+`case.yaml`設定を使用できます。
 
 ## GPEとNSEを同じ手順で実行する
 

@@ -1,76 +1,9 @@
 #!/usr/bin/env python3
 """
-generate_case_docs_tool_v3.py
+Generate input.dat, README.md, and case_meta.json from case.yaml.
 
-case.yaml から input.dat, README.md, case_meta.json を一括生成するスクリプト。
-さらに、case_index.csv を用いて既存ケースとの重複チェックを行う。
-
-基本方針
---------
-- 人間が編集する正本: case.yaml
-- ソルバーが読む: input.dat
-- 人間が読む: README.md
-- Python等の管理スクリプトが読む: case_meta.json
-- 既存ケース一覧: cases/case_index.csv
-
-重複チェック
-------------
-デフォルトでは、以下のキーが既存ケースと一致すると重複と判定する。
-
-  physics_model
-  mach_number
-  reynolds_number
-  reynolds_lambda
-  turbulent_mach_number
-  nx
-  ny
-  nz
-  scheme
-  reconstruction
-  time_integration
-
-同一条件が見つかった場合は、input.dat / README.md / case_meta.json を生成せず中止する。
-
-使い方
-------
-通常:
-
-    python scripts/generate_case_docs_tool_v3.py --case cases/case0001 --overwrite
-
-重複チェックを無効化:
-
-    python scripts/generate_case_docs_tool_v3.py --case cases/case0001 --overwrite --skip-duplicate-check
-
-比較キーを指定:
-
-    python scripts/generate_case_docs_tool_v3.py --case cases/case0001 --overwrite \
-      --duplicate-keys physics_model mach_number nx ny nz scheme time_integration
-
-個別生成:
-
-    python scripts/generate_case_docs_tool_v3.py --case cases/case0001 --only input --overwrite
-
-確認だけ:
-
-    python scripts/generate_case_docs_tool_v3.py --case cases/case0001 --dry-run
-"""
-
-"""
-generate_case_docs_tool_v4.py
-
-case.yaml から input.dat, README.md, case_meta.json を一括生成するスクリプト。
-case_index.csv を用いて既存ケースとの重複チェックも行う。
-
-v4 の主な変更点
-----------------
-- case.yaml の新設計に対応:
-    physics.model
-    physics.nse.*
-    flow.type
-    solver.type
-- input.dat 生成レイアウトを共通 / 物理モデル固有 / flow 固有に分離。
-- NSE と TGV をまず正式対応。
-- 将来 GPE を追加しやすい構造に変更。
+The tool also checks case_index.csv for duplicate cases. Numerical convection
+settings use numerics.convective_scheme as their single canonical selector.
 """
 
 from __future__ import annotations
@@ -130,7 +63,16 @@ NSE_INPUT_LAYOUT = [
         ("mach", "physics.nse.mach_number"),
         ("reynolds", "physics.nse.reynolds_number"),
         ("prandtl", "physics.nse.prandtl_number"),
+        ("convective_scheme", "numerics.convective_scheme"),
     ]),
+]
+
+NSE_HYBRID_INPUT_LAYOUT = [
+    ("hybrid_smooth_scheme", "numerics.hybrid.smooth_scheme"),
+    ("hybrid_shock_scheme", "numerics.hybrid.shock_scheme"),
+    ("hybrid_sensor", "numerics.hybrid.sensor"),
+    ("hybrid_sensor_onset", "numerics.hybrid.sensor_onset"),
+    ("hybrid_sensor_full", "numerics.hybrid.sensor_full"),
 ]
 
 GPE_INPUT_LAYOUT = [
@@ -198,8 +140,7 @@ INDEX_FIELD_MAP = {
     "reynolds_number": "physics.nse.reynolds_number",
     "prandtl_number": "physics.nse.prandtl_number",
 
-    "flux": "numerics.flux",
-    "reconstruction": "numerics.reconstruction",
+    "convective_scheme": "numerics.convective_scheme",
     "time_integration": "numerics.time_integration",
 
     "raw_data_location": "storage.raw_data_location",
@@ -225,8 +166,7 @@ COMMON_DUPLICATE_KEYS = [
     "mach_number",
     "reynolds_number",
     "prandtl_number",
-    "flux",
-    "reconstruction",
+    "convective_scheme",
     "time_integration",
 ]
 
@@ -555,7 +495,7 @@ def print_duplicate_error(duplicates: List[Dict[str, str]], duplicate_keys: List
     print("  --skip-duplicate-check")
     print("")
     print("Or change the comparison keys using:")
-    print("  --duplicate-keys physics_model flow_type solver_type mach_number nx ny nz flux time_integration")
+    print("  --duplicate-keys physics_model flow_type solver_type mach_number nx ny nz convective_scheme time_integration")
 
 
 # ============================================================
@@ -587,6 +527,11 @@ def generate_input_dat(data: Dict[str, Any], source: Path) -> str:
         lines.append("&nse")
         for _, items in NSE_INPUT_LAYOUT:
             for output_key, yaml_path in items:
+                value = get(data, yaml_path, "")
+                if value != "":
+                    lines.append(f"  {output_key} = {namelist_value(value)}")
+        if normalized_name(get(data, "numerics.convective_scheme")) == "hybrid":
+            for output_key, yaml_path in NSE_HYBRID_INPUT_LAYOUT:
                 value = get(data, yaml_path, "")
                 if value != "":
                     lines.append(f"  {output_key} = {namelist_value(value)}")
@@ -667,8 +612,7 @@ def generate_readme(data: Dict[str, Any]) -> str:
 
 ## 6. Numerical method
 
-- Flux: `{get(data, "numerics.flux")}`
-- Reconstruction: `{get(data, "numerics.reconstruction")}`
+- Convective scheme: `{get(data, "numerics.convective_scheme")}`
 - Time integration: `{get(data, "numerics.time_integration")}`
 
 ## 7. Time settings

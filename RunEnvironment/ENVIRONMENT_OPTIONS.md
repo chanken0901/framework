@@ -1,5 +1,9 @@
 # 実行環境設計書の選択肢一覧
 
+**版:** 1.2
+**更新日:** 2026-08-19
+**機械可読の正本:** `environment_options.yaml`
+
 ## NSE CUDA
 
 単一GPU版は次の組み合わせで選択します。
@@ -45,7 +49,13 @@ python "$tool\prepare_environment.py" $design
 ```
 
 生成後は`run_case.py --prepare`、`--validate-only`、`--build`、`--run`の順に
-実行します。単一GPU版は2次・6次KEEP、SSPRK3、周期境界、6次粘性項に対応します。
+実行します。単一GPU版は`keep2`、`keep6`、`weno5z_roe`、KEEP/WENO
+`hybrid`、SSPRK3、周期境界、`central6`または`none`の粘性項に対応します。
+
+`environment.nse.yaml`の選択肢はモデル、profile、実行先を決めます。対流流束は
+生成後の`case.yaml`で`numerics.convective_scheme`に指定します。
+`weno5z_roe`は全領域のWENO5-Z/Roe、`hybrid`はKEEPとWENO5-Z/Roeの
+センサー混合です。旧`numerics.flux`と`numerics.reconstruction`は使用できません。
 
 `environment.gpe.yaml`または`environment.nse.yaml`では、各項目を値のまとまりを
 表すIDで選択できます。
