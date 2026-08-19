@@ -24,9 +24,9 @@ numerics:
 
 NSEのCPU/MPI版と単一GPU版は、どちらも`environment.nse.yaml`を設計書の
 ひな型にします。`select.model`は物理モデルの`nse`だけを指定し、
-`parallel`でMPI、OpenMP、CUDAの使用可否を指定します。通常の
-solver profileはこの組合せから自動選択され、`select.execution`では
-Debug/Releaseだけを選びます。
+`parallel`でMPI、OpenMP、CUDAの使用可否を指定します。solver profileは
+この組合せと`case.yaml`が要求するFFT機能から自動選択され、
+`select.execution`ではDebug/Releaseだけを選びます。
 
 ```powershell
 $tool = "C:\Users\Owner\Documents\Codex\FrameWork\ScriptLibrary\RunEnvironment"
@@ -393,21 +393,10 @@ flow:
   type: taylor_green
 ```
 
-分散FFTでHIT初期条件を生成する場合は、同じ`environment.nse.yaml`へ
-特殊profileだけを明示し、生成後の`case.yaml`を次のように変更します。
-
-```yaml
-select:
-  model: nse
-
-solver:
-  profile: cpu_mpi_2decomp_fftw
-
-parallel:
-  use_mpi: true
-  use_openmp: false
-  use_cuda: false
-```
+分散FFTでHIT初期条件を生成する場合も、environment設計書へ特殊profileを
+追加する必要はありません。CPU/MPI環境には通常版と2DECOMP&FFT版が同梱され、
+`run_case.py`が`case.yaml`から必要なprofileを自動選択します。生成後の
+`case.yaml`だけを次のように変更します。
 
 ```yaml
 flow:

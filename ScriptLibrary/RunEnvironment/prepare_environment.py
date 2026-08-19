@@ -27,6 +27,7 @@ from environment_options import (
     validate_design_selections,
 )
 from global_case_index import GlobalCaseIndexError, sync_environment_case
+from profile_selection import ProfileSelectionError, select_case_profile
 from yaml_support import YamlFormatError, load_yaml
 
 
@@ -504,6 +505,46 @@ def _resolve_solver_profile(
     return profile, use_mpi, use_openmp, use_cuda, openmp_capable
 
 
+def _profile_is_explicit(design: dict[str, Any]) -> bool:
+    """Return whether the user fixed a solver profile in the design."""
+
+    solver = _mapping(design.get("solver", {}), "solver")
+    legacy_model = _mapping(design.get("model", {}), "model")
+    return solver.get("profile") not in {None, ""} or legacy_model.get(
+        "profile"
+    ) not in {None, ""}
+
+
+def _compatible_profile_names(
+    manifest: dict[str, Any],
+    selected_profile: str,
+    *,
+    require_openmp: bool,
+) -> list[str]:
+    """List profiles that can replace the selected profile at case runtime."""
+
+    _, selected_mpi, _, selected_backend = _profile_settings(
+        manifest, selected_profile
+    )
+    selected_cuda = selected_backend in {"cuda", "cufft", "cufftmp"}
+    profiles = _mapping(manifest.get("profiles"), "solver manifest.profiles")
+    compatible = [selected_profile]
+    for name in profiles:
+        profile_name = str(name)
+        if profile_name == selected_profile:
+            continue
+        _, use_mpi, openmp_capable, backend = _profile_settings(
+            manifest, profile_name
+        )
+        use_cuda = backend in {"cuda", "cufft", "cufftmp"}
+        if use_mpi != selected_mpi or use_cuda != selected_cuda:
+            continue
+        if require_openmp and not openmp_capable:
+            continue
+        compatible.append(profile_name)
+    return compatible
+
+
 def _slurm_script(
     scheduler: dict[str, Any],
     include_tests: bool,
@@ -563,10 +604,16 @@ This directory is a disposable execution copy. The canonical source remains in
 the framework NAS.
 
 - Model: `{model}`
-- Solver profile: `{profile}`
+- Baseline solver profile: `{profile}`
 - Case: `{case_id}`
 - Parallel features: `{enabled_features}`
 - Shared case index: `../case_index.csv`
+
+For models whose manifest enables runtime profile selection, compatible
+profiles are staged together when the source design does not fix one.
+`run_case.py` selects the smallest staged profile satisfying the current
+`case.yaml`; NSE HIT and spectral forcing therefore enable their FFT backend
+without duplicating `solver.profile` in the environment design.
 
 ## Workstation
 
@@ -672,6 +719,8 @@ def _create_case(
     use_mpi: bool,
     use_openmp: bool,
     use_cuda: bool,
+    available_profiles: list[str],
+    profile_explicit: bool,
 ) -> tuple[str, str]:
     cases_root = temporary / "cases"
     cases_root.mkdir(parents=True, exist_ok=True)
@@ -742,8 +791,23 @@ def _create_case(
         (case_dir / "notes.md").write_text(f"# Notes for {case_id}\n", encoding="utf-8")
 
     case_path = cases_root / case_id / "case.yaml"
+    case_document = _mapping(load_yaml(case_path), "generated case YAML")
+    local_manifest = _mapping(load_yaml(manifest_path), "solver manifest")
+    try:
+        effective_profile, _ = select_case_profile(
+            case_document,
+            local_manifest,
+            {
+                "model": model,
+                "profile": profile,
+                "available_profiles": available_profiles,
+                "profile_explicit": profile_explicit,
+            },
+        )
+    except ProfileSelectionError as exc:
+        raise EnvironmentError(str(exc)) from exc
     input_name, input_text = render_case_input(
-        case_path, manifest_path, model, profile
+        case_path, manifest_path, model, effective_profile
     )
     (case_path.parent / input_name).write_text(input_text, encoding="ascii")
     return case_id, input_name
@@ -847,10 +911,43 @@ def prepare(args: argparse.Namespace) -> Path:
     profile, use_mpi, use_openmp, use_cuda, openmp_capable = (
         _resolve_solver_profile(design, manifest)
     )
-    selected_files, components = _selected_solver_files(
-        solver_root, manifest, profile, include_tests
+    profile_explicit = _profile_is_explicit(design)
+    staged_profiles = [profile]
+    runtime_profile_selection = manifest.get(
+        "runtime_profile_selection", False
     )
-    dependencies = _inspect_dependencies(solver_root, manifest, selected_files)
+    if not isinstance(runtime_profile_selection, bool):
+        raise EnvironmentError(
+            "solver manifest.runtime_profile_selection must be true or false"
+        )
+    if not profile_explicit and runtime_profile_selection:
+        staged_profiles = _compatible_profile_names(
+            manifest, profile, require_openmp=use_openmp
+        )
+
+    selected_files: list[str] = []
+    components: list[str] = []
+    dependencies: dict[str, dict[str, list[str]]] = {}
+    seen_files: set[str] = set()
+    seen_components: set[str] = set()
+    for staged_profile in staged_profiles:
+        profile_files, profile_components = _selected_solver_files(
+            solver_root, manifest, staged_profile, include_tests
+        )
+        # Dependency inspection is deliberately profile-local. Compatible
+        # profiles may provide mutually exclusive implementations of the same
+        # Fortran module (for example HIT stub and 2DECOMP backends).
+        dependencies.update(
+            _inspect_dependencies(solver_root, manifest, profile_files)
+        )
+        for relative in profile_files:
+            if relative not in seen_files:
+                seen_files.add(relative)
+                selected_files.append(relative)
+        for component in profile_components:
+            if component not in seen_components:
+                seen_components.add(component)
+                components.append(component)
 
     destination_cfg = _mapping(design.get("destination"), "destination")
     destination_text = destination_cfg.get("root")
@@ -931,6 +1028,7 @@ def prepare(args: argparse.Namespace) -> Path:
         print(f"  case index:  {global_case_index}")
         print(f"  model:       {model}")
         print(f"  profile:     {profile}")
+        print(f"  staged:      {', '.join(staged_profiles)}")
         print(
             "  parallel:    "
             f"MPI={use_mpi}, OpenMP={use_openmp}, CUDA={use_cuda}"
@@ -1000,6 +1098,7 @@ def prepare(args: argparse.Namespace) -> Path:
             "postprocess_case.py",
             "case_input.py",
             "global_case_index.py",
+            "profile_selection.py",
             "yaml_support.py",
         ):
             source = SCRIPT_DIR / name
@@ -1057,6 +1156,8 @@ def prepare(args: argparse.Namespace) -> Path:
             use_mpi,
             use_openmp,
             use_cuda,
+            staged_profiles,
+            profile_explicit,
         )
 
         scheduler = _mapping(design.get("scheduler", {}), "scheduler")
@@ -1082,6 +1183,8 @@ def prepare(args: argparse.Namespace) -> Path:
             },
             "model": model,
             "profile": profile,
+            "available_profiles": staged_profiles,
+            "profile_explicit": profile_explicit,
             "include_tests": include_tests,
             "case_id": case_id,
             "case_directory": f"cases/{case_id}",
@@ -1118,6 +1221,7 @@ def prepare(args: argparse.Namespace) -> Path:
             "solver_git": _git_state(solver_root),
             "model": model,
             "profile": profile,
+            "available_profiles": staged_profiles,
             "components": components,
             "files": source_records,
         }

@@ -69,11 +69,9 @@ YAMLビルドでは`config/build.hit.yaml`を使用する。
 python .\tools\build_from_yaml.py .\config\build.hit.yaml --build
 ```
 
-統合フレームワークではsolver profileに`cpu_mpi_2decomp_fftw`を指定する。
-
 流れ場ごとの`environment.*.yaml`は作成しない。
 NSE共通の`ScriptLibrary/RunEnvironment/environment.nse.yaml`で
-次の選択肢を指定する。
+通常のCPU/MPI選択肢を指定する。
 
 ```yaml
 select:
@@ -81,22 +79,21 @@ select:
   case: nse_case
   execution: release
 
-solver:
-  profile: cpu_mpi_2decomp_fftw
-
 parallel:
   use_mpi: true
-  use_openmp: false
+  use_openmp: true
   use_cuda: false
 ```
 
-ここで`model`はNSEという物理モデルを選び、`solver.profile`が分散FFTを利用できる
-特殊ビルド構成を選ぶ。`case`はNSE共通の`case.yaml`入力雛形を選ぶだけである。
-HITのスペクトル、乱数seed、RMS速度などの流れ場条件は、
-生成後の`cases/caseNNNN/case.yaml`で管理する。
+ここで`model`はNSEという物理モデルを選び、`case`はNSE共通の`case.yaml`入力雛形を
+選ぶ。生成環境には同じ並列方式の互換profileが同梱される。生成後の
+`cases/caseNNNN/case.yaml`で`flow.type: hit`を指定すると、`run_case.py`が
+`cpu_mpi_2decomp_fftw`を自動選択する。HITのスペクトル、乱数seed、RMS速度なども
+同じ`case.yaml`で管理する。
 ビルド時と実行時にケーステンプレートを直接渡す必要はない。
 
-`ScriptLibrary/BuildSolver/build.local.yaml`では次のように指定できる。
+実行環境を介さず`BuildSolver`を直接使う場合は、
+`ScriptLibrary/BuildSolver/build.local.yaml`で次のように指定できる。
 
 ```yaml
 models:

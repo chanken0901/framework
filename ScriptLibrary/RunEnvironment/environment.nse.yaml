@@ -6,7 +6,9 @@ option_catalogs: []
 # NSEの実行環境はこの設計書だけで管理する。
 # modelは物理モデル、caseはcase.yamlの入力雛形、parallelは
 # MPI/OpenMP/CUDAの使用可否、executionはビルド構成を選択する。
-# 通常のsolver.profileはmodelとparallelから自動選択される。
+# solver.profileはmodel、parallel、実際のcase内容から自動選択される。
+# CPU/MPIでは通常版と2DECOMP&FFT版が同梱され、Taylor-Greenでは通常版、
+# HITまたはPetersen-Livescu forcingではFFT版へrun_case.pyが自動切替する。
 # MPIプロセス数とOpenMPスレッド数はrun_case.pyの実行時に指定する。
 #
 # CPU MPI + OpenMP:
@@ -14,14 +16,6 @@ option_catalogs: []
 #   case: nse_case
 #   parallel.use_mpi: true
 #   parallel.use_openmp: true
-#   parallel.use_cuda: false
-#
-# CPU MPI + 2DECOMP&FFT:
-#   model: nse
-#   case: nse_case
-#   solver.profile: cpu_mpi_2decomp_fftw
-#   parallel.use_mpi: true
-#   parallel.use_openmp: false
 #   parallel.use_cuda: false
 #
 # CUDA single GPU:

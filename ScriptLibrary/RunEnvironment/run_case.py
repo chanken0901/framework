@@ -15,6 +15,7 @@ from global_case_index import (
     case_index_path,
     sync_environment_case,
 )
+from profile_selection import ProfileSelectionError, select_case_profile
 from yaml_support import YamlFormatError, load_yaml
 
 
@@ -51,6 +52,31 @@ def _model_manifest(root: Path, model: str) -> Path:
     if not manifest.is_file():
         raise RunCaseError(f"solver manifest not found: {manifest}")
     return manifest
+
+
+def _select_case_profile(
+    case: dict[str, Any], manifest: dict[str, Any], lock: dict[str, Any]
+) -> tuple[str, set[str]]:
+    try:
+        return select_case_profile(case, manifest, lock)
+    except ProfileSelectionError as exc:
+        raise RunCaseError(str(exc)) from exc
+
+
+def _resolve_case_profile(
+    root: Path, lock: dict[str, Any]
+) -> tuple[str, set[str]]:
+    case_path = root / str(lock["case_directory"]) / "case.yaml"
+    if not case_path.is_file():
+        raise RunCaseError(f"case design not found: {case_path}")
+    case = load_yaml(case_path)
+    if not isinstance(case, dict):
+        raise RunCaseError(f"invalid case design: {case_path}")
+    manifest_path = _model_manifest(root, str(lock["model"]))
+    manifest = load_yaml(manifest_path)
+    if not isinstance(manifest, dict):
+        raise RunCaseError(f"invalid solver manifest: {manifest_path}")
+    return _select_case_profile(case, manifest, lock)
 
 
 def _sync_global_case_index(
@@ -213,7 +239,16 @@ def main() -> int:
     root = Path(__file__).resolve().parents[1]
     try:
         lock = _load_lock(root)
-        _sync_global_case_index(root, lock, dry_run=args.dry_run)
+        profile, requirements = _resolve_case_profile(root, lock)
+        effective_lock = dict(lock)
+        effective_lock["profile"] = profile
+        if profile != str(lock.get("profile", "")):
+            reason = ", ".join(sorted(requirements))
+            print(
+                f"[OK] Selected compatible solver profile: {profile} "
+                f"(case requires: {reason})"
+            )
+        _sync_global_case_index(root, effective_lock, dry_run=args.dry_run)
         include_tests = bool(lock.get("include_tests", False))
         if args.test and not include_tests:
             raise RunCaseError(
@@ -224,7 +259,7 @@ def main() -> int:
         case_dir = root / str(lock["case_directory"])
         input_path = _prepare_input(
             root,
-            lock,
+            effective_lock,
             force=args.prepare,
             dry_run=args.dry_run,
         )
@@ -248,7 +283,7 @@ def main() -> int:
             raise RunCaseError("generated environment is missing runner, design, or input")
 
         case_processes, case_omp_threads, case_use_openmp = (
-            _case_parallel_settings(root, lock)
+            _case_parallel_settings(root, effective_lock)
         )
         processes = args.processes if args.processes is not None else case_processes
         omp_threads = (
@@ -279,7 +314,7 @@ def main() -> int:
             "--model",
             str(lock["model"]),
             "--profile",
-            str(lock["profile"]),
+            profile,
             "--input-file",
             str(input_path),
             "--run-dir",

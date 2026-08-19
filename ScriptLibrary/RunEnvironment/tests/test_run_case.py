@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import sys
 import tempfile
 import unittest
@@ -9,7 +10,113 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from run_case import RunCaseError, _case_parallel_settings, _prepare_input  # noqa: E402
+from run_case import (  # noqa: E402
+    RunCaseError,
+    _case_parallel_settings,
+    _prepare_input,
+    _select_case_profile,
+)
+from yaml_support import load_yaml  # noqa: E402
+
+
+class RunCaseProfileSelectionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.manifest = load_yaml(
+            SCRIPT_DIR.parents[1]
+            / "SolverLibrary"
+            / "NSE"
+            / "solver_manifest.yaml"
+        )
+        cls.lock = {
+            "model": "nse",
+            "profile": "cpu_mpi",
+            "available_profiles": ["cpu_mpi", "cpu_mpi_2decomp_fftw"],
+            "profile_explicit": False,
+        }
+
+    def test_basic_case_keeps_lightweight_mpi_profile(self) -> None:
+        case = {"flow": {"type": "taylor_green"}, "forcing": {"type": "none"}}
+
+        profile, requirements = _select_case_profile(
+            case, self.manifest, self.lock
+        )
+
+        self.assertEqual(profile, "cpu_mpi")
+        self.assertEqual(requirements, set())
+
+    def test_hit_case_selects_distributed_fft_profile(self) -> None:
+        case = {"flow": {"type": "hit"}, "forcing": {"type": "none"}}
+
+        profile, requirements = _select_case_profile(
+            case, self.manifest, self.lock
+        )
+
+        self.assertEqual(profile, "cpu_mpi_2decomp_fftw")
+        self.assertEqual(requirements, {"hit_spectral"})
+
+    def test_forcing_case_selects_distributed_fft_profile(self) -> None:
+        case = {
+            "flow": {"type": "taylor_green"},
+            "forcing": {"type": "petersen_livescu"},
+        }
+
+        profile, requirements = _select_case_profile(
+            case, self.manifest, self.lock
+        )
+
+        self.assertEqual(profile, "cpu_mpi_2decomp_fftw")
+        self.assertEqual(requirements, {"forcing_fft"})
+
+    def test_hit_and_forcing_require_both_fft_capabilities(self) -> None:
+        case = {
+            "flow": {"type": "homogeneous-isotropic-turbulence"},
+            "forcing": {"type": "petersen_livescu"},
+        }
+
+        profile, requirements = _select_case_profile(
+            case, self.manifest, self.lock
+        )
+
+        self.assertEqual(profile, "cpu_mpi_2decomp_fftw")
+        self.assertEqual(requirements, {"hit_spectral", "forcing_fft"})
+
+    def test_selects_least_specialized_satisfying_profile(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        hit_only = copy.deepcopy(manifest["profiles"]["cpu_mpi"])
+        hit_only["capabilities"] = ["nse_basic", "hit_spectral"]
+        hit_only["cmake"]["NSE_INIT_FFT_BACKEND"] = "2decomp_fftw"
+        manifest["profiles"]["cpu_mpi_hit_only"] = hit_only
+        lock = {
+            **self.lock,
+            "available_profiles": [
+                "cpu_mpi",
+                "cpu_mpi_2decomp_fftw",
+                "cpu_mpi_hit_only",
+            ],
+        }
+
+        profile, _ = _select_case_profile(
+            {"flow": {"type": "hit"}, "forcing": {"type": "none"}},
+            manifest,
+            lock,
+        )
+
+        self.assertEqual(profile, "cpu_mpi_hit_only")
+
+    def test_old_environment_requests_one_time_regeneration(self) -> None:
+        case = {"flow": {"type": "hit"}, "forcing": {"type": "none"}}
+        old_lock = {"model": "nse", "profile": "cpu_mpi"}
+
+        with self.assertRaisesRegex(RunCaseError, "Regenerate"):
+            _select_case_profile(case, self.manifest, old_lock)
+
+    def test_explicit_minimal_profile_is_not_silently_overridden(self) -> None:
+        case = {"flow": {"type": "hit"}, "forcing": {"type": "none"}}
+        explicit_lock = {**self.lock, "profile_explicit": True}
+
+        with self.assertRaisesRegex(RunCaseError, "case capabilities"):
+            _select_case_profile(case, self.manifest, explicit_lock)
 
 
 class RunCasePrepareTests(unittest.TestCase):

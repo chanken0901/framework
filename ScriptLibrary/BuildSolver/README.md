@@ -46,6 +46,11 @@ python .\build_model.py .\build.yaml --model gpe --list-profiles
 | `cpu_mpi_2decomp_fftw` | MPI/OpenMPと2DECOMP&FFTによるHIT初期化・Forcing |
 | `cuda_single` | 単一GPUのKEEP/WENO/ハイブリッド、`central6`粘性項、SSPRK3 |
 
+`RunEnvironment`から生成したCPU/MPI環境では、通常版と2DECOMP&FFT版が
+同梱される。`case.yaml`がHIT初期条件またはPetersen-Livescu forcingを使う場合、
+`run_case.py`が`cpu_mpi_2decomp_fftw`を自動選択するため、利用者がprofileを
+重複指定する必要はない。
+
 CUDA版のビルドとテスト:
 
 ```powershell

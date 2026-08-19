@@ -58,8 +58,8 @@ flow:
         dissipation_exponent: 5.2
 
 # Petersen-Livescu linear forcing. Set type to petersen_livescu for
-# statistically stationary periodic turbulence. CPU forcing requires the
-# cpu_mpi_2decomp_fftw profile; single-GPU forcing requires cuda_single.
+# statistically stationary periodic turbulence. run_case.py selects the
+# staged CPU/MPI 2DECOMP&FFT or single-GPU cuFFT profile automatically.
 forcing:
   # choices: none, petersen_livescu
   type: none

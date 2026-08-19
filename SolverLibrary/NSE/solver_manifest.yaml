@@ -3,6 +3,7 @@ schema_version: 1
 solver_id: nse
 solver_api_version: 1
 model: nse
+runtime_profile_selection: true
 default_profiles:
   mpi: cpu_mpi
   cuda: cuda_single
@@ -130,6 +131,7 @@ components:
     files:
       - tools/slf_to_paraview_merged_cropghost.py
       - tools/nse_turbulence_statistics.py
+      - docs/NSE_SOLVER_SPECIFICATION.md
       - docs/NSE_BUILD_AND_RUN.md
       - docs/NSE_CUDA.md
       - docs/NSE_FORCING.md
@@ -196,6 +198,8 @@ components:
 profiles:
   cpu_mpi:
     description: MPI domain decomposition with OpenMP local loops
+    capabilities:
+      - nse_basic
     components:
       - core
       - mpi_real
@@ -228,6 +232,10 @@ profiles:
 
   cpu_mpi_2decomp_fftw:
     description: MPI/OpenMP solver with 2DECOMP&FFT spectral HIT initialization
+    capabilities:
+      - nse_basic
+      - hit_spectral
+      - forcing_fft
     components:
       - core
       - mpi_real
@@ -260,6 +268,10 @@ profiles:
 
   cuda_single:
     description: Single-GPU CUDA convective schemes and SSPRK3 backend
+    capabilities:
+      - nse_basic
+      - hit_spectral
+      - forcing_fft
     components:
       - core
       - mpi_stub

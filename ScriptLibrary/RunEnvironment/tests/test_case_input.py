@@ -297,6 +297,29 @@ class NseCaseInputTests(unittest.TestCase):
             case, self.manifest, "cpu_mpi_2decomp_fftw"
         )
 
+    def test_rejects_hit_with_profile_without_initial_fft_backend(self) -> None:
+        case = self.case()
+        case["flow"] = {
+            "type": "hit",
+            "hit": {
+                "turbulent_mach_number": 0.1,
+                "turbulent_reynolds_number": 30.0,
+                "random_seed": 13579,
+                "spectrum": {
+                    "type": "johnsen",
+                    "johnsen": {
+                        "characteristic_length": 1.0,
+                        "length_scale_ratio": 2.0,
+                    },
+                },
+            },
+        }
+
+        with self.assertRaisesRegex(
+            CaseInputError, "initial-condition FFT backend"
+        ):
+            render_nse(case, self.manifest, "cpu_mpi")
+
     def test_renders_target_driven_johnsen_hit_input(self) -> None:
         case = self.case()
         case["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
@@ -487,7 +510,7 @@ class NseCaseInputTests(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(
-            CaseInputError, "cpu_mpi_2decomp_fftw"
+            CaseInputError, "compatible staged profile"
         ):
             render_nse(case, self.manifest, "cpu_mpi")
 

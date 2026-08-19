@@ -11,9 +11,11 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from prepare_environment import (  # noqa: E402
     EnvironmentError,
+    _compatible_profile_names,
     _global_case_index_path,
     _numbered_case_destination,
     _parallel_features,
+    _profile_is_explicit,
     _resolve_solver_profile,
     _requested_case_destination,
     _slurm_script,
@@ -180,6 +182,26 @@ class ParallelFeatureTests(unittest.TestCase):
         )
         self.assertEqual(
             _resolve_solver_profile(cuda, self.nse_manifest)[0], "cuda_single"
+        )
+
+    def test_automatic_nse_mpi_environment_stages_fft_profile(self) -> None:
+        self.assertTrue(self.nse_manifest["runtime_profile_selection"])
+        self.assertEqual(
+            _compatible_profile_names(
+                self.nse_manifest, "cpu_mpi", require_openmp=True
+            ),
+            ["cpu_mpi", "cpu_mpi_2decomp_fftw"],
+        )
+
+    def test_solver_profile_override_is_recognized_as_explicit(self) -> None:
+        self.assertFalse(_profile_is_explicit({"model": {"name": "nse"}}))
+        self.assertTrue(
+            _profile_is_explicit(
+                {
+                    "model": {"name": "nse"},
+                    "solver": {"profile": "cpu_mpi"},
+                }
+            )
         )
 
     def test_explicit_specialized_profile_must_match_parallel_flags(self) -> None:

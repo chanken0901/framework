@@ -86,21 +86,9 @@ parallel:
   use_cuda: false
 ```
 
-CPU MPI + 2DECOMP&FFTのHIT初期化・Forcing:
-
-```yaml
-select:
-  model: nse
-  execution: release
-
-solver:
-  profile: cpu_mpi_2decomp_fftw
-
-parallel:
-  use_mpi: true
-  use_openmp: false
-  use_cuda: false
-```
+CPU MPIでHIT初期化またはPetersen-Livescu forcingを選ぶ場合も、上と同じ
+environment設計を使う。互換profileは生成時に同梱され、`case.yaml`の内容に応じて
+`run_case.py`が2DECOMP&FFT版へ自動切替する。
 
 単一GPU CUDA:
 

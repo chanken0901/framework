@@ -6,6 +6,7 @@ Navier-Stokesソルバーです。周期境界、SSPRK3、KEEP/WENO系の対流�
 
 ## 最初に読む文書
 
+- ソルバー全体仕様・無次元化: [`docs/NSE_SOLVER_SPECIFICATION.md`](docs/NSE_SOLVER_SPECIFICATION.md)
 - 生成・ビルド・実行: [`docs/NSE_BUILD_AND_RUN.md`](docs/NSE_BUILD_AND_RUN.md)
 - 対流ハイブリッド: [`docs/NSE_HYBRID_FLUX.md`](docs/NSE_HYBRID_FLUX.md)
 - CUDA対応範囲: [`docs/NSE_CUDA.md`](docs/NSE_CUDA.md)

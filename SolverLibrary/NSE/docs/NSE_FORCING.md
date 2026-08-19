@@ -70,19 +70,10 @@ c_d = (epsilon_d - PD) / <w_d . w>
 
 ## プロファイル
 
-CPUでは`cpu_mpi_2decomp_fftw`、単一GPUでは`cuda_single`を選ぶ。
-
-```yaml
-solver:
-  profile: cpu_mpi_2decomp_fftw
-```
-
-または
-
-```yaml
-solver:
-  profile: cuda_single
-```
+environment設計書ではMPI/CUDAの使用有無だけを選ぶ。生成環境には互換profileが
+同梱され、`forcing.type: petersen_livescu`を検出した`run_case.py`が、CPUでは
+`cpu_mpi_2decomp_fftw`、単一GPUでは`cuda_single`を自動選択する。
+`solver.profile`を重複指定する必要はない。
 
 `python .\tools\run_case.py --prepare`で`input.dat`へ展開される。MPIプロセス数と
 OpenMPスレッド数は従来どおり`case.yaml`または実行時オプションで指定する。

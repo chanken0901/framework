@@ -111,10 +111,12 @@ python .\prepare_environment.py .\environment.gpe.yaml `
 | `nse` | 圧縮性Navier-Stokes方程式 |
 | `gpe` | Gross-Pitaevskii方程式 |
 
-通常のsolver profileは`model`と`parallel.use_mpi`、`parallel.use_cuda`から
-自動選択されます。
+生成時の基準solver profileは`model`と`parallel.use_mpi`、
+`parallel.use_cuda`から自動選択されます。NSEでprofileを明示していない環境には、
+同じMPI/CUDA方式の互換profileも同梱されます。`run_case.py`は`case.yaml`を読み、
+HIT初期条件やPetersen-Livescu forcingに必要なFFT profileへ自動切替します。
 
-| model | MPI | CUDA | 自動profile |
+| model | MPI | CUDA | 生成時の基準profile |
 |---|---:|---:|---|
 | `nse` | true | false | `cpu_mpi` |
 | `nse` | false | true | `cuda_single` |
@@ -123,8 +125,11 @@ python .\prepare_environment.py .\environment.gpe.yaml `
 | `gpe` | false | true | `cuda_single` |
 | `gpe` | true | true | `cuda_mpi_cufftmp` |
 
-NSEのCPU逐次など、表にない組合せは生成時にエラーになります。
-`cpu_mpi_2decomp_fftw`や参照DFTなどの特殊構成だけ、次のように明示します。
+NSEのCPU逐次など、表にない組合せは生成時にエラーになります。NSEの
+`cpu_mpi_2decomp_fftw`は通常は明示不要です。`flow.type: hit`または
+`forcing.type: petersen_livescu`を選ぶと自動使用されます。
+
+検証などでprofileを固定し、自動切替を無効にしたい場合だけ明示します。
 
 ```yaml
 solver:

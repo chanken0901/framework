@@ -825,10 +825,27 @@ def render_nse(
     ):
         if isinstance(nse.get(key), str):
             nse[key] = _canonical_selector(nse[key])
-    forcing_backend = str(
-        _mapping(profile.get("cmake", {}), f"profile {profile_name}.cmake").get(
-            "NSE_FORCING_FFT_BACKEND", "none"
+    profile_cmake = _mapping(
+        profile.get("cmake", {}), f"profile {profile_name}.cmake"
+    )
+    initial_backend = str(
+        profile_cmake.get("NSE_INIT_FFT_BACKEND", "none")
+    ).strip().lower()
+    flow_type = _canonical_selector(str(_required(case, "flow.type")))
+    if flow_type in {
+        "hit",
+        "hit_spectral",
+        "homogeneous_isotropic_turbulence",
+    } and initial_backend == "none":
+        raise CaseInputError(
+            f"flow.type={flow_type!r} requires an initial-condition FFT backend; "
+            f"profile {profile_name!r} has none. Remove an incompatible explicit "
+            "solver.profile and regenerate the execution environment from the "
+            "current FrameWork so run_case.py can select a compatible staged "
+            "profile"
         )
+    forcing_backend = str(
+        profile_cmake.get("NSE_FORCING_FFT_BACKEND", "none")
     ).strip().lower()
     forcing_scheme = str(nse.get("forcing_scheme", "none"))
     requested_forcing_backend = str(nse.get("forcing_fft_backend", "auto"))
@@ -836,10 +853,10 @@ def render_nse(
         if forcing_backend == "none":
             raise CaseInputError(
                 f"forcing.type={forcing_scheme!r} requires a forcing FFT backend; "
-                f"profile {profile_name!r} has none. Use "
-                "solver.profile=cpu_mpi_2decomp_fftw for CPU/MPI or "
-                "solver.profile=cuda_single for a single GPU, then regenerate "
-                "the execution environment"
+                f"profile {profile_name!r} has none. Remove an incompatible "
+                "explicit solver.profile and regenerate the execution environment "
+                "from the current FrameWork so run_case.py can select a compatible "
+                "staged profile"
             )
         if requested_forcing_backend not in {"auto", forcing_backend}:
             raise CaseInputError(
