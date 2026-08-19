@@ -24,6 +24,23 @@ OPTION_CATEGORIES = (
 )
 
 
+# Compatibility aliases for schema-version-1 designs created before model and
+# parallel selection were separated. These aliases are intentionally not
+# exposed by the option catalog: new designs select ``nse`` or ``gpe`` and use
+# the parallel section. The profile override preserves the exact old build.
+LEGACY_MODEL_SELECTIONS = {
+    "nse_cpu_mpi": ("nse", "cpu_mpi"),
+    "nse_cpu_mpi_2decomp_fftw": ("nse", "cpu_mpi_2decomp_fftw"),
+    "nse_cuda_single": ("nse", "cuda_single"),
+    "gpe_cpu_serial_dft": ("gpe", "cpu_serial_dft"),
+    "gpe_cpu_serial_fftw": ("gpe", "cpu_serial_fftw"),
+    "gpe_cpu_mpi_dft": ("gpe", "cpu_mpi_dft"),
+    "gpe_cpu_mpi_fftw": ("gpe", "cpu_mpi_fftw"),
+    "gpe_cuda_single": ("gpe", "cuda_single"),
+    "gpe_cuda_mpi_cufftmp": ("gpe", "cuda_mpi_cufftmp"),
+}
+
+
 class OptionCatalogError(RuntimeError):
     """Raised when an environment option catalog is invalid."""
 
@@ -178,6 +195,15 @@ def resolve_design_options(
         raise OptionCatalogError(f"select has unsupported categories: {unknown}")
 
     resolved = copy.deepcopy(design)
+    legacy_profile: str | None = None
+    selected_model = select.get("model")
+    if selected_model is not None:
+        legacy = LEGACY_MODEL_SELECTIONS.get(str(selected_model))
+        if legacy is not None:
+            canonical_model, legacy_profile = legacy
+            select = copy.deepcopy(select)
+            select["model"] = canonical_model
+            resolved["select"] = copy.deepcopy(select)
     selections: dict[str, dict[str, Any]] = {}
     for category, option_id_value in select.items():
         option_id = str(option_id_value)
@@ -199,6 +225,21 @@ def resolve_design_options(
             "catalog_path": option["catalog_path"],
             "requires": copy.deepcopy(option.get("requires", {})),
         }
+
+    if legacy_profile is not None:
+        solver = resolved.get("solver", {})
+        if solver is None:
+            solver = {}
+        solver_mapping = _mapping(solver, "solver")
+        configured_profile = solver_mapping.get("profile")
+        if configured_profile not in {None, "", legacy_profile}:
+            raise OptionCatalogError(
+                "legacy select.model conflicts with solver.profile: "
+                f"{configured_profile!r} != {legacy_profile!r}"
+            )
+        resolved["solver"] = _deep_merge(
+            {"profile": legacy_profile}, solver_mapping
+        )
 
     _validate_requirements(resolved, selections)
     state = {

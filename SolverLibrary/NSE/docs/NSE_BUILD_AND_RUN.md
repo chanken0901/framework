@@ -77,7 +77,7 @@ CPU MPI + OpenMP:
 
 ```yaml
 select:
-  model: nse_cpu_mpi
+  model: nse
   execution: release
 
 parallel:
@@ -90,8 +90,11 @@ CPU MPI + 2DECOMP&FFTのHIT初期化・Forcing:
 
 ```yaml
 select:
-  model: nse_cpu_mpi_2decomp_fftw
+  model: nse
   execution: release
+
+solver:
+  profile: cpu_mpi_2decomp_fftw
 
 parallel:
   use_mpi: true
@@ -103,7 +106,7 @@ parallel:
 
 ```yaml
 select:
-  model: nse_cuda_single
+  model: nse
   execution: release
 
 parallel:

@@ -58,11 +58,14 @@ NSEとGPEを同じ入口からビルド・実行する場合は、フレーム�
 
 ```yaml
 solver:
-  profile: cpu_mpi_fftw
-  processes: 4
   use_openmp: true
+  mpi_processes: 4
   omp_threads: 4
 ```
+
+MPIの使用有無と通常のprofileはenvironment設計書から決まり、`case.yaml`には
+重ねて記述しません。参照DFTなど特殊profileを使う場合だけ、environment設計書の
+`solver.profile`で選択します。
 
 `case.yaml`を編集した後、入力を再生成して実行します。
 

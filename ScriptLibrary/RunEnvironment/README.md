@@ -23,8 +23,9 @@ numerics:
 ## NSE単一GPU
 
 NSEのCPU/MPI版と単一GPU版は、どちらも`environment.nse.yaml`を設計書の
-ひな型にします。GPEと同様に、同じ設計書の`select.model`と
-`parallel`でMPI、OpenMP、CUDAの使用可否を指定し、`select.execution`では
+ひな型にします。`select.model`は物理モデルの`nse`だけを指定し、
+`parallel`でMPI、OpenMP、CUDAの使用可否を指定します。通常の
+solver profileはこの組合せから自動選択され、`select.execution`では
 Debug/Releaseだけを選びます。
 
 ```powershell
@@ -40,7 +41,7 @@ Copy-Item "$tool\environment.nse.yaml" $design
 
 ```yaml
 select:
-  model: nse_cuda_single
+  model: nse
   execution: release
 
 parallel:
@@ -53,7 +54,7 @@ CPU MPI + OpenMP版では次を選択します。
 
 ```yaml
 select:
-  model: nse_cpu_mpi
+  model: nse
   execution: release
 
 parallel:
@@ -262,7 +263,7 @@ python .\prepare_environment.py .\environment.nse.yaml --list-options model
 select:
   source: local_framework
   destination: windows_research_runs
-  model: gpe_cpu_mpi_fftw
+  model: gpe
   target: windows_gnu_msmpi
   case: gpe_quantum_taylor_green
   execution: release
@@ -347,7 +348,7 @@ python .\tools\run_case.py --run --processes 8 --omp-threads 2
 実行ファイルが存在しない場合は、先に`--build`を実行するようエラーで案内します。
 
 `--all`はビルドから実行までを連続して行います。毎回ビルドしたくない場合は
-`--all`ではなく`--run`を使用します。`model.include_tests: true`の場合は
+`--all`ではなく`--run`を使用します。`solver.include_tests: true`の場合は
 CTestも含みます。実行時のカレントディレクトリは`cases/<case_id>`なので、相対指定
 された`output`はcaseフォルダ内へ生成されます。
 
@@ -375,8 +376,13 @@ NSE:
 
 ```yaml
 select:
-  model: nse_cpu_mpi
+  model: nse
   case: nse_case
+
+parallel:
+  use_mpi: true
+  use_openmp: true
+  use_cuda: false
 ```
 
 NSEの流れ場はenvironment設計書では分けません。生成後の
@@ -387,9 +393,21 @@ flow:
   type: taylor_green
 ```
 
-分散FFTでHIT初期条件を生成する場合は、同じ`environment.nse.yaml`で
-`model: nse_cpu_mpi_2decomp_fftw`を選び、生成後の`case.yaml`を
-次のように変更します。
+分散FFTでHIT初期条件を生成する場合は、同じ`environment.nse.yaml`へ
+特殊profileだけを明示し、生成後の`case.yaml`を次のように変更します。
+
+```yaml
+select:
+  model: nse
+
+solver:
+  profile: cpu_mpi_2decomp_fftw
+
+parallel:
+  use_mpi: true
+  use_openmp: false
+  use_cuda: false
+```
 
 ```yaml
 flow:
@@ -469,12 +487,19 @@ GPE:
 
 ```yaml
 select:
-  model: gpe_cpu_mpi_fftw
+  model: gpe
   case: gpe_quantum_taylor_green
+
+parallel:
+  use_mpi: true
+  use_openmp: false
+  use_cuda: false
 ```
 
-GPEでは`cpu_serial_dft`、`cpu_serial_fftw`、`cpu_mpi_dft`、
-`cpu_mpi_fftw`、`cuda_single`、`cuda_mpi_cufftmp`を選択できます。
+GPEでは`parallel.use_mpi`と`parallel.use_cuda`から、逐次CPU、MPI CPU、
+単一GPU、複数GPUを選択します。CPU版は通常FFTW profileを自動選択します。
+検証用DFTが必要な場合だけ、`solver.profile`へ`cpu_serial_dft`または
+`cpu_mpi_dft`を明示します。
 
 ## スパコン
 

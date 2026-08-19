@@ -1,6 +1,6 @@
 # 実行環境設計書の選択肢一覧
 
-**版:** 1.2
+**版:** 1.3
 **更新日:** 2026-08-19
 **機械可読の正本:** `environment_options.yaml`
 
@@ -10,7 +10,7 @@
 
 ```yaml
 select:
-  model: nse_cuda_single
+  model: nse
   execution: release
 
 parallel:
@@ -19,8 +19,8 @@ parallel:
   use_cuda: true
 ```
 
-`nse_cuda_single`はsolver profile `cuda_single`を選択します。CPU/MPI版と同じ
-`environment.nse.yaml`をひな型として使い、`select.model`と`parallel`を
+`model: nse`とCUDAの並列設定からsolver profile `cuda_single`が自動選択されます。
+CPU/MPI版と同じ`environment.nse.yaml`をひな型として使い、`parallel`だけを
 切り替えます。
 
 ```powershell
@@ -34,7 +34,7 @@ Copy-Item "$tool\environment.nse.yaml" $design
 
 ```yaml
 select:
-  model: nse_cuda_single
+  model: nse
   execution: release
 
 parallel:
@@ -52,7 +52,7 @@ python "$tool\prepare_environment.py" $design
 実行します。単一GPU版は`keep2`、`keep6`、`weno5z_roe`、KEEP/WENO
 `hybrid`、SSPRK3、周期境界、`central6`または`none`の粘性項に対応します。
 
-`environment.nse.yaml`の選択肢はモデル、profile、実行先を決めます。対流流束は
+`environment.nse.yaml`の選択肢はモデル、並列方式、実行先を決めます。対流流束は
 生成後の`case.yaml`で`numerics.convective_scheme`に指定します。
 `weno5z_roe`は全領域のWENO5-Z/Roe、`hybrid`はKEEPとWENO5-Z/Roeの
 センサー混合です。旧`numerics.flux`と`numerics.reconstruction`は使用できません。
@@ -106,17 +106,36 @@ python .\prepare_environment.py .\environment.gpe.yaml `
 
 ### model
 
-| ID | モデルとソルバープロファイル |
+| ID | 物理モデル |
 |---|---|
-| `nse_cpu_mpi` | NSE / `cpu_mpi` |
-| `nse_cpu_mpi_2decomp_fftw` | NSE / `cpu_mpi_2decomp_fftw`、2DECOMP&FFT分散初期化・Forcing対応 |
-| `nse_cuda_single` | NSE / `cuda_single`、単一GPU・cuFFT Forcing対応 |
-| `gpe_cpu_serial_dft` | GPE / `cpu_serial_dft` |
-| `gpe_cpu_serial_fftw` | GPE / `cpu_serial_fftw` |
-| `gpe_cpu_mpi_dft` | GPE / `cpu_mpi_dft` |
-| `gpe_cpu_mpi_fftw` | GPE / `cpu_mpi_fftw` |
-| `gpe_cuda_single` | GPE / `cuda_single` |
-| `gpe_cuda_mpi_cufftmp` | GPE / `cuda_mpi_cufftmp` |
+| `nse` | 圧縮性Navier-Stokes方程式 |
+| `gpe` | Gross-Pitaevskii方程式 |
+
+通常のsolver profileは`model`と`parallel.use_mpi`、`parallel.use_cuda`から
+自動選択されます。
+
+| model | MPI | CUDA | 自動profile |
+|---|---:|---:|---|
+| `nse` | true | false | `cpu_mpi` |
+| `nse` | false | true | `cuda_single` |
+| `gpe` | false | false | `cpu_serial_fftw` |
+| `gpe` | true | false | `cpu_mpi_fftw` |
+| `gpe` | false | true | `cuda_single` |
+| `gpe` | true | true | `cuda_mpi_cufftmp` |
+
+NSEのCPU逐次など、表にない組合せは生成時にエラーになります。
+`cpu_mpi_2decomp_fftw`や参照DFTなどの特殊構成だけ、次のように明示します。
+
+```yaml
+solver:
+  profile: cpu_mpi_2decomp_fftw
+```
+
+明示したprofileと`parallel`が矛盾する場合もエラーになります。
+
+旧設計書の`nse_cpu_mpi`、`gpe_cpu_mpi_fftw`などの複合model IDは、
+互換入力として引き続き読み取れます。その場合は物理モデルと
+`solver.profile`へ内部変換されます。新しい設計書では使用しません。
 
 ### target
 
@@ -134,7 +153,7 @@ python .\prepare_environment.py .\environment.gpe.yaml `
 | `gpe_quantum_taylor_green` | GPE量子Taylor-Green渦 |
 
 case候補には対応モデルの条件があります。例えば、
-`gpe_quantum_taylor_green`と`nse_cpu_mpi`を同時に選ぶと生成前にエラーになります。
+`gpe_quantum_taylor_green`と`model: nse`を同時に選ぶと生成前にエラーになります。
 
 ### execution
 
@@ -176,13 +195,16 @@ parallel:
 | 設定キー | 設定場所 | 役割 |
 |---|---|---|
 | `parallel.use_mpi` | 実行環境設計書 | MPI対応ソースと実行方式を選ぶ |
-| `parallel.use_openmp` | 実行環境設計書 | OpenMP局所ループを有効化する |
+| `parallel.use_openmp` | 実行環境設計書 | 新規caseのOpenMP初期値を指定する |
 | `parallel.use_cuda` | 実行環境設計書 | CUDAバックエンドを選ぶ |
+| `solver.use_openmp` | 生成後の`case.yaml` | OpenMP対応profileでケースごとに有効・無効を切り替える |
 | `solver.mpi_processes` | 生成後の`case.yaml` | 実行時のMPIプロセス数を指定する |
 | `solver.omp_threads` | 生成後の`case.yaml` | MPIランク当たりのOpenMPスレッド数を指定する |
 
 MPI/CUDAの使用有無を変更した場合は、実行環境を再生成してビルドし直します。
-`solver.mpi_processes`と`solver.omp_threads`だけを変更する場合は、再ビルドは不要です。
+`solver.use_openmp`、`solver.mpi_processes`、`solver.omp_threads`だけを変更する場合は、
+対応profileの範囲内なら再ビルドは不要です。`solver.use_mpi`、`solver.use_cuda`、
+`solver.profile`は新規caseには出力されません。
 
 ## 設計書での選択
 
@@ -194,7 +216,7 @@ option_catalogs: []
 select:
   source: local_framework
   destination: windows_research_runs
-  model: gpe_cpu_mpi_fftw
+  model: gpe
   target: windows_gnu_msmpi
   case: gpe_quantum_taylor_green
   execution: release

@@ -54,69 +54,16 @@ options:
         case_index: ${SCRATCH}/case_index.csv
 
   model:
-    nse_cpu_mpi:
-      label: NSE CPU MPI
-      description: 圧縮性NSEをMPIとOpenMPの局所ループで計算する。
+    nse:
+      label: 圧縮性NSE
+      description: 圧縮性Navier-Stokes方程式を解く。CPU/GPUとMPIはparallelで選択する。
       values:
         name: nse
-        profile: cpu_mpi
-        include_tests: false
-    nse_cpu_mpi_2decomp_fftw:
-      label: NSE CPU MPI 2DECOMP&FFT
-      description: 2DECOMP&FFTとFFTW3による分散FFT初期化・Forcingに対応したCPU MPI版。
-      values:
-        name: nse
-        profile: cpu_mpi_2decomp_fftw
-        include_tests: false
-    nse_cuda_single:
-      label: NSE 単一GPU
-      description: 単一GPU上でKEEP、WENO5-Z/Roe、ハイブリッド対流項、6次粘性項、SSPRK3をCUDA計算する。
-      values:
-        name: nse
-        profile: cuda_single
-        include_tests: false
-    gpe_cpu_serial_dft:
-      label: GPE CPU逐次 DFT
-      description: 参照用DFTバックエンドを単一プロセスで使う。
+    gpe:
+      label: GPE
+      description: Gross-Pitaevskii方程式を解く。CPU/GPUとMPIはparallelで選択する。
       values:
         name: gpe
-        profile: cpu_serial_dft
-        include_tests: false
-    gpe_cpu_serial_fftw:
-      label: GPE CPU逐次 FFTW
-      description: FFTWバックエンドを単一プロセスで使う。
-      values:
-        name: gpe
-        profile: cpu_serial_fftw
-        include_tests: false
-    gpe_cpu_mpi_dft:
-      label: GPE CPU MPI DFT
-      description: MPIスラブ分割と局所参照DFTを使う。
-      values:
-        name: gpe
-        profile: cpu_mpi_dft
-        include_tests: false
-    gpe_cpu_mpi_fftw:
-      label: GPE CPU MPI FFTW
-      description: MPIスラブ分割と局所FFTW変換を使う。
-      values:
-        name: gpe
-        profile: cpu_mpi_fftw
-        include_tests: false
-    gpe_cuda_single:
-      label: GPE 単一GPU
-      description: 単一GPUのCUDAおよびcuFFTバックエンドを使う。
-      values:
-        name: gpe
-        profile: cuda_single
-        include_tests: false
-    gpe_cuda_mpi_cufftmp:
-      label: GPE 複数GPU cuFFTMp
-      description: GPUごとに1 MPIランクを割り当て、cuFFTMpで分散変換する。
-      values:
-        name: gpe
-        profile: cuda_mpi_cufftmp
-        include_tests: false
 
   target:
     windows_gnu_msmpi:

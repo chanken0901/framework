@@ -118,9 +118,48 @@ class RunCasePrepareTests(unittest.TestCase):
                 "case_directory": "cases/case0001",
                 "use_mpi": True,
                 "use_openmp": True,
+                "openmp_capable": True,
             }
 
-            self.assertEqual(_case_parallel_settings(root, lock), (4, 6))
+            self.assertEqual(_case_parallel_settings(root, lock), (4, 6, True))
+
+    def test_profile_derived_case_fields_may_be_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            case_dir = root / "cases" / "case0001"
+            case_dir.mkdir(parents=True)
+            (case_dir / "case.yaml").write_text(
+                "solver:\n  use_openmp: false\n  mpi_processes: 4\n  omp_threads: 1\n",
+                encoding="utf-8",
+            )
+            lock = {
+                "case_directory": "cases/case0001",
+                "use_mpi": True,
+                "use_cuda": False,
+                "use_openmp": True,
+                "openmp_capable": True,
+            }
+
+            self.assertEqual(_case_parallel_settings(root, lock), (4, 1, False))
+
+    def test_openmp_can_be_enabled_per_case_when_profile_is_capable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            case_dir = root / "cases" / "case0001"
+            case_dir.mkdir(parents=True)
+            (case_dir / "case.yaml").write_text(
+                "solver:\n  use_openmp: true\n  mpi_processes: 4\n  omp_threads: 6\n",
+                encoding="utf-8",
+            )
+            lock = {
+                "case_directory": "cases/case0001",
+                "use_mpi": True,
+                "use_cuda": False,
+                "use_openmp": False,
+                "openmp_capable": True,
+            }
+
+            self.assertEqual(_case_parallel_settings(root, lock), (4, 6, True))
 
     def test_parallel_settings_reject_zero_threads(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -135,6 +174,7 @@ class RunCasePrepareTests(unittest.TestCase):
                 "case_directory": "cases/case0001",
                 "use_mpi": True,
                 "use_openmp": True,
+                "openmp_capable": True,
             }
 
             with self.assertRaisesRegex(RunCaseError, "must be positive"):
@@ -157,6 +197,7 @@ class RunCasePrepareTests(unittest.TestCase):
                         "case_directory": "cases/case0001",
                         "use_mpi": True,
                         "use_openmp": False,
+                        "openmp_capable": True,
                     },
                 )
 
