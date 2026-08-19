@@ -210,6 +210,27 @@ modules:
     features:
       - openmp
 
+  mod_convective_leaf_registry:
+    path: src/numerics/convective/mod_convective_leaf_registry.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_convective_keep
+      - mod_convective_weno5z_roe
+
+  mod_convective_hybrid:
+    path: src/numerics/convective/mod_convective_hybrid.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_convective_leaf_registry
+    features:
+      - openmp
+
   mod_convective_scheme:
     path: src/numerics/convective/mod_convective_dispatch.f90
     role: library
@@ -219,6 +240,7 @@ modules:
       - mod_model_config
       - mod_convective_keep
       - mod_convective_weno5z_roe
+      - mod_convective_hybrid
     features:
       - openmp
 

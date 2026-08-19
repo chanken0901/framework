@@ -1,11 +1,14 @@
 # NSEモジュール設計
 
+実装済みのKEEP/WENOハイブリッド流束と、ハイブリッド／非ハイブリッドの
+入力設定は[`NSE_HYBRID_FLUX.md`](NSE_HYBRID_FLUX.md)に定義する。
+
 ## 目的
 
 NSEソルバーの初期条件、移流スキーム、粘性項、境界条件を、mainプログラムを変更せずに交換・追加できる構造にする。
 現在は5変数の圧縮性Navier-Stokes方程式を扱い、2次・6次精度KEEP対流項、
-5次精度WENO-Z/Roe対流項、非粘性計算または6次精度中心差分による
-粘性計算を選択できる。
+5次精度WENO-Z/Roe対流項、KEEP/WENOハイブリッド対流項、非粘性計算または
+6次精度中心差分による粘性計算を選択できる。
 
 ## 依存方向
 
@@ -38,11 +41,13 @@ mainは計算手順だけを制御し、流束式、初期条件式、境界処�
 | Taylor–Green | `src/init/mod_init_taylor_green.f90` | `initialize_taylor_green` |
 | 分散FFT HIT | `src/init/mod_init_hit_spectral_2decomp.f90` | `initialize_hit_spectral` |
 | 周期境界 | `src/boundary/mod_boundary_periodic.f90` | `apply_nse_boundary`ほか |
-| 対流項ディスパッチ | `src/numerics/convective/mod_convective_dispatch.f90` | KEEP/WENO-Roeの実行時選択 |
+| 対流項ディスパッチ | `src/numerics/convective/mod_convective_dispatch.f90` | 単一方式とハイブリッドの実行時選択 |
 | KEEP流束 | `src/numerics/convective/mod_convective_keep.f90` | 2次・6次精度KEEP |
 | WENO-Z再構築 | `src/numerics/reconstruction/mod_reconstruction_weno5z.f90` | 左右5次精度再構築 |
 | Roe流束 | `src/numerics/riemann/mod_riemann_roe.f90` | 固有分解とentropy fix |
 | WENO-Z/Roe複合流束 | `src/numerics/convective/mod_convective_weno5z_roe.f90` | 特性再構築と三方向面流束 |
+| 構成流束レジストリ | `src/numerics/convective/mod_convective_leaf_registry.f90` | 方式名から保存形面流束を選択 |
+| ハイブリッド流束 | `src/numerics/convective/mod_convective_hybrid.f90` | センサー、混合率、共有面流束の合成 |
 | 粘性項なし | `src/numerics/viscous/mod_viscous_none.f90` | 非粘性計算用の空実装 |
 | 6次精度粘性項 | `src/numerics/viscous/mod_viscous_central6.f90` | `add_viscous_rhs`、粘性時間刻み評価 |
 | 空間演算 | `src/numerics/mod_nse_spatial_operator.f90` | 境界、流束、発散、粘性項を合成 |
@@ -73,7 +78,7 @@ CPU/MPI/OpenMP版とCUDA版は同じ離散式を使用し、3層のゴースト�
 `convective_scheme='weno5z_roe'`では、Roe平均で得た固有ベクトルを各面の
 5点ステンシルへ適用し、特性空間で左右状態をWENO-Z再構築する。再構築状態から
 Harten-Hyman型entropy fix付きRoe流束を計算する。CPU逐次、MPI、OpenMP、
-MPI+OpenMP版に対応し、3層のゴーストセルを必要とする。
+MPI+OpenMP、単一GPU CUDA版に対応し、3層のゴーストセルを必要とする。
 
 ### 粘性項
 
@@ -101,16 +106,18 @@ boundary_scheme_name
 ## 対流スキームを追加する手順
 
 1. 再構築、Riemann solver、複合流束を責務ごとのモジュールへ分ける。
-2. 複合流束は`compute_*_flux`、検証、必要ゴースト数を公開する。
-3. `mod_convective_dispatch.f90`へ入力名と呼び出し先を追加する。
-4. CMake、`solver_manifest.yaml`、`config/module_catalog.yaml`へ依存順を登録する。
-5. `case_input.py`へ許可する入力名と実行バックエンド制約を登録する。
-6. 一様場保存、周期移流、衝撃波管、格子収束の順で検証する。
+2. 複合流束は、一つの共有面に一つの保存形面流束を返すAPIを公開する。
+3. ハイブリッドの構成流束に使う場合は`mod_convective_leaf_registry.f90`へ方式名と呼び出し先を登録する。
+4. 独立した主方式として入力選択させる場合は`mod_convective_dispatch.f90`の検証と分岐も追加する。
+5. CMake、`solver_manifest.yaml`、`config/module_catalog.yaml`へ依存順を登録する。
+6. `case_input.py`へ許可する入力名と実行バックエンド制約を登録する。
+7. CUDAで使用する方式はGPU側の面流束APIとCPU/CUDA一致テストも追加する。
+8. 一様場保存、周期移流、衝撃波管、格子収束の順で検証する。
 
-KEEP/RoeハイブリッドではDucrosセンサーを独立させ、ディスパッチ層の下に
-ハイブリッド複合流束を追加する。KEEPとWENO5-Z/Roeの内部式は変更せず、面ごとの
-混合係数または切替だけをハイブリッド層が担当する。詳細は
-`docs/NSE_WENO5Z_ROE.md`を参照する。
+KEEP/WENOハイブリッドではDucros-pressureセンサーを独立させ、ディスパッチ層の下に
+ハイブリッド複合流束を実装している。KEEPとWENO5-Z/Roeの内部式は変更せず、面ごとの
+混合係数だけをハイブリッド層が担当する。詳細は
+`docs/NSE_HYBRID_FLUX.md`を参照する。
 
 ## 初期条件を追加する手順
 
@@ -141,8 +148,9 @@ boundary_condition = 'periodic'
 time_integrator = 'ssprk3'
 ```
 
-対流項は`keep2`、`keep6`、`weno5z_roe`で指定する。`keep`や`weno`単独の指定は
-使用できない。`weno5z_roe`はCPU逐次、MPI、OpenMP、MPI+OpenMP、単一GPU CUDA版で利用できる。
+対流項は`keep2`、`keep6`、`weno5z_roe`、`hybrid`で指定する。`keep`や`weno`単独の指定は
+使用できない。4方式はCPU逐次、MPI、OpenMP、MPI+OpenMP、単一GPU CUDA版で利用できる。
+`hybrid`の構成流束とセンサーは`NSE_HYBRID_FLUX.md`の設定で選択する。
 
 CMakeでは対応するバックエンドを選択する。
 

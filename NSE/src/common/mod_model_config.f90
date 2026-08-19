@@ -19,6 +19,11 @@ module mod_model_config
     real(dp) :: reynolds = 0.0_dp
     real(dp) :: prandtl = 0.72_dp
     character(len=32) :: convective_scheme = 'keep6'
+    character(len=32) :: hybrid_smooth_scheme = 'keep6'
+    character(len=32) :: hybrid_shock_scheme = 'weno5z_roe'
+    character(len=32) :: hybrid_sensor = 'ducros_pressure'
+    real(dp) :: hybrid_sensor_onset = 0.01_dp
+    real(dp) :: hybrid_sensor_full = 0.10_dp
     character(len=32) :: viscous_scheme = 'none'
     character(len=32) :: boundary_condition = 'periodic'
     character(len=32) :: time_integrator = 'ssprk3'
@@ -164,6 +169,15 @@ contains
     write(u,'(A,ES16.8)') 'reynolds   = ', cfg%reynolds
     write(u,'(A,ES16.8)') 'prandtl   = ', cfg%prandtl
     write(u,'(A,A)') 'convective_scheme = ', trim(cfg%convective_scheme)
+    write(u,'(A,A)') 'hybrid_smooth_scheme = ', &
+      trim(cfg%hybrid_smooth_scheme)
+    write(u,'(A,A)') 'hybrid_shock_scheme  = ', &
+      trim(cfg%hybrid_shock_scheme)
+    write(u,'(A,A)') 'hybrid_sensor        = ', trim(cfg%hybrid_sensor)
+    write(u,'(A,ES16.8)') 'hybrid_sensor_onset = ', &
+      cfg%hybrid_sensor_onset
+    write(u,'(A,ES16.8)') 'hybrid_sensor_full  = ', &
+      cfg%hybrid_sensor_full
     write(u,'(A,A)') 'viscous_scheme    = ', trim(cfg%viscous_scheme)
     write(u,'(A,A)') 'boundary_condition = ', trim(cfg%boundary_condition)
     write(u,'(A,A)') 'time_integrator   = ', trim(cfg%time_integrator)

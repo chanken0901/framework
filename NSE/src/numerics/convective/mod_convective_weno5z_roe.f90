@@ -10,6 +10,7 @@ module mod_convective_weno5z_roe
   private
 
   public :: compute_weno5z_roe_flux
+  public :: compute_weno5z_roe_face_flux
   public :: validate_weno5z_roe_scheme
   public :: weno5z_roe_required_ghost_cells
 
@@ -36,7 +37,8 @@ contains
       do k = ks-1, ke
         do j = js-1, je
           do i = 0, sim%nx
-            call compute_face_flux(q, i, j, k, direction, sim, nse, &
+            call compute_weno5z_roe_face_flux(q, i, j, k, direction, &
+              sim, nse, &
               js, ks, fface(i,j,k,1:5))
           end do
         end do
@@ -47,8 +49,8 @@ contains
     end select
   end subroutine compute_weno5z_roe_flux
 
-  pure subroutine compute_face_flux(q, i, j, k, direction, sim, nse, &
-      js, ks, flux)
+  pure subroutine compute_weno5z_roe_face_flux(q, i, j, k, direction, &
+      sim, nse, js, ks, flux)
     type(simulation_config), intent(in) :: sim
     type(nse_config), intent(in) :: nse
     integer, intent(in) :: i, j, k, direction, js, ks
@@ -93,7 +95,7 @@ contains
     right_state = matmul(right_matrix, right_characteristic)
     call roe_numerical_flux(left_state, right_state, nse, normal_flux)
     call rotate_flux_to_global(normal_flux, direction, flux)
-  end subroutine compute_face_flux
+  end subroutine compute_weno5z_roe_face_flux
 
   pure subroutine normal_state_at_offset(q, i, j, k, direction, offset, &
       sim, js, ks, state)

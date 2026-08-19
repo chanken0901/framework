@@ -10,6 +10,7 @@ module mod_convective_keep
     3.0_dp/4.0_dp, -3.0_dp/20.0_dp, 1.0_dp/60.0_dp ]
 
   public :: compute_keep_flux
+  public :: compute_keep_face_flux
   public :: validate_keep_scheme
   public :: keep_required_ghost_cells
 
@@ -21,9 +22,8 @@ contains
     integer, intent(in) :: direction, js, je, ks, ke
     real(dp), intent(in) :: q(1-sim%nghost:, js-sim%nghost:, ks-sim%nghost:, :)
     real(dp), intent(out) :: fface(0:, js-1:, ks-1:, :)
-    integer :: i, j, k, separation, offset, maximum_separation
+    integer :: i, j, k
     integer :: selected_order
-    real(dp) :: pair_flux(5), weight, derivative_coefficient(3)
 
     if (nse%nv /= 5) error stop 'KEEP flux requires five conserved variables'
     if (sim%nghost < keep_required_ghost_cells()) then
@@ -33,9 +33,6 @@ contains
     if (selected_order /= 2 .and. selected_order /= 6) then
       error stop 'KEEP scheme must be keep2 or keep6'
     end if
-    call select_derivative_coefficients(selected_order, &
-      derivative_coefficient, maximum_separation)
-
     ! A conservative face flux whose adjacent difference is
     !
     !   2 sum_s d_s [f#(q_i,q_{i+s}) - f#(q_{i-s},q_i)].
@@ -50,16 +47,8 @@ contains
       do k = ks-1, ke
         do j = js-1, je
           do i = 0, sim%nx
-            fface(i,j,k,1:5) = 0.0_dp
-            do separation = 1, maximum_separation
-              weight = 2.0_dp * derivative_coefficient(separation)
-              do offset = 0, separation-1
-                call keep_two_point_flux(q, &
-                  i-offset, j, k, i-offset+separation, j, k, &
-                  direction, sim, nse, js, ks, pair_flux)
-                fface(i,j,k,1:5) = fface(i,j,k,1:5) + weight*pair_flux
-              end do
-            end do
+            call compute_keep_face_flux(q, i, j, k, direction, &
+              selected_order, sim, nse, js, ks, fface(i,j,k,1:5))
           end do
         end do
       end do
@@ -70,16 +59,8 @@ contains
       do k = ks-1, ke
         do j = js-1, je
           do i = 0, sim%nx
-            fface(i,j,k,1:5) = 0.0_dp
-            do separation = 1, maximum_separation
-              weight = 2.0_dp * derivative_coefficient(separation)
-              do offset = 0, separation-1
-                call keep_two_point_flux(q, &
-                  i, j-offset, k, i, j-offset+separation, k, &
-                  direction, sim, nse, js, ks, pair_flux)
-                fface(i,j,k,1:5) = fface(i,j,k,1:5) + weight*pair_flux
-              end do
-            end do
+            call compute_keep_face_flux(q, i, j, k, direction, &
+              selected_order, sim, nse, js, ks, fface(i,j,k,1:5))
           end do
         end do
       end do
@@ -90,16 +71,8 @@ contains
       do k = ks-1, ke
         do j = js-1, je
           do i = 0, sim%nx
-            fface(i,j,k,1:5) = 0.0_dp
-            do separation = 1, maximum_separation
-              weight = 2.0_dp * derivative_coefficient(separation)
-              do offset = 0, separation-1
-                call keep_two_point_flux(q, &
-                  i, j, k-offset, i, j, k-offset+separation, &
-                  direction, sim, nse, js, ks, pair_flux)
-                fface(i,j,k,1:5) = fface(i,j,k,1:5) + weight*pair_flux
-              end do
-            end do
+            call compute_keep_face_flux(q, i, j, k, direction, &
+              selected_order, sim, nse, js, ks, fface(i,j,k,1:5))
           end do
         end do
       end do
@@ -109,6 +82,50 @@ contains
       error stop 'convective flux direction must be 1, 2, or 3'
     end select
   end subroutine compute_keep_flux
+
+  pure subroutine compute_keep_face_flux(q, i, j, k, direction, order, &
+      sim, nse, js, ks, flux)
+    type(simulation_config), intent(in) :: sim
+    type(nse_config), intent(in) :: nse
+    integer, intent(in) :: i, j, k, direction, order, js, ks
+    real(dp), intent(in) :: q(1-sim%nghost:, js-sim%nghost:, &
+      ks-sim%nghost:, :)
+    real(dp), intent(out) :: flux(5)
+    real(dp) :: pair_flux(5), weight, derivative_coefficient(3)
+    integer :: separation, offset, maximum_separation
+    integer :: im, jm, km, ip, jp, kp
+
+    call select_derivative_coefficients(order, derivative_coefficient, &
+      maximum_separation)
+    flux = 0.0_dp
+    do separation = 1, maximum_separation
+      weight = 2.0_dp * derivative_coefficient(separation)
+      do offset = 0, separation-1
+        im = i
+        jm = j
+        km = k
+        ip = i
+        jp = j
+        kp = k
+        select case (direction)
+        case (1)
+          im = i-offset
+          ip = i-offset+separation
+        case (2)
+          jm = j-offset
+          jp = j-offset+separation
+        case (3)
+          km = k-offset
+          kp = k-offset+separation
+        case default
+          return
+        end select
+        call keep_two_point_flux(q, im, jm, km, ip, jp, kp, direction, &
+          sim, nse, js, ks, pair_flux)
+        flux = flux + weight*pair_flux
+      end do
+    end do
+  end subroutine compute_keep_face_flux
 
   pure subroutine select_derivative_coefficients(order, coefficient, &
       maximum_separation)

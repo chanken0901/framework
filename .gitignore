@@ -22,10 +22,16 @@ logs/
 **/logs/
 output/
 **/output/
+paraview/
+**/paraview/
+*-smoke-output/
+**/*-smoke-output/
 restart/
 **/restart/
 checkpoint/
 **/checkpoint/
+*.log
+fort.*
 
 # Large data
 *.h5

@@ -5,7 +5,7 @@
 `cuda_single` profileは、現在のCPU版と同じ保存変数
 `rho, rho_u, rho_v, rho_w, rho_E`を使い、次の組み合わせをGPUで計算します。
 
-- 対流項: `keep2`、`keep6`、または特性空間`weno5z_roe`
+- 対流項: `keep2`、`keep6`、特性空間`weno5z_roe`、またはKEEP/WENO `hybrid`
 - 粘性項: 6次精度中心差分 `central6`、または `none`
 - 境界条件: 三方向周期境界
 - 時間積分: SSPRK3
@@ -96,7 +96,7 @@ solver:
 
 ```yaml
 numerics:
-  convective_scheme: weno5z_roe  # keep2, keep6, weno5z_roe
+  convective_scheme: weno5z_roe  # keep2, keep6, weno5z_roe, hybrid
 ```
 
 CPU版とCUDA版のどちらも`keep`単独の指定は使用できません。
@@ -174,7 +174,7 @@ python .\tools\postprocess_case.py
 2. 一定流がSSPRK3の1ステップ後も保存されること
 3. 周期ghostセルが反対側の物理セルと一致すること
 4. GPUのCFL時間刻みがCPU計算と一致すること
-5. KEEP2、KEEP6、WENO5-Z/Roeの三次元SSPRK3結果がCPU参照実装と一致すること
+5. KEEP2、KEEP6、WENO5-Z/Roe、KEEP/WENOハイブリッドの三次元SSPRK3結果がCPU参照実装と一致すること
 6. 非一様な三次元場の`central6`粘性項と時間刻みがCPU参照実装と一致すること
-7. 8立方Taylor-Green渦のKEEPおよびWENO5-Z/Roe 2ステップsmoke test
+7. 8立方Taylor-Green渦のKEEP、WENO5-Z/Roe、ハイブリッド 2ステップsmoke test
 8. 従来の`cpu_mpi` profileが引き続きビルドできること

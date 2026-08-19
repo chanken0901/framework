@@ -157,6 +157,8 @@ if(NSE_CONVECTIVE_BACKEND STREQUAL "runtime" OR
     src/numerics/riemann/mod_riemann_roe.f90
     src/numerics/convective/mod_convective_keep.f90
     src/numerics/convective/mod_convective_weno5z_roe.f90
+    src/numerics/convective/mod_convective_leaf_registry.f90
+    src/numerics/convective/mod_convective_hybrid.f90
     src/numerics/convective/mod_convective_dispatch.f90
   )
 else()
@@ -556,6 +558,22 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "none")
       PASS_REGULAR_EXPRESSION "WENO5-Z/Roe tests passed"
   )
 
+  add_executable(nse_test_hybrid_flux tests/test_hybrid_flux.f90)
+  set_target_properties(
+    nse_test_hybrid_flux
+    PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/hybrid_flux_test"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+  )
+  target_link_libraries(nse_test_hybrid_flux PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_hybrid_flux)
+  add_test(NAME nse_hybrid_flux
+    COMMAND $<TARGET_FILE:nse_test_hybrid_flux>)
+  set_tests_properties(
+    nse_hybrid_flux
+    PROPERTIES PASS_REGULAR_EXPRESSION "Hybrid KEEP/WENO flux tests passed"
+  )
+
   if(NSE_USE_MPI)
     add_test(
       NAME nse_weno5z_roe_smoke
@@ -571,6 +589,25 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "none")
   endif()
   set_tests_properties(
     nse_weno5z_roe_smoke
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION "NSE calculation completed successfully:"
+      FAIL_REGULAR_EXPRESSION "floating-point exceptions are signalling"
+  )
+  if(NSE_USE_MPI)
+    add_test(
+      NAME nse_hybrid_smoke
+      COMMAND mpiexec -n 4 $<TARGET_FILE:nse_solver>
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_hybrid_small.dat"
+    )
+  else()
+    add_test(
+      NAME nse_hybrid_smoke
+      COMMAND $<TARGET_FILE:nse_solver>
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_hybrid_small.dat"
+    )
+  endif()
+  set_tests_properties(
+    nse_hybrid_smoke
     PROPERTIES
       PASS_REGULAR_EXPRESSION "NSE calculation completed successfully:"
       FAIL_REGULAR_EXPRESSION "floating-point exceptions are signalling"
@@ -696,6 +733,8 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda")
     src/numerics/riemann/mod_riemann_roe.f90
     src/numerics/convective/mod_convective_keep.f90
     src/numerics/convective/mod_convective_weno5z_roe.f90
+    src/numerics/convective/mod_convective_leaf_registry.f90
+    src/numerics/convective/mod_convective_hybrid.f90
     src/numerics/convective/mod_convective_dispatch.f90
   )
   set_target_properties(
@@ -724,6 +763,12 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda")
     nse_cuda_weno5z_roe_compare
     PROPERTIES PASS_REGULAR_EXPRESSION "CUDA convective comparison passed"
   )
+  add_test(NAME nse_cuda_hybrid_compare
+    COMMAND $<TARGET_FILE:nse_test_cuda_keep_compare> 7)
+  set_tests_properties(
+    nse_cuda_hybrid_compare
+    PROPERTIES PASS_REGULAR_EXPRESSION "CUDA convective comparison passed"
+  )
   add_executable(
     nse_test_cuda_viscous_compare
     tests/test_cuda_viscous_compare.f90
@@ -731,6 +776,8 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda")
     src/numerics/riemann/mod_riemann_roe.f90
     src/numerics/convective/mod_convective_keep.f90
     src/numerics/convective/mod_convective_weno5z_roe.f90
+    src/numerics/convective/mod_convective_leaf_registry.f90
+    src/numerics/convective/mod_convective_hybrid.f90
     src/numerics/convective/mod_convective_dispatch.f90
     src/numerics/viscous/mod_viscous_central6.f90
   )
@@ -764,6 +811,17 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda")
   )
   set_tests_properties(
     nse_cuda_weno5z_roe_smoke
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION "NSE calculation completed successfully:"
+      FAIL_REGULAR_EXPRESSION "CUDA backend failure;floating-point exceptions are signalling"
+  )
+  add_test(
+    NAME nse_cuda_hybrid_smoke
+    COMMAND $<TARGET_FILE:nse_solver>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_hybrid_small.dat"
+  )
+  set_tests_properties(
+    nse_cuda_hybrid_smoke
     PROPERTIES
       PASS_REGULAR_EXPRESSION "NSE calculation completed successfully:"
       FAIL_REGULAR_EXPRESSION "CUDA backend failure;floating-point exceptions are signalling"

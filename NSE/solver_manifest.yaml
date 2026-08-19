@@ -83,6 +83,8 @@ components:
       - src/numerics/riemann/mod_riemann_roe.f90
       - src/numerics/convective/mod_convective_keep.f90
       - src/numerics/convective/mod_convective_weno5z_roe.f90
+      - src/numerics/convective/mod_convective_leaf_registry.f90
+      - src/numerics/convective/mod_convective_hybrid.f90
       - src/numerics/convective/mod_convective_dispatch.f90
 
   viscous_none:
@@ -125,8 +127,13 @@ components:
     files:
       - tools/slf_to_paraview_merged_cropghost.py
       - tools/nse_turbulence_statistics.py
+      - docs/NSE_BUILD_AND_RUN.md
+      - docs/NSE_CUDA.md
+      - docs/NSE_FORCING.md
+      - docs/NSE_HIT_DISTRIBUTED_FFT.md
       - docs/NSE_MODULE_DESIGN.md
       - docs/NSE_WENO5Z_ROE.md
+      - docs/NSE_HYBRID_FLUX.md
       - docs/NSE_TURBULENCE_STATISTICS.md
 
   cuda_backend:
@@ -135,6 +142,7 @@ components:
       - src/gpu/mod_nse_gpu_cuda.f90
       - src/gpu/nse_cuda_bridge.cu
       - src/gpu/nse_cuda_weno5z_roe.cuh
+      - src/gpu/nse_cuda_hybrid.cuh
 
   main_cpu:
     cmake_role: executable
@@ -153,6 +161,7 @@ components:
       - tests/test_cuda_viscous_compare.f90
       - tests/input_tgv_cuda_small.dat
       - tests/input_tgv_cuda_weno5z_roe_small.dat
+      - tests/input_tgv_hybrid_small.dat
       - tests/input_tgv_cuda_forcing_small.dat
       - tests/input_hit_cuda_small.dat
       - tests/test_forcing_coefficients.f90
@@ -160,6 +169,8 @@ components:
       - src/numerics/riemann/mod_riemann_roe.f90
       - src/numerics/convective/mod_convective_keep.f90
       - src/numerics/convective/mod_convective_weno5z_roe.f90
+      - src/numerics/convective/mod_convective_leaf_registry.f90
+      - src/numerics/convective/mod_convective_hybrid.f90
       - src/numerics/convective/mod_convective_dispatch.f90
       - src/numerics/viscous/mod_viscous_central6.f90
 
@@ -167,6 +178,8 @@ components:
     files:
       - tests/test_keep6_accuracy.f90
       - tests/test_weno5z_roe.f90
+      - tests/test_hybrid_flux.f90
+      - tests/input_tgv_hybrid_small.dat
       - tests/input_tgv_weno5z_roe_small.dat
       - tests/test_viscous_central6.f90
       - tests/test_boundary_periodic.f90

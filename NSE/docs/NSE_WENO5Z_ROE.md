@@ -58,22 +58,23 @@ numerics:
 CUDAビルドでは`nse_cuda_weno5z_roe_compare`により、同じ三次元初期場を
 CPU版とCUDA版でSSPRK3の一ステップだけ進め、保存変数が一致することを検査します。
 
-## 今後のKEEP/Roeハイブリッド
+## 実装済みKEEP/Roeハイブリッドとの連携
 
-将来のハイブリッド法では、Ducrosセンサーを独立モジュールとして追加し、
-面ごとにKEEP流束とWENO5-Z/Roe流束を混合します。推奨する依存方向は次です。
+`convective_scheme: hybrid`では、Ducros-pressureセンサーにより面ごとに
+KEEP流束とWENO5-Z/Roe流束を連続混合します。現在の依存方向は次です。
 
 ```text
 mod_convective_dispatch
-  -> mod_convective_hybrid_ducros
-       -> mod_shock_sensor_ducros
-       -> mod_convective_keep
-       -> mod_convective_weno5z_roe
+  -> mod_convective_hybrid
+       -> mod_convective_leaf_registry
+            -> mod_convective_keep
+            -> mod_convective_weno5z_roe
 ```
 
-ハイブリッド層は、圧縮の強い領域で風上流束、渦度優勢の滑らかな領域でKEEPを
-選ぶ責務だけを持たせます。WENO再構築とRoe固有分解は今回のモジュールをそのまま
-再利用できます。
+ハイブリッド層はセンサー評価と混合率の計算を担当し、構成流束の実計算は
+leaf registryを介して既存のKEEPおよびWENO5-Z/Roe実装を再利用します。
+混合率が0と1の間では両方の面流束を計算して線形混合し、0または1では必要な
+構成流束だけを計算します。
 
 ## 制約
 

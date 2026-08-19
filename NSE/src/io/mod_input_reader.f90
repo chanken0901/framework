@@ -149,16 +149,21 @@ contains
     real(dp) :: forcing_k_cutoff, forcing_target_dissipation
     real(dp) :: forcing_dilatational_ratio, forcing_denominator_floor
     real(dp) :: forcing_max_coefficient
+    real(dp) :: hybrid_sensor_onset, hybrid_sensor_full
     integer :: hit_seed, hit_isotropy_max_iterations
     integer :: forcing_report_interval
     character(len=32) :: convective_scheme, viscous_scheme, hit_spectrum
+    character(len=32) :: hybrid_smooth_scheme, hybrid_shock_scheme
+    character(len=32) :: hybrid_sensor
     character(len=32) :: hit_isotropy_mode
     character(len=32) :: boundary_condition, time_integrator
     character(len=32) :: forcing_scheme, forcing_spectrum, forcing_fft_backend
     integer :: u, ios
     logical :: exists
     namelist /nse/ nv, nghost, gamma, cfl, small_rho, small_p, rho0, mach, &
-      reynolds, prandtl, convective_scheme, viscous_scheme, &
+      reynolds, prandtl, convective_scheme, hybrid_smooth_scheme, &
+      hybrid_shock_scheme, hybrid_sensor, hybrid_sensor_onset, &
+      hybrid_sensor_full, viscous_scheme, &
       boundary_condition, time_integrator, hit_spectrum, hit_seed, &
       hit_turbulent_mach, hit_turbulent_reynolds, hit_rms_velocity, &
       hit_peak_wavenumber, hit_integral_length, hit_kolmogorov_length, &
@@ -179,6 +184,11 @@ contains
     small_rho = cfg%small_rho; small_p = cfg%small_p
     rho0 = cfg%rho0; mach = cfg%mach; reynolds = cfg%reynolds; prandtl = cfg%prandtl
     convective_scheme = cfg%convective_scheme
+    hybrid_smooth_scheme = cfg%hybrid_smooth_scheme
+    hybrid_shock_scheme = cfg%hybrid_shock_scheme
+    hybrid_sensor = cfg%hybrid_sensor
+    hybrid_sensor_onset = cfg%hybrid_sensor_onset
+    hybrid_sensor_full = cfg%hybrid_sensor_full
     viscous_scheme = cfg%viscous_scheme
     boundary_condition = cfg%boundary_condition
     time_integrator = cfg%time_integrator
@@ -231,6 +241,11 @@ contains
     cfg%small_rho = small_rho; cfg%small_p = small_p
     cfg%rho0 = rho0; cfg%mach = mach; cfg%reynolds = reynolds; cfg%prandtl = prandtl
     cfg%convective_scheme = convective_scheme
+    cfg%hybrid_smooth_scheme = hybrid_smooth_scheme
+    cfg%hybrid_shock_scheme = hybrid_shock_scheme
+    cfg%hybrid_sensor = hybrid_sensor
+    cfg%hybrid_sensor_onset = hybrid_sensor_onset
+    cfg%hybrid_sensor_full = hybrid_sensor_full
     cfg%viscous_scheme = viscous_scheme
     cfg%boundary_condition = boundary_condition
     cfg%time_integrator = time_integrator

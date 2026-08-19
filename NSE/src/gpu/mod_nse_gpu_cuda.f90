@@ -13,6 +13,8 @@ module mod_nse_gpu
   integer(c_int), parameter :: cuda_convective_keep2 = 1_c_int
   integer(c_int), parameter :: cuda_convective_keep6 = 2_c_int
   integer(c_int), parameter :: cuda_convective_weno5z_roe = 3_c_int
+  integer(c_int), parameter :: cuda_convective_hybrid = 4_c_int
+  integer(c_int), parameter :: cuda_sensor_ducros_pressure = 1_c_int
 
   type, public :: nse_gpu_context
     private
@@ -30,16 +32,19 @@ module mod_nse_gpu
 
   interface
     function c_nse_cuda_create(handle, nx, ny, nz, nghost, nvar, device, &
-        convective_scheme, viscous_enabled, forcing_enabled, forcing_spectrum, &
+        convective_scheme, hybrid_smooth_scheme, hybrid_shock_scheme, &
+        hybrid_sensor, viscous_enabled, forcing_enabled, forcing_spectrum, &
         forcing_report_interval, gamma, cfl, small_rho, small_p, reynolds, &
         prandtl, dx, dy, dz, forcing_k_cutoff, forcing_target_dissipation, &
         forcing_dilatational_ratio, forcing_denominator_floor, &
-        forcing_max_coefficient) &
+        forcing_max_coefficient, hybrid_sensor_onset, hybrid_sensor_full) &
         bind(C, name="nse_cuda_create") result(status)
       import :: c_ptr, c_int, c_double
       type(c_ptr), intent(out) :: handle
       integer(c_int), value :: nx, ny, nz, nghost, nvar, device
-      integer(c_int), value :: convective_scheme, viscous_enabled
+      integer(c_int), value :: convective_scheme
+      integer(c_int), value :: hybrid_smooth_scheme, hybrid_shock_scheme
+      integer(c_int), value :: hybrid_sensor, viscous_enabled
       integer(c_int), value :: forcing_enabled, forcing_spectrum
       integer(c_int), value :: forcing_report_interval
       real(c_double), value :: gamma, cfl, small_rho, small_p
@@ -48,6 +53,7 @@ module mod_nse_gpu
       real(c_double), value :: forcing_dilatational_ratio
       real(c_double), value :: forcing_denominator_floor
       real(c_double), value :: forcing_max_coefficient
+      real(c_double), value :: hybrid_sensor_onset, hybrid_sensor_full
       integer(c_int) :: status
     end function c_nse_cuda_create
 
@@ -116,7 +122,20 @@ contains
     end if
     selected_scheme = requested_cuda_convective_scheme(nse)
     if (selected_scheme == 0_c_int) then
-      error stop "CUDA convective scheme must be keep2, keep6, or weno5z_roe"
+      error stop &
+        "CUDA convective scheme must be keep2, keep6, weno5z_roe, or hybrid"
+    end if
+    if (selected_scheme == cuda_convective_hybrid) then
+      if (requested_cuda_leaf_scheme(nse%hybrid_smooth_scheme) == 0_c_int) &
+        error stop "invalid CUDA hybrid_smooth_scheme"
+      if (requested_cuda_leaf_scheme(nse%hybrid_shock_scheme) == 0_c_int) &
+        error stop "invalid CUDA hybrid_shock_scheme"
+      if (requested_cuda_sensor(nse%hybrid_sensor) == 0_c_int) &
+        error stop "CUDA hybrid_sensor must be ducros_pressure"
+      if (nse%hybrid_sensor_onset < 0.0_dp .or. &
+          nse%hybrid_sensor_full <= nse%hybrid_sensor_onset) then
+        error stop "CUDA hybrid sensor requires 0 <= onset < full"
+      end if
     end if
     if (trim(adjustl(nse%viscous_scheme)) /= "none" .and. &
         trim(adjustl(nse%viscous_scheme)) /= "central6") then
@@ -150,6 +169,7 @@ contains
     type(nse_config), intent(in) :: nse
     integer(c_int) :: status, viscous_enabled, convective_scheme
     integer(c_int) :: forcing_enabled, forcing_spectrum
+    integer(c_int) :: hybrid_smooth_scheme, hybrid_shock_scheme, hybrid_sensor
 
     call validate_nse_gpu_configuration(sim, nse)
     if (kind(1.0_dp) /= c_double) then
@@ -164,6 +184,11 @@ contains
       viscous_enabled = 1_c_int
     end if
     convective_scheme = requested_cuda_convective_scheme(nse)
+    hybrid_smooth_scheme = requested_cuda_leaf_scheme( &
+      nse%hybrid_smooth_scheme)
+    hybrid_shock_scheme = requested_cuda_leaf_scheme( &
+      nse%hybrid_shock_scheme)
+    hybrid_sensor = requested_cuda_sensor(nse%hybrid_sensor)
     forcing_enabled = 0_c_int
     forcing_spectrum = 0_c_int
     if (forcing_is_enabled(nse)) then
@@ -179,12 +204,14 @@ contains
     status = c_nse_cuda_create(context%handle, int(sim%nx, c_int), &
       int(sim%ny, c_int), int(sim%nz, c_int), int(sim%nghost, c_int), &
       int(nse%nv, c_int), int(sim%cuda_device, c_int), &
-      convective_scheme, viscous_enabled, forcing_enabled, forcing_spectrum, &
+      convective_scheme, hybrid_smooth_scheme, hybrid_shock_scheme, &
+      hybrid_sensor, viscous_enabled, forcing_enabled, forcing_spectrum, &
       int(nse%forcing_report_interval, c_int), &
       nse%gamma, nse%cfl, nse%small_rho, nse%small_p, nse%reynolds, &
       nse%prandtl, sim%dx, sim%dy, sim%dz, nse%forcing_k_cutoff, &
       nse%forcing_target_dissipation, nse%forcing_dilatational_ratio, &
-      nse%forcing_denominator_floor, nse%forcing_max_coefficient)
+      nse%forcing_denominator_floor, nse%forcing_max_coefficient, &
+      nse%hybrid_sensor_onset, nse%hybrid_sensor_full)
     call require_success(status, "initialize NSE CUDA context")
   end subroutine nse_gpu_initialize
 
@@ -199,10 +226,39 @@ contains
       scheme = cuda_convective_keep6
     case ("weno5z_roe")
       scheme = cuda_convective_weno5z_roe
+    case ("hybrid")
+      scheme = cuda_convective_hybrid
     case default
       scheme = 0_c_int
     end select
   end function requested_cuda_convective_scheme
+
+  pure integer(c_int) function requested_cuda_leaf_scheme(name) &
+      result(scheme)
+    character(len=*), intent(in) :: name
+
+    select case (trim(adjustl(name)))
+    case ("keep2")
+      scheme = cuda_convective_keep2
+    case ("keep6")
+      scheme = cuda_convective_keep6
+    case ("weno5z_roe")
+      scheme = cuda_convective_weno5z_roe
+    case default
+      scheme = 0_c_int
+    end select
+  end function requested_cuda_leaf_scheme
+
+  pure integer(c_int) function requested_cuda_sensor(name) result(sensor)
+    character(len=*), intent(in) :: name
+
+    select case (trim(adjustl(name)))
+    case ("ducros_pressure")
+      sensor = cuda_sensor_ducros_pressure
+    case default
+      sensor = 0_c_int
+    end select
+  end function requested_cuda_sensor
 
   subroutine nse_gpu_upload(context, q)
     type(nse_gpu_context), intent(in) :: context

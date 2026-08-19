@@ -23,18 +23,26 @@ program test_cuda_keep_compare
   scheme_code = 6
   call get_command_argument(1, scheme_argument)
   if (len_trim(scheme_argument) > 0) read(scheme_argument,*) scheme_code
-  if (scheme_code /= 2 .and. scheme_code /= 5 .and. scheme_code /= 6) then
-    error stop 'CUDA comparison scheme code must be 2, 5, or 6'
+  if (scheme_code /= 2 .and. scheme_code /= 5 .and. &
+      scheme_code /= 6 .and. scheme_code /= 7) then
+    error stop 'CUDA comparison scheme code must be 2, 5, 6, or 7'
   end if
   if (scheme_code == 2) then
     nse%convective_scheme = 'keep2'
   else if (scheme_code == 5) then
     nse%convective_scheme = 'weno5z_roe'
+  else if (scheme_code == 7) then
+    nse%convective_scheme = 'hybrid'
+    nse%hybrid_smooth_scheme = 'keep6'
+    nse%hybrid_shock_scheme = 'weno5z_roe'
+    nse%hybrid_sensor_onset = 1.0e-4_dp
+    nse%hybrid_sensor_full = 2.0e-3_dp
   else
     nse%convective_scheme = 'keep6'
   end if
   comparison_tolerance = 2.0e-12_dp
-  if (scheme_code == 5) comparison_tolerance = 2.0e-10_dp
+  if (scheme_code == 5 .or. scheme_code == 7) &
+    comparison_tolerance = 2.0e-10_dp
   sim%nx = 7
   sim%ny = 6
   sim%nz = 5

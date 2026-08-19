@@ -23,6 +23,8 @@ namespace {
 constexpr int convective_keep2 = 1;
 constexpr int convective_keep6 = 2;
 constexpr int convective_weno5z_roe = 3;
+constexpr int convective_hybrid = 4;
+constexpr int sensor_ducros_pressure = 1;
 
 thread_local std::string last_error;
 
@@ -42,6 +44,11 @@ struct NseCudaContext {
   int nvar = 0;
   int device = 0;
   int convective_scheme = convective_keep6;
+  int hybrid_smooth_scheme = convective_keep6;
+  int hybrid_shock_scheme = convective_weno5z_roe;
+  int hybrid_sensor = sensor_ducros_pressure;
+  double hybrid_sensor_onset = 0.01;
+  double hybrid_sensor_full = 0.10;
   double gamma = 0.0;
   double cfl = 0.0;
   double small_rho = 0.0;
@@ -376,6 +383,47 @@ __device__ inline void keep_flux(
   flux[4] = kk + lk + pk;
 }
 
+__device__ inline void keep_face_flux_cuda(
+    const double* q,
+    const GridView& grid,
+    int i,
+    int j,
+    int k,
+    int direction,
+    int keep_order,
+    double gamma,
+    double small_rho,
+    double small_p,
+    double flux[5]) {
+  constexpr double central6_coefficient[3] = {
+      3.0 / 4.0, -3.0 / 20.0, 1.0 / 60.0};
+  const int maximum_separation = keep_order == 2 ? 1 : 3;
+  for (int variable = 0; variable < 5; ++variable) {
+    flux[variable] = 0.0;
+  }
+  for (int separation = 1; separation <= maximum_separation; ++separation) {
+    const double derivative_coefficient =
+        keep_order == 2 ? 0.5 : central6_coefficient[separation - 1];
+    const double weight = 2.0 * derivative_coefficient;
+    for (int offset = 0; offset < separation; ++offset) {
+      const int im = i - (direction == 0 ? offset : 0);
+      const int jm = j - (direction == 1 ? offset : 0);
+      const int km = k - (direction == 2 ? offset : 0);
+      const int ip = i + (direction == 0 ? separation - offset : 0);
+      const int jp = j + (direction == 1 ? separation - offset : 0);
+      const int kp = k + (direction == 2 ? separation - offset : 0);
+      double pair_flux[5];
+      keep_flux(
+          q, grid, cell_index(grid, im, jm, km),
+          cell_index(grid, ip, jp, kp), direction,
+          gamma, small_rho, small_p, pair_flux);
+      for (int variable = 0; variable < 5; ++variable) {
+        flux[variable] += weight * pair_flux[variable];
+      }
+    }
+  }
+}
+
 __global__ void wave_speed_kernel(
     const double* q,
     double* speed,
@@ -496,6 +544,7 @@ __global__ void rhs_keep_kernel(
 }
 
 #include "nse_cuda_weno5z_roe.cuh"
+#include "nse_cuda_hybrid.cuh"
 
 __global__ void viscous_central6_kernel(
     const double* primitive,
@@ -1117,7 +1166,24 @@ bool launch_periodic(NseCudaContext* context) {
 }
 
 bool launch_rhs(NseCudaContext* context) {
-  if (context->convective_scheme == convective_weno5z_roe) {
+  if (context->convective_scheme == convective_hybrid) {
+    rhs_hybrid_kernel<<<block_count(context->physical_count), 256>>>(
+        context->q,
+        context->rhs,
+        context->grid,
+        context->hybrid_smooth_scheme,
+        context->hybrid_shock_scheme,
+        context->hybrid_sensor,
+        context->hybrid_sensor_onset,
+        context->hybrid_sensor_full,
+        context->gamma,
+        context->small_rho,
+        context->small_p,
+        1.0 / context->dx,
+        1.0 / context->dy,
+        1.0 / context->dz,
+        context->physical_count);
+  } else if (context->convective_scheme == convective_weno5z_roe) {
     rhs_weno5z_roe_kernel<<<block_count(context->physical_count), 256>>>(
         context->q,
         context->rhs,
@@ -1275,6 +1341,9 @@ NSE_CUDA_EXPORT int nse_cuda_create(
     int nvar,
     int device,
     int convective_scheme,
+    int hybrid_smooth_scheme,
+    int hybrid_shock_scheme,
+    int hybrid_sensor,
     int viscous_enabled,
     int forcing_enabled,
     int forcing_spectrum,
@@ -1292,7 +1361,9 @@ NSE_CUDA_EXPORT int nse_cuda_create(
     double forcing_target_dissipation,
     double forcing_dilatational_ratio,
     double forcing_denominator_floor,
-    double forcing_max_coefficient) {
+    double forcing_max_coefficient,
+    double hybrid_sensor_onset,
+    double hybrid_sensor_full) {
   last_error.clear();
   if (handle == nullptr) {
     set_error("CUDA context output pointer is null");
@@ -1305,8 +1376,26 @@ NSE_CUDA_EXPORT int nse_cuda_create(
   }
   if (convective_scheme != convective_keep2
       && convective_scheme != convective_keep6
-      && convective_scheme != convective_weno5z_roe) {
-    set_error("CUDA convective scheme must be KEEP2, KEEP6, or WENO5Z_ROE");
+      && convective_scheme != convective_weno5z_roe
+      && convective_scheme != convective_hybrid) {
+    set_error(
+        "CUDA convective scheme must be KEEP2, KEEP6, WENO5Z_ROE, or HYBRID");
+    return 1;
+  }
+  const bool valid_smooth_scheme =
+      hybrid_smooth_scheme == convective_keep2
+      || hybrid_smooth_scheme == convective_keep6
+      || hybrid_smooth_scheme == convective_weno5z_roe;
+  const bool valid_shock_scheme =
+      hybrid_shock_scheme == convective_keep2
+      || hybrid_shock_scheme == convective_keep6
+      || hybrid_shock_scheme == convective_weno5z_roe;
+  if (convective_scheme == convective_hybrid
+      && (!valid_smooth_scheme || !valid_shock_scheme
+          || hybrid_sensor != sensor_ducros_pressure
+          || hybrid_sensor_onset < 0.0
+          || hybrid_sensor_full <= hybrid_sensor_onset)) {
+    set_error("invalid CUDA hybrid convective configuration");
     return 1;
   }
   if (gamma <= 1.0 || cfl <= 0.0 || dx <= 0.0 || dy <= 0.0 || dz <= 0.0) {
@@ -1365,6 +1454,11 @@ NSE_CUDA_EXPORT int nse_cuda_create(
   }
   context->nvar = nvar;
   context->convective_scheme = convective_scheme;
+  context->hybrid_smooth_scheme = hybrid_smooth_scheme;
+  context->hybrid_shock_scheme = hybrid_shock_scheme;
+  context->hybrid_sensor = hybrid_sensor;
+  context->hybrid_sensor_onset = hybrid_sensor_onset;
+  context->hybrid_sensor_full = hybrid_sensor_full;
   context->gamma = gamma;
   context->cfl = cfl;
   context->small_rho = small_rho;
