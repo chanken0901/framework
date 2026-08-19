@@ -1,0 +1,30 @@
+schema_version: 1
+environment_id: gpe_hpc_example
+
+option_catalogs: []
+
+select:
+  source: local_framework
+  destination: windows_research_runs
+  model: gpe_cpu_mpi_fftw
+  target: linux_hpc_slurm
+  case: gpe_quantum_taylor_green
+  execution: release
+  scheduler: slurm
+  archive: gztar
+
+parallel:
+  use_mpi: true
+  use_openmp: false
+  use_cuda: false
+
+# サイト固有値やジョブごとに変える値だけを上書きする。
+case:
+  id: case0001
+  label: qtgv_hpc
+  description: Quantum Taylor-Green production run
+
+scheduler:
+  job_name: gpe-case0001
+  account:
+  partition:

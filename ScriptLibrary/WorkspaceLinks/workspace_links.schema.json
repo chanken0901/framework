@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ResearchRuns integration and link design",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "execution_root",
+    "design_environment",
+    "links"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "execution_root": {"type": "string", "minLength": 1},
+    "link_type": {
+      "type": "string",
+      "enum": ["auto", "junction", "symlink"]
+    },
+    "design_environment": {
+      "type": "object",
+      "required": ["legacy_path", "integrated_path"],
+      "properties": {
+        "legacy_path": {"type": "string", "minLength": 1},
+        "integrated_path": {"type": "string", "minLength": 1},
+        "keep_legacy_link": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "links": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["name", "target"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "target": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

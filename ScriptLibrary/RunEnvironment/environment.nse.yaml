@@ -1,0 +1,50 @@
+schema_version: 1
+environment_id: nse_workstation_example
+
+option_catalogs: []
+
+# NSEの実行環境はこの設計書だけで管理する。
+# modelは計算バックエンド、caseはcase.yamlの入力雛形、
+# parallelはMPI/OpenMP/CUDAの使用可否、executionはビルド構成を選択する。
+# MPIプロセス数とOpenMPスレッド数はrun_case.pyの実行時に指定する。
+#
+# CPU MPI + OpenMP:
+#   model: nse_cpu_mpi
+#   case: nse_case
+#   parallel.use_mpi: true
+#   parallel.use_openmp: true
+#   parallel.use_cuda: false
+#
+# CPU MPI + 2DECOMP&FFT:
+#   model: nse_cpu_mpi_2decomp_fftw
+#   case: nse_case
+#   parallel.use_mpi: true
+#   parallel.use_openmp: false
+#   parallel.use_cuda: false
+#
+# CUDA single GPU:
+#   model: nse_cuda_single
+#   case: nse_case
+#   parallel.use_mpi: false
+#   parallel.use_openmp: false
+#   parallel.use_cuda: true
+select:
+  source: local_framework
+  destination: windows_research_runs
+  model: nse_cpu_mpi
+  target: windows_gnu_msmpi
+  case: nse_case
+  execution: release
+  scheduler: disabled
+  archive: none
+
+parallel:
+  use_mpi: true
+  use_openmp: true
+  use_cuda: false
+
+case:
+  id: case0001
+  label: nse_baseline
+  description: NSE baseline case
+  project_name: NSEResearch
