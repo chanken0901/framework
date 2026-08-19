@@ -1,0 +1,57 @@
+# FrameWork
+
+NSE（Navier-Stokes equations）およびGPE（Gross-Pitaevskii equation）のソルバー、ケース生成、ビルド、実行環境、後処理をまとめた研究用モノレポです。
+
+## 最初に読む文書
+
+### 学生・初回利用者
+
+- [学生向け FrameWork導入・Git開発手順書](学生向け_FrameWork導入・Git開発手順書.md)
+- [外部実行環境の生成・ビルド・実行](外部実行環境_生成・ビルド・実行手順書.md)
+
+### 開発者・管理者
+
+- [Git運用マニュアル](GIT運用マニュアル.md)
+- [モノレポ移行記録](docs/development/MONOREPO_MIGRATION.md)
+
+### ソルバー別
+
+- [NSE](SolverLibrary/NSE/README.md)
+- [NSEのビルドと実行](SolverLibrary/NSE/docs/NSE_BUILD_AND_RUN.md)
+- [GPE](SolverLibrary/GPE/README.md)
+- [GP3D](SolverLibrary/GPE/gp3d/README.md)
+- [共通ビルドランナー](ScriptLibrary/BuildSolver/README.md)
+- [実行環境生成](ScriptLibrary/RunEnvironment/README.md)
+
+## リポジトリ構成
+
+```text
+FrameWork/
+├─ ScriptLibrary/   ケース生成、ビルド、実行環境、補助ツール
+├─ SolverLibrary/   NSE・GPEソルバー、設定、テスト
+├─ docs/            開発資料と移行記録
+└─ 仕様書・手順書
+```
+
+このリポジトリはモノレポです。`ScriptLibrary`と`SolverLibrary`は同じGit履歴で管理されています。旧`ScriptLibrary.git`、旧`SolverLibrary.git`は新規開発に使用しません。
+
+## 安定版を取得する
+
+```powershell
+git clone https://github.com/chanken0901/framework.git FrameWork
+Set-Location .\FrameWork
+git switch --detach v1.0.0-student
+```
+
+安定版タグは再現計算用です。開発する場合は`main`を最新化して作業ブランチを作成してください。
+
+## 開発の原則
+
+- `main`へ直接pushしない
+- 作業ブランチとPull Requestを使用する
+- 変更に対応するテストを実行する
+- 計算結果、ビルド生成物、秘密情報をコミットしない
+- ScriptLibraryとSolverLibraryを別々にclone・pushしない
+
+詳細は[Git運用マニュアル](GIT運用マニュアル.md)を参照してください。
+
