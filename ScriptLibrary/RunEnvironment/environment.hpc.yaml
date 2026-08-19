@@ -6,7 +6,7 @@ option_catalogs: []
 select:
   source: local_framework
   destination: windows_research_runs
-  model: gpe_cpu_mpi_fftw
+  model: gpe
   target: linux_hpc_slurm
   case: gpe_quantum_taylor_green
   execution: release

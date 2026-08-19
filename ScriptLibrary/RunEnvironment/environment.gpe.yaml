@@ -8,7 +8,7 @@ option_catalogs: []
 select:
   source: local_framework
   destination: windows_research_runs
-  model: gpe_cpu_mpi_fftw
+  model: gpe
   target: windows_gnu_msmpi
   case: gpe_quantum_taylor_green
   execution: release
@@ -19,6 +19,10 @@ parallel:
   use_mpi: true
   use_openmp: false
   use_cuda: false
+
+# 標準CPU版はFFTWを自動選択する。参照DFTを使う場合だけ、次を追加する。
+# solver:
+#   profile: cpu_mpi_dft
 
 # 選択肢の値を変更したい部分だけを同名セクションに記述する。
 # ここではcaseの識別情報だけを上書きしている。

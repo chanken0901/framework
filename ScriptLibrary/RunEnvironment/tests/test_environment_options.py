@@ -23,9 +23,9 @@ BUILTIN = SCRIPT_DIR / "environment_options.yaml"
 class EnvironmentOptionTests(unittest.TestCase):
     def test_supplied_design_templates_resolve(self) -> None:
         expected = {
-            "environment.gpe.yaml": ("cpu_mpi_fftw", "workstation", False),
-            "environment.nse.yaml": ("cpu_mpi", "workstation", False),
-            "environment.hpc.yaml": ("cpu_mpi_fftw", "hpc_slurm", True),
+            "environment.gpe.yaml": ("gpe", "workstation", False),
+            "environment.nse.yaml": ("nse", "workstation", False),
+            "environment.hpc.yaml": ("gpe", "hpc_slurm", True),
         }
         for name, values in expected.items():
             with self.subTest(name=name):
@@ -33,7 +33,7 @@ class EnvironmentOptionTests(unittest.TestCase):
                 resolved, _ = resolve_design_options(
                     load_yaml(design_path), design_path, BUILTIN
                 )
-                self.assertEqual(resolved["model"]["profile"], values[0])
+                self.assertEqual(resolved["model"]["name"], values[0])
                 self.assertEqual(resolved["target"]["type"], values[1])
                 self.assertEqual(resolved["scheduler"]["enabled"], values[2])
 
@@ -42,7 +42,7 @@ class EnvironmentOptionTests(unittest.TestCase):
             "schema_version": 1,
             "select": {
                 "source": "mozart_nas",
-                "model": "gpe_cpu_mpi_fftw",
+                "model": "gpe",
                 "case": "gpe_quantum_taylor_green",
                 "execution": "release",
             },
@@ -60,10 +60,29 @@ class EnvironmentOptionTests(unittest.TestCase):
             resolved["source"]["framework_root"],
             r"\\Mozart\share\FrameWork",
         )
-        self.assertEqual(resolved["model"]["profile"], "cpu_mpi_fftw")
+        self.assertEqual(resolved["model"]["name"], "gpe")
         self.assertEqual(resolved["execution"]["configuration"], "Release")
         self.assertTrue(resolved["parallel"]["use_mpi"])
-        self.assertEqual(state["selections"]["model"]["id"], "gpe_cpu_mpi_fftw")
+        self.assertEqual(state["selections"]["model"]["id"], "gpe")
+
+    def test_legacy_composite_model_preserves_profile_override(self) -> None:
+        design = {
+            "schema_version": 1,
+            "select": {"model": "gpe_cpu_mpi_dft"},
+            "parallel": {
+                "use_mpi": True,
+                "use_openmp": False,
+                "use_cuda": False,
+            },
+        }
+
+        resolved, state = resolve_design_options(
+            design, SCRIPT_DIR / "environment.gpe.yaml", BUILTIN
+        )
+
+        self.assertEqual(resolved["model"]["name"], "gpe")
+        self.assertEqual(resolved["solver"]["profile"], "cpu_mpi_dft")
+        self.assertEqual(state["selections"]["model"]["id"], "gpe")
 
     def test_legacy_inline_design_needs_no_selection(self) -> None:
         design = {
@@ -151,7 +170,7 @@ class EnvironmentOptionTests(unittest.TestCase):
         design = {
             "schema_version": 1,
             "select": {
-                "model": "nse_cpu_mpi",
+                "model": "nse",
                 "case": "gpe_quantum_taylor_green",
             },
         }
@@ -164,7 +183,7 @@ class EnvironmentOptionTests(unittest.TestCase):
         design = {
             "schema_version": 1,
             "select": {
-                "model": "gpe_cuda_single",
+                "model": "gpe",
                 "execution": "release",
             },
             "parallel": {
@@ -177,7 +196,7 @@ class EnvironmentOptionTests(unittest.TestCase):
             design, SCRIPT_DIR / "environment.gpe.yaml", BUILTIN
         )
 
-        self.assertEqual(resolved["model"]["profile"], "cuda_single")
+        self.assertEqual(resolved["model"]["name"], "gpe")
         self.assertNotIn("processes", resolved["execution"])
         self.assertTrue(resolved["parallel"]["use_cuda"])
 
@@ -185,7 +204,7 @@ class EnvironmentOptionTests(unittest.TestCase):
         design = {
             "schema_version": 1,
             "select": {
-                "model": "nse_cuda_single",
+                "model": "nse",
                 "case": "nse_case",
                 "execution": "release",
             },
@@ -200,7 +219,6 @@ class EnvironmentOptionTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved["model"]["name"], "nse")
-        self.assertEqual(resolved["model"]["profile"], "cuda_single")
         self.assertNotIn("processes", resolved["execution"])
 
 

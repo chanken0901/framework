@@ -4,6 +4,11 @@ schema_version: 1
 solver_id: gp3d
 solver_api_version: 1
 model: gpe
+default_profiles:
+  serial: cpu_serial_fftw
+  mpi: cpu_mpi_fftw
+  cuda: cuda_single
+  mpi_cuda: cuda_mpi_cufftmp
 build_adapter: gp3d_cmake_v1
 input_adapter: gp3d_gpe_namelist_v1
 cmake_file: CMakeLists.txt

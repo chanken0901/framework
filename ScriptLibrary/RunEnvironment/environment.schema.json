@@ -57,6 +57,13 @@
       "type": "object",
       "properties": {
         "name": {"type": "string", "minLength": 1},
+        "profile": {"type": "string", "minLength": 1, "deprecated": true},
+        "include_tests": {"type": "boolean", "deprecated": true}
+      }
+    },
+    "solver": {
+      "type": "object",
+      "properties": {
         "profile": {"type": "string", "minLength": 1},
         "include_tests": {"type": "boolean"}
       }

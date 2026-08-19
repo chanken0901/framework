@@ -59,9 +59,12 @@ NSE共通の`ScriptLibrary/RunEnvironment/environment.nse.yaml`で
 
 ```yaml
 select:
-  model: nse_cpu_mpi_2decomp_fftw
+  model: nse
   case: nse_case
   execution: release
+
+solver:
+  profile: cpu_mpi_2decomp_fftw
 
 parallel:
   use_mpi: true
@@ -69,8 +72,8 @@ parallel:
   use_cuda: false
 ```
 
-ここで`model`は分散FFTを利用できるビルド構成を選び、
-`case`はNSE共通の`case.yaml`入力雛形を選ぶだけである。
+ここで`model`はNSEという物理モデルを選び、`solver.profile`が分散FFTを利用できる
+特殊ビルド構成を選ぶ。`case`はNSE共通の`case.yaml`入力雛形を選ぶだけである。
 HITのスペクトル、乱数seed、RMS速度などの流れ場条件は、
 生成後の`cases/caseNNNN/case.yaml`で管理する。
 ビルド時と実行時にケーステンプレートを直接渡す必要はない。

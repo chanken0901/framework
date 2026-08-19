@@ -445,6 +445,65 @@ def _parallel_features(
     return values["use_mpi"], values["use_openmp"], values["use_cuda"]
 
 
+def _resolve_solver_profile(
+    design: dict[str, Any],
+    manifest: dict[str, Any],
+) -> tuple[str, bool, bool, bool, bool]:
+    """Resolve a profile from explicit parallel choices and an optional override."""
+
+    parallel = _mapping(design.get("parallel"), "parallel")
+    requested: dict[str, bool] = {}
+    for name in ("use_mpi", "use_openmp", "use_cuda"):
+        value = parallel.get(name)
+        if not isinstance(value, bool):
+            raise EnvironmentError(f"parallel.{name} must be true or false")
+        requested[name] = value
+
+    if requested["use_mpi"] and requested["use_cuda"]:
+        mode = "mpi_cuda"
+    elif requested["use_cuda"]:
+        mode = "cuda"
+    elif requested["use_mpi"]:
+        mode = "mpi"
+    else:
+        mode = "serial"
+
+    solver = _mapping(design.get("solver", {}), "solver")
+    configured_profile = solver.get("profile")
+    legacy_model = _mapping(design.get("model", {}), "model")
+    legacy_profile = legacy_model.get("profile")
+    if configured_profile in {None, ""} and legacy_profile not in {None, ""}:
+        configured_profile = legacy_profile
+    elif (
+        configured_profile not in {None, ""}
+        and legacy_profile not in {None, ""}
+        and str(configured_profile) != str(legacy_profile)
+    ):
+        raise EnvironmentError(
+            "solver.profile conflicts with legacy model.profile: "
+            f"{configured_profile!r} != {legacy_profile!r}"
+        )
+    if configured_profile in {None, ""}:
+        defaults = _mapping(
+            manifest.get("default_profiles", {}),
+            "solver manifest.default_profiles",
+        )
+        configured_profile = defaults.get(mode)
+        if configured_profile in {None, ""}:
+            model = str(manifest.get("model") or "solver")
+            raise EnvironmentError(
+                f"{model} has no default profile for parallel mode {mode!r}; "
+                "change parallel.use_mpi/use_cuda or set solver.profile explicitly"
+            )
+
+    profile = str(configured_profile)
+    use_mpi, use_openmp, use_cuda = _parallel_features(
+        design, manifest, profile
+    )
+    _, _, openmp_capable, _ = _profile_settings(manifest, profile)
+    return profile, use_mpi, use_openmp, use_cuda, openmp_capable
+
+
 def _slurm_script(
     scheduler: dict[str, Any],
     include_tests: bool,
@@ -741,7 +800,7 @@ def prepare(args: argparse.Namespace) -> Path:
             "name"
         ] = args.model
     if args.profile:
-        _mapping(design.setdefault("model", {}), "model")[
+        _mapping(design.setdefault("solver", {}), "solver")[
             "profile"
         ] = args.profile
     validate_design_selections(design, option_state)
@@ -758,10 +817,12 @@ def prepare(args: argparse.Namespace) -> Path:
 
     model_cfg = _mapping(design.get("model"), "model")
     model = str(model_cfg.get("name") or "").lower()
-    profile = str(model_cfg.get("profile") or "")
-    include_tests = bool(model_cfg.get("include_tests", False))
-    if not model or not profile:
-        raise EnvironmentError("model.name and model.profile are required")
+    solver_cfg = _mapping(design.get("solver", {}), "solver")
+    include_tests = bool(
+        solver_cfg.get("include_tests", model_cfg.get("include_tests", False))
+    )
+    if not model:
+        raise EnvironmentError("model.name is required")
 
     catalog_relative = str(
         source_cfg.get(
@@ -783,13 +844,13 @@ def prepare(args: argparse.Namespace) -> Path:
     manifest_name = str(catalog_entry.get("manifest") or "solver_manifest.yaml")
     manifest_path = _safe_solver_file(solver_root, manifest_name)
     manifest = _mapping(load_yaml(manifest_path), "solver manifest")
+    profile, use_mpi, use_openmp, use_cuda, openmp_capable = (
+        _resolve_solver_profile(design, manifest)
+    )
     selected_files, components = _selected_solver_files(
         solver_root, manifest, profile, include_tests
     )
     dependencies = _inspect_dependencies(solver_root, manifest, selected_files)
-    use_mpi, use_openmp, use_cuda = _parallel_features(
-        design, manifest, profile
-    )
 
     destination_cfg = _mapping(design.get("destination"), "destination")
     destination_text = destination_cfg.get("root")
@@ -1030,6 +1091,7 @@ def prepare(args: argparse.Namespace) -> Path:
             ),
             "use_mpi": use_mpi,
             "use_openmp": use_openmp,
+            "openmp_capable": openmp_capable,
             "use_cuda": use_cuda,
         }
         provenance = {

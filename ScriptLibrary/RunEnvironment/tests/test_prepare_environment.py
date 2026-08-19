@@ -14,6 +14,7 @@ from prepare_environment import (  # noqa: E402
     _global_case_index_path,
     _numbered_case_destination,
     _parallel_features,
+    _resolve_solver_profile,
     _requested_case_destination,
     _slurm_script,
 )
@@ -109,6 +110,9 @@ class ParallelFeatureTests(unittest.TestCase):
             / "gp3d"
             / "solver_manifest.yaml"
         )
+        cls.nse_manifest = load_yaml(
+            framework_root / "SolverLibrary" / "NSE" / "solver_manifest.yaml"
+        )
 
     def test_accepts_mpi_openmp_capability_without_counts(self) -> None:
         design = {
@@ -136,6 +140,103 @@ class ParallelFeatureTests(unittest.TestCase):
         with self.assertRaisesRegex(EnvironmentError, "use_cuda"):
             _parallel_features(design, self.gpe_manifest, "cpu_mpi_fftw")
 
+    def test_gpe_profile_is_derived_from_mpi_and_cuda(self) -> None:
+        expected = {
+            (False, False): "cpu_serial_fftw",
+            (True, False): "cpu_mpi_fftw",
+            (False, True): "cuda_single",
+            (True, True): "cuda_mpi_cufftmp",
+        }
+        for (use_mpi, use_cuda), profile in expected.items():
+            with self.subTest(use_mpi=use_mpi, use_cuda=use_cuda):
+                design = {
+                    "parallel": {
+                        "use_mpi": use_mpi,
+                        "use_openmp": False,
+                        "use_cuda": use_cuda,
+                    }
+                }
+                resolved = _resolve_solver_profile(design, self.gpe_manifest)
+                self.assertEqual(resolved[0], profile)
+
+    def test_nse_profile_is_derived_from_mpi_and_cuda(self) -> None:
+        mpi = {
+            "parallel": {
+                "use_mpi": True,
+                "use_openmp": True,
+                "use_cuda": False,
+            }
+        }
+        cuda = {
+            "parallel": {
+                "use_mpi": False,
+                "use_openmp": False,
+                "use_cuda": True,
+            }
+        }
+
+        self.assertEqual(
+            _resolve_solver_profile(mpi, self.nse_manifest)[0], "cpu_mpi"
+        )
+        self.assertEqual(
+            _resolve_solver_profile(cuda, self.nse_manifest)[0], "cuda_single"
+        )
+
+    def test_explicit_specialized_profile_must_match_parallel_flags(self) -> None:
+        design = {
+            "parallel": {
+                "use_mpi": True,
+                "use_openmp": False,
+                "use_cuda": False,
+            },
+            "solver": {"profile": "cpu_mpi_dft"},
+        }
+
+        self.assertEqual(
+            _resolve_solver_profile(design, self.gpe_manifest)[0],
+            "cpu_mpi_dft",
+        )
+
+    def test_explicit_profile_rejects_parallel_mismatch(self) -> None:
+        design = {
+            "parallel": {
+                "use_mpi": False,
+                "use_openmp": False,
+                "use_cuda": True,
+            },
+            "solver": {"profile": "cpu_mpi_dft"},
+        }
+
+        with self.assertRaisesRegex(EnvironmentError, "use_mpi"):
+            _resolve_solver_profile(design, self.gpe_manifest)
+
+    def test_nse_rejects_unsupported_cpu_serial_mode(self) -> None:
+        design = {
+            "parallel": {
+                "use_mpi": False,
+                "use_openmp": False,
+                "use_cuda": False,
+            }
+        }
+
+        with self.assertRaisesRegex(EnvironmentError, "no default profile"):
+            _resolve_solver_profile(design, self.nse_manifest)
+
+    def test_legacy_model_profile_is_still_accepted(self) -> None:
+        design = {
+            "model": {"name": "gpe", "profile": "cpu_mpi_dft"},
+            "parallel": {
+                "use_mpi": True,
+                "use_openmp": False,
+                "use_cuda": False,
+            },
+        }
+
+        self.assertEqual(
+            _resolve_solver_profile(design, self.gpe_manifest)[0],
+            "cpu_mpi_dft",
+        )
+
 
 class NseCaseTemplateTests(unittest.TestCase):
     def test_parallel_features_and_runtime_counts_are_template_fields(self) -> None:
@@ -146,7 +247,22 @@ class NseCaseTemplateTests(unittest.TestCase):
         self.assertIn("use_openmp: {{use_openmp}}", template)
         self.assertIn("mpi_processes: {{mpi_processes}}", template)
         self.assertIn("omp_threads: {{omp_threads}}", template)
+        self.assertNotIn("profile: {{solver_profile}}", template)
+        self.assertNotIn("use_mpi: {{use_mpi}}", template)
+        self.assertNotIn("use_cuda: {{use_cuda}}", template)
         self.assertNotIn("use_openmp: true", template)
+
+    def test_gpe_template_omits_profile_derived_fields(self) -> None:
+        template = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "gpe_quantum_taylor_green.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("use_openmp: {{use_openmp}}", template)
+        self.assertNotIn("profile: {{solver_profile}}", template)
+        self.assertNotIn("use_mpi: {{use_mpi}}", template)
+        self.assertNotIn("use_cuda: {{use_cuda}}", template)
 
     def test_flow_conditions_share_one_nse_template(self) -> None:
         template = (

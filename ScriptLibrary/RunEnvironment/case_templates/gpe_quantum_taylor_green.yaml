@@ -62,10 +62,9 @@ time:
 
 solver:
   type: gpe_pseudospectral
-  profile: {{solver_profile}}
-  use_mpi: {{use_mpi}}
+  # MPI/CUDAとビルドプロファイルはenvironment設計書から自動決定される。
+  # OpenMPだけは対応するCPU版でケースごとに切り替えられる。
   use_openmp: {{use_openmp}}
-  use_cuda: {{use_cuda}}
   mpi_processes: {{mpi_processes}}
   omp_threads: {{omp_threads}}
   cuda_device: 0

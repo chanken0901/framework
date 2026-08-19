@@ -117,7 +117,7 @@ def _prepare_input(
 
 def _case_parallel_settings(
     root: Path, lock: dict[str, Any]
-) -> tuple[int, int]:
+) -> tuple[int, int, bool]:
     case_path = root / str(lock["case_directory"]) / "case.yaml"
     if not case_path.is_file():
         raise RunCaseError(f"case design not found: {case_path}")
@@ -132,9 +132,13 @@ def _case_parallel_settings(
             "solver.processes is no longer supported; use solver.mpi_processes"
         )
 
-    for key in ("use_mpi", "use_openmp", "use_cuda"):
+    # Older generated cases repeated these profile-derived values. Accept them
+    # as compatibility assertions, but new case templates omit both fields.
+    for key in ("use_mpi", "use_cuda"):
         expected = bool(lock.get(key, False))
-        actual = solver.get(key, expected)
+        if key not in solver:
+            continue
+        actual = solver[key]
         if not isinstance(actual, bool):
             raise RunCaseError(f"solver.{key} must be true or false")
         if actual != expected:
@@ -142,6 +146,17 @@ def _case_parallel_settings(
                 f"solver.{key} does not match the generated environment; "
                 "update the environment design and regenerate the environment"
             )
+
+    use_openmp = solver.get("use_openmp", bool(lock.get("use_openmp", False)))
+    if not isinstance(use_openmp, bool):
+        raise RunCaseError("solver.use_openmp must be true or false")
+    openmp_capable = bool(
+        lock.get("openmp_capable", lock.get("use_openmp", False))
+    )
+    if use_openmp and not openmp_capable:
+        raise RunCaseError(
+            "solver.use_openmp=true requires an OpenMP-capable solver profile"
+        )
 
     try:
         processes = int(solver.get("mpi_processes", 1))
@@ -155,12 +170,11 @@ def _case_parallel_settings(
             "solver.mpi_processes and solver.omp_threads must be positive"
         )
     use_mpi = bool(lock.get("use_mpi", False))
-    use_openmp = bool(lock.get("use_openmp", False))
     if not use_mpi and processes != 1:
         raise RunCaseError("solver.mpi_processes must be 1 when MPI is disabled")
     if not use_openmp and omp_threads != 1:
         raise RunCaseError("solver.omp_threads must be 1 when OpenMP is disabled")
-    return processes, omp_threads
+    return processes, omp_threads, use_openmp
 
 
 def parse_args() -> argparse.Namespace:
@@ -203,7 +217,7 @@ def main() -> int:
         include_tests = bool(lock.get("include_tests", False))
         if args.test and not include_tests:
             raise RunCaseError(
-                "tests were not staged; regenerate with model.include_tests: true"
+                "tests were not staged; regenerate with solver.include_tests: true"
             )
         runner = root / "ScriptLibrary" / "BuildSolver" / "build_model.py"
         design = root / "ScriptLibrary" / "BuildSolver" / "build.local.yaml"
@@ -233,7 +247,9 @@ def main() -> int:
         ):
             raise RunCaseError("generated environment is missing runner, design, or input")
 
-        case_processes, case_omp_threads = _case_parallel_settings(root, lock)
+        case_processes, case_omp_threads, case_use_openmp = (
+            _case_parallel_settings(root, lock)
+        )
         processes = args.processes if args.processes is not None else case_processes
         omp_threads = (
             args.omp_threads
@@ -244,8 +260,10 @@ def main() -> int:
             raise RunCaseError("runtime parallel counts must be positive")
         if not bool(lock.get("use_mpi", False)) and processes != 1:
             raise RunCaseError("--processes must be 1 when MPI is disabled")
-        if not bool(lock.get("use_openmp", False)) and omp_threads != 1:
-            raise RunCaseError("--omp-threads must be 1 when OpenMP is disabled")
+        if not case_use_openmp and omp_threads != 1:
+            raise RunCaseError(
+                "--omp-threads must be 1 when solver.use_openmp is false"
+            )
         if (
             str(lock.get("model", "")).lower() == "nse"
             and bool(lock.get("use_mpi", False))

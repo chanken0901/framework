@@ -53,7 +53,7 @@ Copy-Item `
 
 ```yaml
 select:
-  model: nse_cuda_single
+  model: nse
   execution: release
 
 parallel:
@@ -78,15 +78,13 @@ python .\tools\run_case.py --build
 python .\tools\run_case.py --run
 ```
 
-CUDA版ではMPIとOpenMPを無効にします。GPU番号は`case.yaml`の次の項目で
-選択できます。
+CUDA版ではenvironment設計書でMPIとOpenMPを無効にします。profile、MPI、CUDAは
+この設計から自動決定されるため、`case.yaml`には重ねて記述しません。GPU番号は
+次の項目で選択できます。
 
 ```yaml
 solver:
-  profile: cuda_single
-  use_mpi: false
   use_openmp: false
-  use_cuda: true
   mpi_processes: 1
   omp_threads: 1
   cuda_device: 0

@@ -67,6 +67,17 @@ class CaseInputProfileTests(unittest.TestCase):
 
         _validate_solver_selection(case, self.manifest, "cpu_mpi_fftw")
 
+    def test_profile_derived_fields_may_be_omitted(self) -> None:
+        case = {
+            "solver": {
+                "use_openmp": True,
+                "mpi_processes": 8,
+                "omp_threads": 2,
+            }
+        }
+
+        _validate_solver_selection(case, self.manifest, "cpu_mpi_fftw")
+
     def test_accepts_runtime_openmp_for_hybrid_capable_profile(self) -> None:
         case = {
             "solver": {
