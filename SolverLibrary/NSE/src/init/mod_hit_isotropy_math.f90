@@ -5,8 +5,34 @@ module mod_hit_isotropy_math
 
   public :: isotropy_error_3x3
   public :: symmetric_inverse_sqrt_3x3
+  public :: velocity_gradient_contraction_3x3
+  public :: pressure_poisson_multiplier
 
 contains
+
+  pure real(dp) function velocity_gradient_contraction_3x3(gradient) &
+      result(contraction)
+    real(dp), intent(in) :: gradient(3,3)
+    integer :: i, j
+
+    contraction = 0.0_dp
+    do j = 1, 3
+      do i = 1, 3
+        contraction = contraction + gradient(i,j)*gradient(j,i)
+      end do
+    end do
+  end function velocity_gradient_contraction_3x3
+
+  pure real(dp) function pressure_poisson_multiplier(k_squared, density) &
+      result(multiplier)
+    real(dp), intent(in) :: k_squared, density
+
+    if (k_squared > tiny(1.0_dp)) then
+      multiplier = density / k_squared
+    else
+      multiplier = 0.0_dp
+    end if
+  end function pressure_poisson_multiplier
 
   pure real(dp) function isotropy_error_3x3(reynolds) result(error_value)
     real(dp), intent(in) :: reynolds(3,3)

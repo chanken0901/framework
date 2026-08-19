@@ -6,7 +6,7 @@ module mod_init_hit_spectral
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config
   use mod_hit_isotropy_math, only : isotropy_error_3x3, &
-    symmetric_inverse_sqrt_3x3
+    symmetric_inverse_sqrt_3x3, pressure_poisson_multiplier
   implicit none
   private
 
@@ -20,6 +20,14 @@ module mod_init_hit_spectral
       complex(c_double_complex), intent(inout) :: field(*)
       integer(c_int) :: status
     end function c_nse_cuda_inverse_complex_3d
+
+    function c_nse_cuda_forward_complex_3d(nx, ny, nz, device, field) &
+        bind(C, name="nse_cuda_forward_complex_3d") result(status)
+      import :: c_double_complex, c_int
+      integer(c_int), value :: nx, ny, nz, device
+      complex(c_double_complex), intent(inout) :: field(*)
+      integer(c_int) :: status
+    end function c_nse_cuda_forward_complex_3d
 
     subroutine c_nse_cuda_get_last_error(buffer, buffer_size) &
         bind(C, name="nse_cuda_get_last_error")
@@ -39,9 +47,14 @@ contains
       ks-sim%nghost:, :)
     complex(c_double_complex), allocatable :: u_hat(:,:,:)
     complex(c_double_complex), allocatable :: v_hat(:,:,:), w_hat(:,:,:)
+    complex(c_double_complex), allocatable :: derivative_hat(:,:,:)
+    complex(c_double_complex), allocatable :: gradient(:,:,:)
+    complex(c_double_complex), allocatable :: pressure_source(:,:,:)
     real(dp) :: target_rms, turbulent_mach, measured_rms, scale
-    real(dp) :: velocity_square_sum
+    real(dp) :: spectral_velocity_square_sum, point_count
     real(dp) :: spectral_divergence, imaginary_residual(3)
+    real(dp) :: pressure_minimum, pressure_maximum
+    real(dp) :: pressure_imaginary_residual
     real(dp) :: initial_isotropy_error, final_isotropy_error
     real(dp) :: rho, pressure, u, v, w
     integer :: i, j, k, isotropy_iterations, isotropy_shells
@@ -71,6 +84,9 @@ contains
     allocate(u_hat(sim%nx,sim%ny,sim%nz))
     allocate(v_hat(sim%nx,sim%ny,sim%nz))
     allocate(w_hat(sim%nx,sim%ny,sim%nz))
+    allocate(derivative_hat(sim%nx,sim%ny,sim%nz))
+    allocate(gradient(sim%nx,sim%ny,sim%nz))
+    allocate(pressure_source(sim%nx,sim%ny,sim%nz))
 
     call generate_hit_fourier_field(u_hat, v_hat, w_hat, sim, nse, &
       spectral_divergence)
@@ -80,6 +96,24 @@ contains
     call measure_spectral_divergence(u_hat, v_hat, w_hat, sim, &
       spectral_divergence)
 
+    spectral_velocity_square_sum = sum(real(u_hat*conjg(u_hat),dp)) + &
+      sum(real(v_hat*conjg(v_hat),dp)) + &
+      sum(real(w_hat*conjg(w_hat),dp))
+    point_count = real(sim%nx,dp)*real(sim%ny,dp)*real(sim%nz,dp)
+    measured_rms = sqrt(spectral_velocity_square_sum / &
+      (3.0_dp*point_count*point_count))
+    if (measured_rms <= tiny(1.0_dp)) then
+      error stop 'Spectral HIT initialization produced a zero velocity field'
+    end if
+    scale = target_rms / measured_rms
+    u_hat = scale*u_hat
+    v_hat = scale*v_hat
+    w_hat = scale*w_hat
+
+    call initialize_hit_pressure(u_hat, v_hat, w_hat, derivative_hat, &
+      gradient, pressure_source, q, sim, nse, js, je, ks, ke, &
+      pressure_minimum, pressure_maximum, pressure_imaginary_residual)
+
     call inverse_component_to_state(u_hat, q, sim, js, je, ks, ke, 2, &
       imaginary_residual(1))
     call inverse_component_to_state(v_hat, q, sim, js, je, ks, ke, 3, &
@@ -87,30 +121,14 @@ contains
     call inverse_component_to_state(w_hat, q, sim, js, je, ks, ke, 4, &
       imaginary_residual(3))
 
-    velocity_square_sum = 0.0_dp
-    do k = ks, ke
-      do j = js, je
-        do i = 1, sim%nx
-          velocity_square_sum = velocity_square_sum + q(i,j,k,2)**2 + &
-            q(i,j,k,3)**2 + q(i,j,k,4)**2
-        end do
-      end do
-    end do
-    measured_rms = sqrt(velocity_square_sum / &
-      (3.0_dp * real(sim%nx,dp) * real(sim%ny,dp) * real(sim%nz,dp)))
-    if (measured_rms <= tiny(1.0_dp)) then
-      error stop 'Spectral HIT initialization produced a zero velocity field'
-    end if
-    scale = target_rms / measured_rms
-
     rho = nse%rho0
-    pressure = nse%rho0 / nse%gamma
     do k = ks, ke
       do j = js, je
         do i = 1, sim%nx
-          u = scale * q(i,j,k,2)
-          v = scale * q(i,j,k,3)
-          w = scale * q(i,j,k,4)
+          u = q(i,j,k,2)
+          v = q(i,j,k,3)
+          w = q(i,j,k,4)
+          pressure = q(i,j,k,5)
           q(i,j,k,1) = rho
           q(i,j,k,2) = rho * u
           q(i,j,k,3) = rho * v
@@ -140,6 +158,11 @@ contains
       write(*,'(A,ES16.8)') '# max spectral divergence: ', spectral_divergence
       write(*,'(A,ES16.8)') '# max inverse FFT imaginary residual: ', &
         maxval(imaginary_residual)
+      write(*,'(A)') '# HIT pressure Poisson: periodic spectral solve'
+      write(*,'(A,2(1X,ES16.8))') '# initial pressure min/max:', &
+        pressure_minimum, pressure_maximum
+      write(*,'(A,ES16.8)') '# max pressure Poisson imaginary residual: ', &
+        pressure_imaginary_residual
       write(*,'(A,ES16.8)') '# unscaled component RMS: ', measured_rms
       write(*,'(A,ES16.8)') '# target component RMS:   ', target_rms
       write(*,'(A,ES16.8)') '# initial turbulent Mach number: ', &
@@ -149,6 +172,7 @@ contains
         write(*,'(A)') '# hit_rms_velocity is nondimensional, not a velocity in m/s.'
       end if
     deallocate(u_hat, v_hat, w_hat)
+    deallocate(derivative_hat, gradient, pressure_source)
   end subroutine initialize_hit_spectral
 
   subroutine generate_hit_fourier_field(u_hat, v_hat, w_hat, sim, nse, &
@@ -680,6 +704,203 @@ contains
 
     is_nyquist = (modulo(n,2) == 0 .and. abs(mode) == n/2)
   end function is_nyquist_mode
+
+  subroutine initialize_hit_pressure(u_hat, v_hat, w_hat, derivative_hat, &
+      gradient, pressure_source, q, sim, nse, js, je, ks, ke, &
+      pressure_minimum, pressure_maximum, imaginary_residual)
+    complex(c_double_complex), intent(in) :: u_hat(:,:,:)
+    complex(c_double_complex), intent(in) :: v_hat(:,:,:), w_hat(:,:,:)
+    complex(c_double_complex), intent(inout) :: derivative_hat(:,:,:)
+    complex(c_double_complex), intent(inout) :: gradient(:,:,:)
+    complex(c_double_complex), intent(inout) :: pressure_source(:,:,:)
+    type(simulation_config), intent(in) :: sim
+    type(nse_config), intent(in) :: nse
+    integer, intent(in) :: js, je, ks, ke
+    real(dp), intent(inout) :: q(1-sim%nghost:, js-sim%nghost:, &
+      ks-sim%nghost:, :)
+    real(dp), intent(out) :: pressure_minimum, pressure_maximum
+    real(dp), intent(out) :: imaginary_residual
+    real(dp) :: normalization, residual
+    integer(c_int) :: status
+    integer :: i, j, k
+
+    pressure_source = cmplx(0.0_dp, 0.0_dp, kind=c_double_complex)
+    imaginary_residual = 0.0_dp
+
+    call add_diagonal_pressure_source(u_hat, 1, derivative_hat, &
+      pressure_source, sim, residual)
+    imaginary_residual = max(imaginary_residual, residual)
+    call add_diagonal_pressure_source(v_hat, 2, derivative_hat, &
+      pressure_source, sim, residual)
+    imaginary_residual = max(imaginary_residual, residual)
+    call add_diagonal_pressure_source(w_hat, 3, derivative_hat, &
+      pressure_source, sim, residual)
+    imaginary_residual = max(imaginary_residual, residual)
+
+    call add_cross_pressure_source(u_hat, 2, v_hat, 1, derivative_hat, &
+      gradient, pressure_source, sim, residual)
+    imaginary_residual = max(imaginary_residual, residual)
+    call add_cross_pressure_source(u_hat, 3, w_hat, 1, derivative_hat, &
+      gradient, pressure_source, sim, residual)
+    imaginary_residual = max(imaginary_residual, residual)
+    call add_cross_pressure_source(v_hat, 3, w_hat, 2, derivative_hat, &
+      gradient, pressure_source, sim, residual)
+    imaginary_residual = max(imaginary_residual, residual)
+
+    status = c_nse_cuda_forward_complex_3d(int(sim%nx,c_int), &
+      int(sim%ny,c_int), int(sim%nz,c_int), int(sim%cuda_device,c_int), &
+      pressure_source)
+    if (status /= 0_c_int) call report_cuda_error()
+    call solve_pressure_spectrum(pressure_source, sim, nse)
+    status = c_nse_cuda_inverse_complex_3d(int(sim%nx,c_int), &
+      int(sim%ny,c_int), int(sim%nz,c_int), int(sim%cuda_device,c_int), &
+      pressure_source)
+    if (status /= 0_c_int) call report_cuda_error()
+
+    normalization = 1.0_dp / &
+      (real(sim%nx,dp)*real(sim%ny,dp)*real(sim%nz,dp))
+    residual = maxval(abs(aimag(pressure_source)))*normalization
+    imaginary_residual = max(imaginary_residual, residual)
+    do k = ks, ke
+      do j = js, je
+        do i = 1, sim%nx
+          q(i,j,k,5) = real(pressure_source(i,j,k),dp)*normalization
+        end do
+      end do
+    end do
+
+    pressure_minimum = minval(q(1:sim%nx,js:je,ks:ke,5))
+    pressure_maximum = maxval(q(1:sim%nx,js:je,ks:ke,5))
+    if (pressure_minimum <= nse%small_p) then
+      error stop 'HIT pressure Poisson solve produced non-positive pressure'
+    end if
+  end subroutine initialize_hit_pressure
+
+  subroutine add_diagonal_pressure_source(field_hat, direction, &
+      derivative_hat, pressure_source, sim, imaginary_residual)
+    complex(c_double_complex), intent(in) :: field_hat(:,:,:)
+    integer, intent(in) :: direction
+    complex(c_double_complex), intent(inout) :: derivative_hat(:,:,:)
+    complex(c_double_complex), intent(inout) :: pressure_source(:,:,:)
+    type(simulation_config), intent(in) :: sim
+    real(dp), intent(out) :: imaginary_residual
+
+    call inverse_velocity_derivative(field_hat, direction, derivative_hat, &
+      sim, imaginary_residual)
+    pressure_source = pressure_source + cmplx( &
+      real(derivative_hat,dp)**2, 0.0_dp, kind=c_double_complex)
+  end subroutine add_diagonal_pressure_source
+
+  subroutine add_cross_pressure_source(first_hat, first_direction, &
+      second_hat, second_direction, derivative_hat, gradient, &
+      pressure_source, sim, imaginary_residual)
+    complex(c_double_complex), intent(in) :: first_hat(:,:,:)
+    complex(c_double_complex), intent(in) :: second_hat(:,:,:)
+    integer, intent(in) :: first_direction, second_direction
+    complex(c_double_complex), intent(inout) :: derivative_hat(:,:,:)
+    complex(c_double_complex), intent(inout) :: gradient(:,:,:)
+    complex(c_double_complex), intent(inout) :: pressure_source(:,:,:)
+    type(simulation_config), intent(in) :: sim
+    real(dp), intent(out) :: imaginary_residual
+    real(dp) :: first_residual, second_residual
+
+    call inverse_velocity_derivative(first_hat, first_direction, gradient, &
+      sim, first_residual)
+    call inverse_velocity_derivative(second_hat, second_direction, &
+      derivative_hat, sim, second_residual)
+    pressure_source = pressure_source + cmplx( &
+      2.0_dp*real(gradient,dp)*real(derivative_hat,dp), 0.0_dp, &
+      kind=c_double_complex)
+    imaginary_residual = max(first_residual, second_residual)
+  end subroutine add_cross_pressure_source
+
+  subroutine inverse_velocity_derivative(field_hat, direction, work, sim, &
+      imaginary_residual)
+    complex(c_double_complex), intent(in) :: field_hat(:,:,:)
+    integer, intent(in) :: direction
+    complex(c_double_complex), intent(inout) :: work(:,:,:)
+    type(simulation_config), intent(in) :: sim
+    real(dp), intent(out) :: imaginary_residual
+    complex(c_double_complex) :: imaginary_unit
+    real(dp) :: pi, wavenumber, normalization
+    integer(c_int) :: status
+    integer :: i, j, k, mode
+
+    pi = acos(-1.0_dp)
+    imaginary_unit = cmplx(0.0_dp, 1.0_dp, kind=c_double_complex)
+    do k = 1, sim%nz
+      do j = 1, sim%ny
+        do i = 1, sim%nx
+          select case (direction)
+          case (1)
+            mode = signed_mode(i, sim%nx)
+            wavenumber = 2.0_dp*pi*real(mode,dp)/sim%lx
+          case (2)
+            mode = signed_mode(j, sim%ny)
+            wavenumber = 2.0_dp*pi*real(mode,dp)/sim%ly
+          case (3)
+            mode = signed_mode(k, sim%nz)
+            wavenumber = 2.0_dp*pi*real(mode,dp)/sim%lz
+          case default
+            error stop 'invalid HIT pressure derivative direction'
+          end select
+          work(i,j,k) = imaginary_unit*wavenumber*field_hat(i,j,k)
+        end do
+      end do
+    end do
+
+    status = c_nse_cuda_inverse_complex_3d(int(sim%nx,c_int), &
+      int(sim%ny,c_int), int(sim%nz,c_int), int(sim%cuda_device,c_int), work)
+    if (status /= 0_c_int) call report_cuda_error()
+    normalization = 1.0_dp / &
+      (real(sim%nx,dp)*real(sim%ny,dp)*real(sim%nz,dp))
+    imaginary_residual = maxval(abs(aimag(work)))*normalization
+    work = normalization*work
+  end subroutine inverse_velocity_derivative
+
+  subroutine solve_pressure_spectrum(pressure_hat, sim, nse)
+    complex(c_double_complex), intent(inout) :: pressure_hat(:,:,:)
+    type(simulation_config), intent(in) :: sim
+    type(nse_config), intent(in) :: nse
+    real(dp) :: pi, kx, ky, kz, k_squared, point_count
+    integer :: i, j, k, mx, my, mz
+    integer :: cutoff_x, cutoff_y, cutoff_z
+
+    pi = acos(-1.0_dp)
+    point_count = real(sim%nx,dp)*real(sim%ny,dp)*real(sim%nz,dp)
+    cutoff_x = floor(nse%hit_dealias_fraction*real(sim%nx/2,dp))
+    cutoff_y = floor(nse%hit_dealias_fraction*real(sim%ny/2,dp))
+    cutoff_z = floor(nse%hit_dealias_fraction*real(sim%nz/2,dp))
+
+    do k = 1, sim%nz
+      mz = signed_mode(k, sim%nz)
+      kz = 2.0_dp*pi*real(mz,dp)/sim%lz
+      do j = 1, sim%ny
+        my = signed_mode(j, sim%ny)
+        ky = 2.0_dp*pi*real(my,dp)/sim%ly
+        do i = 1, sim%nx
+          mx = signed_mode(i, sim%nx)
+          kx = 2.0_dp*pi*real(mx,dp)/sim%lx
+          k_squared = kx*kx + ky*ky + kz*kz
+          if (mx == 0 .and. my == 0 .and. mz == 0) then
+            pressure_hat(i,j,k) = cmplx( &
+              point_count*nse%rho0/nse%gamma, 0.0_dp, &
+              kind=c_double_complex)
+          else if (abs(mx) > cutoff_x .or. abs(my) > cutoff_y .or. &
+              abs(mz) > cutoff_z .or. is_nyquist_mode(mx,sim%nx) .or. &
+              is_nyquist_mode(my,sim%ny) .or. &
+              is_nyquist_mode(mz,sim%nz)) then
+            pressure_hat(i,j,k) = cmplx(0.0_dp, 0.0_dp, &
+              kind=c_double_complex)
+          else
+            pressure_hat(i,j,k) = &
+              pressure_poisson_multiplier(k_squared,nse%rho0) * &
+              pressure_hat(i,j,k)
+          end if
+        end do
+      end do
+    end do
+  end subroutine solve_pressure_spectrum
 
   subroutine inverse_component_to_state(field_hat, q, sim, js, je, ks, &
       ke, variable, imaginary_residual)
