@@ -1,0 +1,40 @@
+&simulation
+  equation = "GPE"
+  case_name = "taylor_green_vortex_check"
+  initial_condition = "quantum_taylor_green"
+  nx = 64
+  ny = 64
+  nz = 64
+  x_min = -3.141592653589793
+  x_max =  3.141592653589793
+  y_min = -3.141592653589793
+  y_max =  3.141592653589793
+  z_min = -3.141592653589793
+  z_max =  3.141592653589793
+  dt = 2.5e-3
+  nsteps = 0
+  output_frequency = 0
+  output_dir = "tests/taylor_green_vortex_check_output"
+  write_initial = .true.
+  write_meta = .true.
+/
+
+&gpe
+  use_dimensionless_parameters = .true.
+  alpha = 0.1
+  beta = 20.0
+  norm = 248.05021344239853
+  wx = 0.0
+  wy = 0.0
+  wz = 0.0
+  phase_noise = 0.0
+  tg_velocity_amplitude = 1.0
+  tg_auto_winding = .true.
+  argle_enabled = .true.
+  argle_write_seed = .true.
+  argle_steps = 40
+  argle_dtau = 2.5e-2
+  argle_tolerance = 0.0
+  argle_output_every = 10
+  imaginary_time = .false.
+/

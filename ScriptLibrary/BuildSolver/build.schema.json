@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Unified SolverLibrary build design",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "design_id",
+    "selected_model",
+    "model_catalog",
+    "machine_profile",
+    "models",
+    "build",
+    "run"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "design_id": {"type": "string", "minLength": 1},
+    "selected_model": {"enum": ["nse", "gpe"]},
+    "model_catalog": {"type": "string"},
+    "machine_profile": {"type": "string"},
+    "solver_library_root": {"type": "string"},
+    "models": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["profile"],
+        "properties": {
+          "profile": {"type": "string"},
+          "input_file": {"type": ["string", "null"]},
+          "cmake_overrides": {"type": "object"}
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "required": ["configuration", "output_root", "directory_name"],
+      "properties": {
+        "configuration": {"enum": ["Debug", "Release", "RelWithDebInfo"]},
+        "output_root": {"type": "string"},
+        "directory_name": {"type": "string"},
+        "warnings": {"type": "boolean"},
+        "tests": {"type": "boolean"},
+        "parallel_jobs": {"type": "integer", "minimum": 1},
+        "configure_fresh": {"type": "boolean"}
+      }
+    },
+    "run": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "working_directory": {"type": ["string", "null"]},
+        "mpi_processes": {"type": "integer", "minimum": 1},
+        "omp_threads": {"type": "integer", "minimum": 1},
+        "launcher_arguments": {"type": "array", "items": {"type": "string"}},
+        "program_arguments": {"type": "array", "items": {"type": "string"}},
+        "environment": {"type": "object"}
+      }
+    }
+  }
+}

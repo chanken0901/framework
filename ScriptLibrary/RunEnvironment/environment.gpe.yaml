@@ -1,0 +1,29 @@
+schema_version: 1
+environment_id: gpe_workstation_example
+
+# 標準候補はenvironment_options.yamlから読み込まれる。
+# 研究室や計算機固有の候補を追加するときは、ここへ別カタログのパスを追加する。
+option_catalogs: []
+
+select:
+  source: local_framework
+  destination: windows_research_runs
+  model: gpe_cpu_mpi_fftw
+  target: windows_gnu_msmpi
+  case: gpe_quantum_taylor_green
+  execution: release
+  scheduler: disabled
+  archive: none
+
+parallel:
+  use_mpi: true
+  use_openmp: false
+  use_cuda: false
+
+# 選択肢の値を変更したい部分だけを同名セクションに記述する。
+# ここではcaseの識別情報だけを上書きしている。
+case:
+  id: case0001
+  label: qtgv_baseline
+  description: Quantum Taylor-Green baseline
+  project_name: GPEResearch

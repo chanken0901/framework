@@ -1,0 +1,17 @@
+# 研究フレームワークで選択できる物理モデルとSolverLibrary上の実装を対応付ける。
+schema_version: 1
+
+models:
+  nse:
+    description: Compressible Navier-Stokes finite-volume solver
+    library_subpath: NSE
+    manifest: solver_manifest.yaml
+    required_adapter: nse_cmake_v1
+    default_profile: cpu_mpi
+
+  gpe:
+    description: Three-dimensional Gross-Pitaevskii pseudo-spectral solver
+    library_subpath: GPE/gp3d
+    manifest: solver_manifest.yaml
+    required_adapter: gp3d_cmake_v1
+    default_profile: cpu_mpi_dft

@@ -1,0 +1,116 @@
+case_id: {{case_id}}
+case_label: {{case_label}}
+status: planned
+description: {{description}}
+created_at: {{created_at}}
+
+project:
+  name: {{project_name}}
+  author: Kento Tanaka
+
+physics:
+  model: compressible_euler
+  nse:
+    nv: 5
+    nghost: 3
+    gamma: 1.4
+    small_rho: 1.0e-12
+    small_p: 1.0e-12
+    rho0: 1.0
+    mach_number: 0.5
+    reynolds_number: 0.0
+    prandtl_number: 0.72
+
+flow:
+  type: tgv
+  tgv:
+    amplitude: 1.0
+    mode_x: 1
+    mode_y: 1
+    mode_z: 1
+  hit:
+    # Re_lambda target, corresponding to Re_ini in the original HIT code.
+    turbulent_mach_number: 0.5
+    turbulent_reynolds_number: 30.0
+    random_seed: 13579
+    dealias_fraction: 0.6666666666666667
+    isotropy_mode: projected_shell
+    isotropy_k_cutoff: 2.5
+    isotropy_tolerance: 1.0e-8
+    isotropy_max_iterations: 80
+    spectrum:
+      # choices: johnsen, pope
+      type: johnsen
+      johnsen:
+        characteristic_length: 1.0
+        length_scale_ratio: 2.0
+      pope:
+        integral_length: 1.0
+        energy_constant: 1.5
+        large_scale_constant: 6.78
+        dissipation_constant: 0.40
+        large_scale_exponent: 2.0
+        dissipation_exponent: 5.2
+
+forcing:
+  # choices: none, petersen_livescu
+  type: none
+  petersen_livescu:
+    # choices: full_spectrum, low_wavenumber
+    spectrum: low_wavenumber
+    # choices: auto, 2decomp_fftw, cufft
+    fft_backend: auto
+    k_cutoff: 2.5
+    target_dissipation: 0.1
+    dilatational_ratio: 0.0
+    denominator_floor: 1.0e-14
+    max_coefficient: 0.0
+    report_interval: 100
+
+grid:
+  nx: 64
+  ny: 64
+  nz: 64
+  x_min: 0.0
+  x_max: 6.283185307179586
+  y_min: 0.0
+  y_max: 6.283185307179586
+  z_min: 0.0
+  z_max: 6.283185307179586
+
+time:
+  cfl: 0.5
+  dt: 1.0e-4
+  t_max: 100.0
+  nsteps: 1000
+  output_frequency: 10
+
+solver:
+  type: nse
+  backend: serial
+  use_mpi: {{use_mpi}}
+  use_openmp: {{use_openmp}}
+  use_cuda: {{use_cuda}}
+  mpi_processes: {{mpi_processes}}
+  omp_threads: {{omp_threads}}
+
+numerics:
+  time_integration: RK3
+  # Options: keep2, keep6, weno5z_roe, hybrid
+  convective_scheme: keep6
+  # Used only when convective_scheme is hybrid.
+  hybrid:
+    smooth_scheme: keep6
+    shock_scheme: weno5z_roe
+    sensor: ducros_pressure
+    sensor_onset: 0.01
+    sensor_full: 0.10
+
+storage:
+  raw_data_location: {{raw_data_location}}
+  output_dir: output
+  output_format: slf
+  restart_location:
+
+outputs:
+  used_in:

@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/gp3d/workflow.schema.json",
+  "title": "GP3D build and run workflow",
+  "description": "Configuration consumed by tools/run_workflow.ps1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_root",
+    "stages",
+    "cmake",
+    "build",
+    "test",
+    "run"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "project_root": {
+      "type": "string",
+      "description": "Project root relative to this configuration file."
+    },
+    "stages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["configure", "build", "test", "run"],
+      "properties": {
+        "configure": {"type": "boolean"},
+        "build": {"type": "boolean"},
+        "test": {"type": "boolean"},
+        "run": {"type": "boolean"}
+      }
+    },
+    "cmake": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "source_directory",
+        "build_directory",
+        "generator",
+        "definitions",
+        "configure_arguments"
+      ],
+      "properties": {
+        "command": {"type": "string", "minLength": 1},
+        "source_directory": {"type": "string", "minLength": 1},
+        "build_directory": {"type": "string", "minLength": 1},
+        "generator": {"type": "string"},
+        "definitions": {
+          "type": "object",
+          "description": "CMake cache definitions passed as -Dname=value.",
+          "additionalProperties": {
+            "type": ["string", "number", "boolean"]
+          }
+        },
+        "configure_arguments": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["configuration", "target", "parallel_jobs", "clean_first", "arguments"],
+      "properties": {
+        "configuration": {"type": "string"},
+        "target": {"type": "string"},
+        "parallel_jobs": {"type": "integer", "minimum": 0},
+        "clean_first": {"type": "boolean"},
+        "arguments": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "configuration", "arguments"],
+      "properties": {
+        "command": {"type": "string", "minLength": 1},
+        "configuration": {"type": "string"},
+        "arguments": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "working_directory",
+        "executable",
+        "input_file",
+        "use_mpi_launcher",
+        "launcher",
+        "process_option",
+        "processes",
+        "launcher_arguments",
+        "program_arguments",
+        "environment"
+      ],
+      "properties": {
+        "working_directory": {"type": "string", "minLength": 1},
+        "executable": {
+          "type": "string",
+          "description": "Use auto to infer gp3d_cufftmp, gp3d_cuda, gp3d_mpi, or gp3d_sequential from the CMake definitions."
+        },
+        "input_file": {"type": "string"},
+        "use_mpi_launcher": {"type": "boolean"},
+        "launcher": {"type": "string"},
+        "process_option": {"type": "string"},
+        "processes": {"type": "integer", "minimum": 1},
+        "launcher_arguments": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "program_arguments": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": ["string", "number", "boolean"]
+          }
+        }
+      }
+    }
+  }
+}

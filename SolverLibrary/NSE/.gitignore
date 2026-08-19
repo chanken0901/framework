@@ -1,0 +1,9 @@
+/build/
+/build-*/
+/solver.exe
+*.mod
+*.smod
+generated/
+resolved_build.json
+__pycache__/
+*.pyc

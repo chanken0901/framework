@@ -1,0 +1,49 @@
+# Windows、GNU Fortran、Microsoft MPI向けの共通マシンプロファイル。
+schema_version: 1
+profile_id: windows_gnu_msmpi
+platform: windows
+generator: Ninja
+
+tools:
+  cmake: cmake
+  ctest: ctest
+  mpi_launcher: mpiexec
+  mpi_process_option: -n
+
+compiler:
+  fortran: C:/msys64/ucrt64/bin/gfortran.exe
+  common_flags:
+    - -fallow-invalid-boz
+    - -fallow-argument-mismatch
+  warning_flags:
+    - -Wall
+    - -Wextra
+  debug_flags:
+    - -O0
+    - -g
+    - -fcheck=all
+    - -fbacktrace
+  release_flags:
+    - -O2
+  relwithdebinfo_flags:
+    - -O2
+    - -g
+
+mpi:
+  provider: MSMPI
+  root: C:/Program Files (x86)/Microsoft SDKs/MPI
+
+openmp:
+  enabled: true
+
+libraries:
+  fftw_root: C:/msys64/ucrt64
+  decomp2d_root: C:/Users/Owner/Documents/Codex/ThirdParty/install/2decomp-fft-v2.1.0
+  cuda_compiler:
+  cuda_toolkit_root:
+  cuda_architectures: 86
+  cufftmp_root:
+  nvshmem_root:
+  cufftmp_api: auto
+
+environment: {}

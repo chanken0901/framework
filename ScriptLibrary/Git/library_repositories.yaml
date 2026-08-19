@@ -1,0 +1,28 @@
+# ScriptLibraryとSolverLibraryのGit運用設計書。
+# remote_urlが空の場合は、各リポジトリに設定済みのoriginを使用する。
+schema_version: 1
+
+framework_root: C:/Users/Owner/Documents/Codex/FrameWork
+
+settings:
+  git_command: git
+  default_branch: main
+  default_remote: origin
+  max_changed_file_mb: 50
+  user_name:
+  user_email:
+
+repositories:
+  ScriptLibrary:
+    enabled: true
+    path: "{framework_root}/ScriptLibrary"
+    branch: main
+    remote: origin
+    remote_url: https://github.com/chanken0901/ScriptLibrary.git
+
+  SolverLibrary:
+    enabled: true
+    path: "{framework_root}/SolverLibrary"
+    branch: main
+    remote: origin
+    remote_url: https://github.com/chanken0901/SolverLibrary.git

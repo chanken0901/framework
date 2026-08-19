@@ -1,0 +1,67 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-msmpi-release",
+      "displayName": "Windows gfortran + Microsoft MPI (Release)",
+      "generator": "Ninja",
+      "binaryDir": "$env{LOCALAPPDATA}/SolverLibraryBuild/NSE/windows-msmpi-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "NSE_MPI_PROVIDER": "MSMPI",
+        "MSMPI_ROOT": "C:/Program Files (x86)/Microsoft SDKs/MPI"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-msmpi-debug",
+      "displayName": "Windows gfortran + Microsoft MPI (Debug)",
+      "inherits": "windows-msmpi-release",
+      "binaryDir": "$env{LOCALAPPDATA}/SolverLibraryBuild/NSE/windows-msmpi-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-mpi-release",
+      "displayName": "Linux/HPC system MPI (Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-mpi-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "NSE_MPI_PROVIDER": "SYSTEM"
+      },
+      "condition": {
+        "type": "notEquals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-msmpi-release",
+      "configurePreset": "windows-msmpi-release",
+      "jobs": 8
+    },
+    {
+      "name": "windows-msmpi-debug",
+      "configurePreset": "windows-msmpi-debug",
+      "jobs": 8
+    },
+    {
+      "name": "linux-mpi-release",
+      "configurePreset": "linux-mpi-release",
+      "jobs": 8
+    }
+  ]
+}

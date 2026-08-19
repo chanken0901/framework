@@ -1,0 +1,39 @@
+&simulation
+  equation = "GPE"
+  case_name = "restart_main_smoke"
+  initial_condition = "gaussian"
+  restart_file = "restart_roundtrip_output/field_000007.slf"
+  nx = 4
+  ny = 3
+  nz = 4
+  x_min = -2.0
+  x_max =  2.0
+  y_min = -1.5
+  y_max =  1.5
+  z_min = -1.0
+  z_max =  3.0
+  dt = 0.125
+  nsteps = 2
+  output_frequency = 1
+  output_dir = "restart_main_output"
+  write_initial = .false.
+  write_meta = .false.
+  timing_enabled = .true.
+/
+
+&gpe
+  g = 0.25
+  hbar = 1.0
+  mass = 1.0
+  norm = 1.0
+  wx = 0.0
+  wy = 0.0
+  wz = 0.0
+  imaginary_time = .false.
+  argle_enabled = .true.
+  argle_write_seed = .true.
+  argle_steps = 1000000
+  argle_dtau = 1.0e-4
+  argle_tolerance = 0.0
+  argle_output_every = 0
+/

@@ -1,0 +1,61 @@
+
+# Added by setup_solverlibrary_github.py
+# Build products
+build/
+**/build/
+*.o
+*.obj
+*.mod
+*.smod
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+
+# Runtime outputs
+run/
+**/run/
+logs/
+**/logs/
+output/
+**/output/
+paraview/
+**/paraview/
+*-smoke-output/
+**/*-smoke-output/
+restart/
+**/restart/
+checkpoint/
+**/checkpoint/
+*.log
+fort.*
+
+# Large data
+*.h5
+*.hdf5
+*.vtk
+*.vtu
+*.plt
+*.raw
+*.bin
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temporary
+tmp/
+temp/
+*.tmp
+*.bak

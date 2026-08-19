@@ -1,0 +1,28 @@
+schema_version: 1
+catalog_id: laboratory_local
+description: Example choices maintained by a laboratory or computing site
+allow_override: false
+
+options:
+  source:
+    laboratory_nas:
+      label: Laboratory NAS
+      description: Example canonical framework location.
+      values:
+        framework_root: \\server\share\研究フレームワーク構築
+        model_catalog: ScriptLibrary/BuildSolver/model_catalog.yaml
+
+  destination:
+    workstation_ssd:
+      label: Workstation local SSD
+      description: Example fast local workspace.
+      values:
+        root: D:/ResearchRuns/gpe_case0001
+
+  execution:
+    release_large_build:
+      label: Release large build
+      description: Example configuration using sixteen concurrent compile jobs.
+      values:
+        configuration: Release
+        parallel_jobs: 16

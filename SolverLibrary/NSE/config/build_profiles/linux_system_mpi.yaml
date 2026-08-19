@@ -1,0 +1,37 @@
+# Linux・スパコン上のシステムMPI用プロファイル。
+schema_version: 1
+profile_id: linux_system_mpi
+platform: linux
+
+generator: Ninja
+
+tools:
+  cmake: cmake
+  mpi_launcher: mpiexec
+  mpi_process_option: -n
+
+compiler:
+  fortran: mpifort
+  common_flags:
+    - -fallow-invalid-boz
+    - -fallow-argument-mismatch
+  warning_flags:
+    - -Wall
+    - -Wextra
+  debug_flags:
+    - -O0
+    - -g
+    - -fcheck=all
+    - -fbacktrace
+  release_flags:
+    - -O2
+  relwithdebinfo_flags:
+    - -O2
+    - -g
+
+mpi:
+  enabled: true
+  provider: SYSTEM
+
+openmp:
+  enabled: true

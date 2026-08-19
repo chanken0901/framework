@@ -6,3 +6,31 @@
 
 # Locally stored literature
 参考文献/
+# BEGIN MONOREPO GENERATED ARTIFACTS
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+CTestTestfile.cmake
+*.o
+*.obj
+*.mod
+*.smod
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+output/
+*.slf
+*.vti
+*.pvd
+fort.*
+*.log
+*.tmp
+*.bak
+~$*
+# END MONOREPO GENERATED ARTIFACTS

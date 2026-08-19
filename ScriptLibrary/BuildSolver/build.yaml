@@ -1,0 +1,35 @@
+# 共通ビルド設計書。通常はselected_modelと各モデルのprofileを選択する。
+schema_version: 1
+design_id: default_windows_build
+selected_model: nse
+model_catalog: model_catalog.yaml
+machine_profile: machine_profiles/windows_gnu_msmpi.yaml
+solver_library_root: ../../SolverLibrary
+
+models:
+  nse:
+    profile: cpu_mpi
+    input_file:
+    cmake_overrides: {}
+
+  gpe:
+    profile: cpu_mpi_dft
+    input_file:
+    cmake_overrides: {}
+
+build:
+  configuration: Release
+  output_root: ${LOCALAPPDATA}/SolverLibraryBuild
+  directory_name: '{model}-{profile}-{configuration}'
+  warnings: true
+  tests: false
+  parallel_jobs: 8
+  configure_fresh: true
+
+run:
+  enabled: false
+  mpi_processes: 4
+  omp_threads: 8
+  launcher_arguments: []
+  program_arguments: []
+  environment: {}

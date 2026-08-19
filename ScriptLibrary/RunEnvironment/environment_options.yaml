@@ -1,0 +1,235 @@
+schema_version: 1
+catalog_id: builtin
+description: 外部実行環境の標準選択肢
+allow_override: false
+
+options:
+  source:
+    framework_relative:
+      label: ツール基準のフレームワーク
+      description: 設計書をRunEnvironment内に置く場合に、ローカルFrameWorkを相対参照する。
+      values:
+        framework_root: ../..
+        model_catalog: ScriptLibrary/BuildSolver/model_catalog.yaml
+    local_framework:
+      label: ローカルFrameWork
+      description: 編集元であるCドライブ上のローカルFrameWorkを参照する。
+      values:
+        framework_root: C:/Users/Owner/Documents/Codex/FrameWork
+        model_catalog: ScriptLibrary/BuildSolver/model_catalog.yaml
+    mozart_nas:
+      label: Mozart NAS同期ミラー
+      description: 同期先NAS上のFrameWorkを参照する。通常の編集・環境生成には使わない。
+      values:
+        framework_root: \\Mozart\share\FrameWork
+        model_catalog: ScriptLibrary/BuildSolver/model_catalog.yaml
+    hpc_mounted_framework:
+      label: スパコンにマウントしたフレームワーク
+      description: 特別な運用でLinuxの/mnt/framework以下に配置したミラーを参照する。
+      values:
+        framework_root: /mnt/framework/FrameWork
+        model_catalog: ScriptLibrary/BuildSolver/model_catalog.yaml
+
+  destination:
+    windows_research_runs:
+      label: WindowsローカルのResearchRuns
+      description: Windowsユーザープロファイル以下へ実行環境を生成する。
+      values:
+        root: ${USERPROFILE}/ResearchRuns
+        case_index: ${USERPROFILE}/ResearchRuns/case_index.csv
+        auto_case_number: true
+        case_number_width: 4
+        case_number_start: 1
+    local_generated:
+      label: 設計書と同じ場所のgenerated
+      description: 設計書が置かれたフォルダのgenerated以下へ生成する。
+      values:
+        root: generated/gpe_case0001
+        case_index: generated/case_index.csv
+    hpc_scratch:
+      label: スパコンのscratch
+      description: 環境変数SCRATCHが示す領域へ実行環境を生成する。
+      values:
+        root: ${SCRATCH}/gpe_case0001
+        case_index: ${SCRATCH}/case_index.csv
+
+  model:
+    nse_cpu_mpi:
+      label: NSE CPU MPI
+      description: 圧縮性NSEをMPIとOpenMPの局所ループで計算する。
+      values:
+        name: nse
+        profile: cpu_mpi
+        include_tests: false
+    nse_cpu_mpi_2decomp_fftw:
+      label: NSE CPU MPI 2DECOMP&FFT
+      description: 2DECOMP&FFTとFFTW3による分散FFT初期化・Forcingに対応したCPU MPI版。
+      values:
+        name: nse
+        profile: cpu_mpi_2decomp_fftw
+        include_tests: false
+    nse_cuda_single:
+      label: NSE 単一GPU
+      description: 単一GPU上でKEEP、WENO5-Z/Roe、ハイブリッド対流項、6次粘性項、SSPRK3をCUDA計算する。
+      values:
+        name: nse
+        profile: cuda_single
+        include_tests: false
+    gpe_cpu_serial_dft:
+      label: GPE CPU逐次 DFT
+      description: 参照用DFTバックエンドを単一プロセスで使う。
+      values:
+        name: gpe
+        profile: cpu_serial_dft
+        include_tests: false
+    gpe_cpu_serial_fftw:
+      label: GPE CPU逐次 FFTW
+      description: FFTWバックエンドを単一プロセスで使う。
+      values:
+        name: gpe
+        profile: cpu_serial_fftw
+        include_tests: false
+    gpe_cpu_mpi_dft:
+      label: GPE CPU MPI DFT
+      description: MPIスラブ分割と局所参照DFTを使う。
+      values:
+        name: gpe
+        profile: cpu_mpi_dft
+        include_tests: false
+    gpe_cpu_mpi_fftw:
+      label: GPE CPU MPI FFTW
+      description: MPIスラブ分割と局所FFTW変換を使う。
+      values:
+        name: gpe
+        profile: cpu_mpi_fftw
+        include_tests: false
+    gpe_cuda_single:
+      label: GPE 単一GPU
+      description: 単一GPUのCUDAおよびcuFFTバックエンドを使う。
+      values:
+        name: gpe
+        profile: cuda_single
+        include_tests: false
+    gpe_cuda_mpi_cufftmp:
+      label: GPE 複数GPU cuFFTMp
+      description: GPUごとに1 MPIランクを割り当て、cuFFTMpで分散変換する。
+      values:
+        name: gpe
+        profile: cuda_mpi_cufftmp
+        include_tests: false
+
+  target:
+    windows_gnu_msmpi:
+      label: Windows GNUおよびMicrosoft MPI
+      description: GNU Fortran、Ninja、Microsoft MPIを使うWindows環境。
+      values:
+        type: workstation
+        machine_profile: ScriptLibrary/BuildSolver/machine_profiles/windows_gnu_msmpi.yaml
+    linux_gnu_mpi:
+      label: Linux GNU MPI
+      description: システムMPIを使うLinuxワークステーションまたは対話ノード。
+      values:
+        type: workstation
+        machine_profile: ScriptLibrary/BuildSolver/machine_profiles/linux_gnu_mpi.yaml
+    linux_hpc_slurm:
+      label: Linuxスパコン Slurm
+      description: Slurmとスパコン用machine設定を使うLinuxクラスタ。
+      values:
+        type: hpc_slurm
+        machine_profile: ScriptLibrary/RunEnvironment/machine_profiles/linux_hpc_slurm.yaml
+
+  case:
+    nse_case:
+      label: NSE case
+      description: 流れ場条件をcase.yamlで選択するNSE共通caseを生成する。
+      requires:
+        model.name: nse
+      values:
+        create: true
+        template: ScriptLibrary/RunEnvironment/case_templates/nse.yaml
+        id: case0001
+        label: nse_baseline
+        description: NSE baseline case
+        project_name: NSEResearch
+        data_root: results
+    gpe_quantum_taylor_green:
+      label: GPE量子Taylor-Green
+      description: 周期的な量子Taylor-Green渦caseを生成する。
+      requires:
+        model.name: gpe
+      values:
+        create: true
+        template: ScriptLibrary/RunEnvironment/case_templates/gpe_quantum_taylor_green.yaml
+        id: case0001
+        label: qtgv_baseline
+        description: Quantum Taylor-Green baseline
+        project_name: GPEResearch
+        data_root: results
+
+  execution:
+    debug:
+      label: Debug
+      description: 並列機能の構成とは独立したDebugビルド。
+      values:
+        configuration: Debug
+        parallel_jobs: 4
+    release:
+      label: Release
+      description: 並列機能の構成とは独立したReleaseビルド。
+      values:
+        configuration: Release
+        parallel_jobs: 8
+    relwithdebinfo:
+      label: RelWithDebInfo
+      description: 最適化とデバッグ情報を有効にしたビルド。
+      values:
+        configuration: RelWithDebInfo
+        parallel_jobs: 8
+
+  scheduler:
+    disabled:
+      label: スケジューラなし
+      description: ジョブ投入スクリプトを生成しない。
+      values:
+        enabled: false
+    slurm:
+      label: Slurm
+      description: 並列数をsbatch実行時に指定する汎用Slurmスクリプトを生成する。
+      requires:
+        target.type: hpc_slurm
+      values:
+        enabled: true
+        job_name: solver-case0001
+        account:
+        partition:
+        time_limit: 01:00:00
+        output: slurm-%j.out
+        modules:
+          - gcc
+          - openmpi
+          - fftw
+        extra_directives: []
+        test: false
+
+  archive:
+    none:
+      label: アーカイブなし
+      description: 生成した実行環境フォルダだけを保持する。
+      values:
+        enabled: false
+        format: zip
+        output:
+    zip:
+      label: ZIPアーカイブ
+      description: 生成後にZIPアーカイブを作成する。
+      values:
+        enabled: true
+        format: zip
+        output:
+    gztar:
+      label: gzip圧縮tarアーカイブ
+      description: 生成後にtar.gzアーカイブを作成する。
+      values:
+        enabled: true
+        format: gztar
+        output:
