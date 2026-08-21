@@ -36,6 +36,7 @@ openmp:
 
 libraries:
   fftw_root:
+  decomp2d_root:
   cuda_compiler:
   cuda_toolkit_root:
   cuda_architectures:

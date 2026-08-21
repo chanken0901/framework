@@ -6,7 +6,8 @@ program test_distributed_fft
     gp3d_fft_inverse, gp3d_fft_finalize
   implicit none
 
-  integer, parameter :: nx = 4, ny = 4, nz = 4
+  ! Non-cubic sizes exercise independent uneven slab/pencil ranges.
+  integer, parameter :: nx = 6, ny = 5, nz = 7
   integer, parameter :: mode_x = 1, mode_y = 1, mode_z = 1
   type(gp3d_mpi_t) :: mpi
   type(gp3d_fft_plan_t) :: plan

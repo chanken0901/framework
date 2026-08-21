@@ -483,10 +483,15 @@ parallel:
   use_mpi: true
   use_openmp: false
   use_cuda: false
+  fft_decomposition: slab
 ```
 
 GPEでは`parallel.use_mpi`と`parallel.use_cuda`から、逐次CPU、MPI CPU、
 単一GPU、複数GPUを選択します。CPU版は通常FFTW profileを自動選択します。
+MPI CPU版とMPI/cuFFTMp版では`parallel.fft_decomposition`に`slab`（既定）または
+`pencil`を指定できます。CPUで`pencil`を選ぶと`cpu_mpi_pencil_fftw`、
+CUDA併用で選ぶと`cuda_mpi_cufftmp_pencil`が自動選択されます。
+後者にはcuFFTMp 11.4.0（NVIDIA HPC SDK 25.3）以降が必要です。
 検証用DFTが必要な場合だけ、`solver.profile`へ`cpu_serial_dft`または
 `cpu_mpi_dft`を明示します。
 

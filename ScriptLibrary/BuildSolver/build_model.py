@@ -352,6 +352,32 @@ def _model_machine_variables(
         raise ModelBuildError("GPE cuFFTMp profile requires MPI")
     if gpu_backend == "cufftmp" and os.name == "nt":
         raise ModelBuildError("GPE cuFFTMp profile can only be built on Linux")
+    fft_decomposition = str(
+        cmake_variables.get("FFT_DECOMPOSITION", "slab")
+    ).lower()
+    if fft_decomposition not in {"slab", "pencil"}:
+        raise ModelBuildError("GPE FFT_DECOMPOSITION must be slab or pencil")
+    if fft_decomposition == "pencil":
+        if not use_mpi:
+            raise ModelBuildError("GPE pencil FFT requires MPI")
+        if gpu_backend == "cuda":
+            raise ModelBuildError(
+                "GPE pencil FFT is unavailable for the single-GPU CUDA profile"
+            )
+        if (
+            gpu_backend == "none"
+            and str(cmake_variables.get("FFT_BACKEND", "dft")).lower()
+            != "fftw"
+        ):
+            raise ModelBuildError("GPE CPU pencil FFT requires FFT_BACKEND=fftw")
+        if (
+            gpu_backend == "cufftmp"
+            and str(cmake_variables.get("CUFFTMP_API", "auto")).lower()
+            == "legacy"
+        ):
+            raise ModelBuildError(
+                "GPE cuFFTMp pencil FFT requires the modern custom-decomposition API"
+            )
 
     cmake_variables.update(
         {
@@ -368,6 +394,12 @@ def _model_machine_variables(
     if str(cmake_variables.get("FFT_BACKEND", "dft")).lower() == "fftw":
         if libraries.get("fftw_root"):
             cmake_variables["FFTW_ROOT"] = str(libraries["fftw_root"])
+    if (
+        fft_decomposition == "pencil"
+        and gpu_backend == "none"
+        and libraries.get("decomp2d_root")
+    ):
+        cmake_variables["GP3D_2DECOMP_ROOT"] = str(libraries["decomp2d_root"])
     if gpu_backend in {"cuda", "cufftmp"}:
         if libraries.get("cuda_compiler"):
             cmake_variables["CMAKE_CUDA_COMPILER"] = str(libraries["cuda_compiler"])

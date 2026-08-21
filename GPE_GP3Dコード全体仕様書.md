@@ -1,7 +1,8 @@
 # GPE/GP3Dコード全体仕様書
 
-**版:** 1.0  
-**更新日:** 2026-07-27  
+**版:** 1.1
+
+**更新日:** 2026-08-21
 **対象:** SolverLibrary GPE/gp3d  
 **正本:** `C:\Users\Owner\Documents\Codex\FrameWork`
 
@@ -22,13 +23,14 @@
 | 検証 | 数値結果とバックエンドの同等性を確認する |
 | Codex連携 | 本書を渡して現行構造を維持したコード変更を依頼する |
 
-本書は2026-07-27時点の次のソースを直接確認して作成しています。
+本書は2026-08-21時点の次のソースを直接確認して更新しています。
 
 ```text
 C:\Users\Owner\Documents\Codex\FrameWork\SolverLibrary\GPE\gp3d
 ```
 
-SolverLibraryリポジトリのHEADは `882191d6e2fe4ca543b1e671775d20f5c3a6d001` ですが、確認時点で `GPE/gp3d` はGitの未追跡ディレクトリです。そのため、本書が指す版はGitコミットではなく上記パスの2026-07-27時点のファイルスナップショットです。正式な版管理を始める前に、GP3D一式をSolverLibraryへ追加してコミットする必要があります。
+GP3DはFrameWorkモノレポ内でGit管理されています。厳密な版はリポジトリで
+`git rev-parse HEAD`と`git status --short`を実行して確認します。
 
 ---
 
@@ -43,7 +45,7 @@ SolverLibraryリポジトリのHEADは `882191d6e2fe4ca543b1e671775d20f5c3a6d001
 | 初期緩和 | Taylor–Green速度場を用いる無拘束・半陰的ARGLE |
 | 空間離散 | 周期直交格子と擬スペクトル法 |
 | CPU逐次 | 参照DFT、FFTW3 |
-| CPU並列 | MPI zスラブ分割、Alltoallv転置、局所DFTまたはFFTW3 |
+| CPU並列 | MPI zスラブ分割、または2DECOMP&FFTによるペンシル分割FFT |
 | 単一GPU | CUDAカーネルとcuFFT |
 | 複数GPU | MPI、CUDA、cuFFTMp、1 MPI rankにつき1 GPU |
 | 初期条件 | Gaussian、直線渦、Thomas–Fermi渦、渦輪、渦タングル、量子Taylor–Green |
@@ -64,8 +66,6 @@ SolverLibraryリポジトリのHEADは `882191d6e2fe4ca543b1e671775d20f5c3a6d001
 | 適応格子 | 一様直交格子のみ |
 | 非周期FFT | 未実装 |
 | 自動時間刻み | `dt` は固定 |
-| ペンシル分割CPU FFT | CPU MPI版はスラブ分割 |
-| CPU OpenMP高速化 | 設定項目のみ存在し、計算ループはOpenMP化されていない |
 
 ---
 
@@ -90,7 +90,7 @@ main program
    +-- gp3d_restart
    +-- gp3d_solver ------- Split-step / ARGLE / diagnostics
    |      |
-   |      +-- gp3d_fft --- DFT / FFTW / MPI distributed FFT
+   |      +-- gp3d_fft --- DFT / FFTW / MPI slab / MPI pencil
    |      +-- gp3d_mpi --- stub / real MPI
    |
    +-- gp3d_gpu ---------- CUDA / cuFFTMp backend
@@ -103,7 +103,7 @@ main program
 | 公開モジュール | 選択可能な実装 |
 |---|---|
 | `gp3d_mpi` | 逐次スタブ、実MPI |
-| `gp3d_fft` | 逐次DFT、逐次FFTW、MPI分散FFT |
+| `gp3d_fft` | 逐次DFT、逐次FFTW、MPIスラブFFT、MPIペンシルFFT |
 | `gp3d_local_fft` | 1次元DFT、1次元FFTW |
 | `gp3d_gpu` | 単一GPU CUDA、MPI/cuFFTMp |
 
@@ -228,7 +228,9 @@ mode = 0, 1, ..., floor(n/2), negative modes
 
 ### 5.4 MPI分割
 
-実空間の所有配置はzスラブです。
+実空間の所有配置とSLF出力は、FFT方式によらずzスラブです。CPU/MPIと
+MPI/cuFFTMpのFFT内部配置は
+`FFT_DECOMPOSITION=slab`または`pencil`から選択します。
 
 | 項目 | 内容 |
 |---|---|
@@ -236,9 +238,13 @@ mode = 0, 1, ..., floor(n/2), negative modes
 | 分割 | `nz` をrank数でほぼ均等分割 |
 | 余り | 小さいrankから1面ずつ追加 |
 | 制約 | `nprocs <= nz` |
-| 分散FFT追加制約 | `nprocs <= ny` |
+| スラブFFT追加制約 | `nprocs <= ny` |
+| CPUペンシルFFT追加制約 | 2DECOMP&FFTの`p_row <= min(nx,ny)`、`p_col <= min(ny,nz)` |
+| cuFFTMpペンシル追加制約 | `p_y <= ny`、`p_z <= nz`、`p_y * p_z = nprocs` |
 
-したがってCPU分散FFTとcuFFTMpでは、`nprocs <= min(ny, nz)` が必要です。
+したがってスラブCPU分散FFTとスラブcuFFTMpでは`nprocs <= min(ny,nz)`、
+CPU／cuFFTMpペンシルFFTではzスラブ保存配列に由来する`nprocs <= nz`が必要です。
+ペンシルのプロセス格子は各バックエンドがrank数から自動決定します。
 
 ---
 
@@ -678,7 +684,7 @@ winding = floor(tg_velocity_amplitude / (2 pi alpha))
 1. rank内ローカル番号からGPUを選択する。
 2. cuFFTMp分散planを作る。
 3. 実空間zスラブをGPUへ転送する。
-4. 順FFT後のcuFFTMp yスラブ配置をカーネルが直接処理する。
+4. 順FFT後のcuFFTMp yスラブまたはxペンシル配置をカーネルが直接処理する。
 5. 出力時だけローカルzスラブをダウンロードする。
 6. 診断量と規格化にはMPI Allreduceを使う。
 
@@ -709,7 +715,7 @@ winding = floor(tg_velocity_amplitude / (2 pi alpha))
 | 逆変換 | 実行後に全格子点数で除算 |
 | 外部依存 | `libfftw3` |
 
-### 12.3 MPI分散FFT
+### 12.3 MPIスラブ分散FFT
 
 `src/fft/gp3d_fft_mpi.f90` の処理は次です。
 
@@ -723,7 +729,23 @@ winding = floor(tg_velocity_amplitude / (2 pi alpha))
 
 局所1次元変換は、参照DFTまたはFFTWから選択します。
 
-### 12.4 CPUメモリ確保
+### 12.4 MPIペンシル分散FFT
+
+`src/fft/gp3d_fft_pencil_2decomp.f90`は2DECOMP&FFTとFFTWを使用します。
+公開APIの入力・出力は従来互換のzスラブですが、FFT内部は2次元プロセス格子です。
+
+順変換は次の順です。
+
+1. GP3D zスラブから2DECOMP Xペンシルへ`MPI_Alltoallv`で再分配する。
+2. 2DECOMP&FFTでXペンシルからYペンシル、Zペンシルへ転置しながら三次元FFTする。
+3. ZペンシルからGP3D zスラブへ`MPI_Alltoallv`で戻す。
+
+逆変換は逆順に処理し、最後に`1 / (nx ny nz)`で規格化します。物理場とSLFを
+zスラブのまま残すため、既存の再スタート・後処理と互換です。一方、1回の変換で
+外側2回と2DECOMP内部2回の計4回の転置通信を行うため、少ないrankではスラブ版より
+高速とは限りません。現段階では保存配置の制約により`nprocs <= nz`も残ります。
+
+### 12.5 CPUメモリ確保
 
 現行実装は次を時間ループ中に確保・解放します。
 
@@ -732,6 +754,7 @@ winding = floor(tg_velocity_amplitude / (2 pi alpha))
 | Split-step | `psi_k` を毎ステップallocate/deallocate |
 | MPI三次元FFT | zスラブ、yスラブ、line bufferを変換ごとにallocate/deallocate |
 | MPI転置 | send/recv bufferを転置ごとにallocate/deallocate |
+| ペンシル三次元FFT | X/Zペンシルと外側再分配bufferを変換ごとにallocate/deallocate |
 | energy | `psi_k` を診断ごとにallocate/deallocate |
 
 正しさを優先した現行仕様であり、性能最適化ではplanまたはworkspaceへ常設する余地があります。
@@ -798,6 +821,7 @@ CUDA eventを使って次を測定します。
 | 通信 | MPI、NVSHMEM |
 | コンパイラ | Fortran、MPI C++、nvcc |
 | 推奨環境 | NVIDIA HPC SDKと整合するMPI/NVSHMEM |
+| ペンシル版API | cuFFTMp 11.4.0（NVIDIA HPC SDK 25.3）以降 |
 
 ### 14.2 GPU選択
 
@@ -807,13 +831,16 @@ CUDA eventを使って次を測定します。
 
 ### 14.3 データ配置
 
-| 段階 | 配置 |
-|---|---|
-| 実空間 | `[local_z][ny][nx]` |
-| 順FFT後 | `[nz][local_y][nx]` |
-| 逆FFT後 | 実空間zスラブ |
+| 段階 | スラブ版 | ペンシル版 |
+|---|---|---|
+| 実空間 | `[local_z][ny][nx]` | `[local_z][ny][nx]` |
+| 順FFT後 | `[nz][local_y][nx]` | `[local_spectral_z][local_y][nx]` |
+| 逆FFT後 | 実空間zスラブ | 実空間zスラブ |
 
-運動項、スペクトル微分、スペクトル診断は、順FFT後のshuffled yスラブを直接処理します。ホストへ集約しません。
+ペンシル版は`cufftMpMakePlanDecomposition`へ入力zスラブboxと出力xペンシルboxを渡します。
+`p_y × p_z`はrank数の因数のうち正方形に近く、y・z方向に空領域を作らない組を選びます。
+運動項、スペクトル微分、スペクトル診断は順FFT後の局所波数領域を直接処理し、
+ホストへ集約しません。
 
 ### 14.4 規格化と診断
 
@@ -1196,9 +1223,11 @@ GPU診断量を出力stepで計算する際の追加FFTは、Split-step timing�
 |---|---|---|
 | `USE_MPI` | ON/OFF | 実MPIを選択 |
 | `FFT_BACKEND` | `dft`, `fftw` | CPU FFT |
+| `FFT_DECOMPOSITION` | `slab`, `pencil` | CPU MPI／MPI cuFFTMp FFTの分割方式 |
 | `GPU_BACKEND` | `none`, `cuda`, `cufftmp` | GPU実装 |
 | `GP3D_CUDA_ARCHITECTURES` | 例 `86` | CUDA architecture |
 | `FFTW_ROOT` | path | FFTW検索 |
+| `GP3D_2DECOMP_ROOT` | path | ペンシル版の2DECOMP&FFT検索 |
 | `CUFFTMP_ROOT` | path | cuFFTMp検索 |
 | `NVSHMEM_ROOT` | path | NVSHMEM検索 |
 | `CUFFTMP_API` | `auto`, `modern`, `legacy` | cuFFTMp API世代 |
@@ -1214,8 +1243,25 @@ GPU診断量を出力stepで計算する際の追加FFTは、Split-step timing�
 | `cpu_serial_fftw` | `gp3d_sequential` | OFF | FFTW | なし |
 | `cpu_mpi_dft` | `gp3d_mpi` | ON | 分散FFT + 局所DFT | なし |
 | `cpu_mpi_fftw` | `gp3d_mpi` | ON | 分散FFT + 局所FFTW | なし |
+| `cpu_mpi_pencil_fftw` | `gp3d_mpi` | ON | 2DECOMP&FFTペンシル + FFTW | なし |
 | `cuda_single` | `gp3d_cuda` | OFF | テスト用DFTを同梱 | cuFFT |
 | `cuda_mpi_cufftmp` | `gp3d_cufftmp` | ON | 比較テスト用分散DFTを同梱 | cuFFTMp |
+| `cuda_mpi_cufftmp_pencil` | `gp3d_cufftmp` | ON | 比較テスト用分散DFTを同梱 | cuFFTMpペンシル |
+
+通常はprofileを直接指定せず、実行環境設計書で分割方式を選びます。
+
+```yaml
+parallel:
+  use_mpi: true
+  use_openmp: false
+  use_cuda: false
+  fft_decomposition: pencil  # slab または pencil
+```
+
+CPUでは`slab`が`cpu_mpi_fftw`、`pencil`が`cpu_mpi_pencil_fftw`を選びます。
+`use_cuda: true`を併用すると、それぞれ`cuda_mpi_cufftmp`と
+`cuda_mpi_cufftmp_pencil`を選びます。
+この値はビルド構成なので、変更時は実行環境の再生成と再ビルドが必要です。
 
 ### 20.3 不正な組み合わせ
 
@@ -1224,6 +1270,10 @@ GPU診断量を出力stepで計算する際の追加FFTは、Split-step timing�
 | `GPU_BACKEND=cuda` かつ `USE_MPI=ON` | CMakeエラー |
 | `GPU_BACKEND=cufftmp` かつ `USE_MPI=OFF` | CMakeエラー |
 | Windowsで `GPU_BACKEND=cufftmp` | CMakeエラー |
+| `FFT_DECOMPOSITION=pencil`かつMPI無効 | CMakeエラー |
+| `FFT_DECOMPOSITION=pencil`かつ単一GPU CUDA | CMakeエラー |
+| CPUで`FFT_DECOMPOSITION=pencil`かつ`FFT_BACKEND!=fftw` | CMakeエラー |
+| cuFFTMpペンシルかつ`cufftMpMakePlanDecomposition`なし | CMakeエラー |
 | 未知のFFT/GPU backend | CMakeエラー |
 
 ### 20.4 Windows MPI
@@ -1235,6 +1285,11 @@ C:\Program Files (x86)\Microsoft SDKs\MPI
 ```
 
 link libraryは `msmpifec` と `msmpi` です。
+
+CPUペンシル版は、同じFortranコンパイラ・MPI ABI・float64・FFTWでビルドした
+2DECOMP&FFTを追加で必要とします。マシンプロファイルの
+`libraries.decomp2d_root`へインストールprefixを指定し、BuildSolverが
+`GP3D_2DECOMP_ROOT`へ変換します。
 
 ### 20.5 Windows CUDA
 
@@ -1259,7 +1314,9 @@ libcufftMp.so
 libnvshmem_host.so
 ```
 
-HPC SDKの世代に応じ、`cufftMpMakePlan3d` またはlegacy `cufftMpAttachComm` を選択します。
+スラブ版はHPC SDKの世代に応じ、`cufftMpMakePlan3d` またはlegacy
+`cufftMpAttachComm`を選択します。ペンシル版は`cufftMpMakePlanDecomposition`を
+使用するため、cuFFTMp 11.4.0（NVIDIA HPC SDK 25.3）以降が必要です。
 
 ---
 
@@ -1319,6 +1376,7 @@ ctest --test-dir build\cpu-serial-dft --output-on-failure
 | `restart_slf_roundtrip` | global/rank SLF書込・再読込、分割変更 |
 | `distributed_fft_np2` | 2 rank Fourier modeと往復誤差 |
 | `distributed_fft_np3` | 不均等3 rank分割 |
+| `distributed_fft_pencil_np4` | 非立方・不均等格子、2×2プロセス格子のペンシルFFTと往復誤差 |
 | `taylor_green_argle_serial` | 逐次ARGLE最小経路 |
 | `taylor_green_argle_np2` | MPI ARGLE |
 | `serial_restart_main` | mainでの再スタートstep/time |
@@ -1327,6 +1385,7 @@ ctest --test-dir build\cpu-serial-dft --output-on-failure
 | `cuda_smoke` | GPU main、ARGLE、timing |
 | `cufftmp_splitstep_np2` | CPU MPIと2 GPUのfield、norm、energy |
 | `cufftmp_argle_smoke_np2` | cuFFTMp mainとARGLE |
+| `cufftmp_pencil_splitstep_np4` | 非立方・不均等格子、cuFFTMp 2×2ペンシルとCPU MPIの比較 |
 
 ### 22.2 数値許容誤差
 
@@ -1338,18 +1397,20 @@ ctest --test-dir build\cpu-serial-dft --output-on-failure
 | cuFFTMp field/scalar | `2e-9` |
 | restart field | `1e-13` |
 
-### 22.3 2026-07-27の確認結果
+### 22.3 2026-08-21の確認結果
 
-この仕様書作成時に、現行ソースからクリーンビルドして次を確認しました。
+ペンシル分割追加時に、現行ソースからクリーンビルドして次を確認しました。
 
 | profile相当 | compiler/runtime | 結果 |
 |---|---|---|
 | `cpu_serial_dft` | GNU Fortran 16.1.0 | 3件中3件成功 |
 | `cpu_mpi_dft` | GNU Fortran 16.1.0、Microsoft MPI | 5件中5件成功 |
 | `cpu_serial_fftw` | FFTW未使用 | 今回未実施 |
-| `cpu_mpi_fftw` | FFTW未使用 | 今回未実施 |
+| `cpu_mpi_fftw` | GNU Fortran 16.1.0、Microsoft MPI、FFTW | 6件中6件成功 |
+| `cpu_mpi_pencil_fftw` | GNU Fortran 16.1.0、Microsoft MPI、2DECOMP&FFT 2.1.0、FFTW | 7件中7件成功 |
 | `cuda_single` | GPU環境依存 | 今回未実施 |
 | `cuda_mpi_cufftmp` | Linuxスパコンが必要 | 今回未実施 |
+| `cuda_mpi_cufftmp_pencil` | Linuxスパコン、cuFFTMp 11.4.0以降が必要 | 今回未実施 |
 
 Microsoft MPIの `mpif.h` からBOZ literal warning、link時に `.drectve` warningが出ましたが、対象テストはすべて成功しました。
 
@@ -1365,6 +1426,7 @@ Microsoft MPIの `mpif.h` からBOZ literal warning、link時に `.drectve` warn
 | 領域長が0以下 | error stop |
 | `nprocs > nz` | error stop |
 | 分散FFTで `nprocs > ny` | error stop |
+| ペンシルFFTで`nprocs > nz` | zスラブ保存配置のためerror stop |
 
 ### 23.2 物理係数
 
@@ -1439,8 +1501,9 @@ Microsoft MPIの `mpif.h` からBOZ literal warning、link時に `.drectve` warn
 |---|---|
 | CPU `psi_k` | 毎step allocate |
 | MPI work | FFT・転置ごとにallocate |
-| CPU MPI分割 | スラブのみ |
-| MPI通信 | Split-step 1 stepにつきAlltoallv 4回 |
+| CPU MPI分割 | スラブ、またはFFT内部ペンシル |
+| スラブMPI通信 | Split-step 1 stepにつきAlltoallv 4回 |
+| ペンシルMPI通信 | Split-step 1 stepにつき外側再分配4回と2DECOMP内部転置4回 |
 | ARGLE | 1反復につき三次元FFT約5回 |
 | 出力 | host SLFであり、GPUでは出力時downloadが必要 |
 
@@ -1452,7 +1515,7 @@ Microsoft MPIの `mpif.h` からBOZ literal warning、link時に `.drectve` warn
 | Windows CUDA | MSVC host compilerが必要 |
 | cuFFTMp | Linuxのみ |
 | NVSHMEM | MPI ABIとbootstrap pluginの整合が必要 |
-| GPE Git版 | 現在未追跡で、正式commitがない |
+| GPE Git版 | FrameWorkモノレポ内で追跡する |
 
 ---
 
@@ -1588,6 +1651,7 @@ C:\Users\Owner\Documents\Codex\FrameWork\後処理_ParaView可視化手順書.md
 | `src/fft/gp3d_fft.f90` | 逐次参照DFT |
 | `src/fft/gp3d_fft_fftw.f90` | 逐次FFTW |
 | `src/fft/gp3d_fft_mpi.f90` | MPI分散FFT |
+| `src/fft/gp3d_fft_pencil_2decomp.f90` | 2DECOMP&FFTペンシル分散FFT |
 | `src/fft/gp3d_local_fft_dft.f90` | 局所参照DFT |
 | `src/fft/gp3d_local_fft_fftw.f90` | 局所FFTW |
 | `src/mpi/gp3d_mpi_stub.f90` | 逐次互換MPI |
@@ -1627,9 +1691,11 @@ C:\Users\Owner\Documents\Codex\FrameWork\後処理_ParaView可視化手順書.md
 |---|---|
 | PAR-001 | CPU MPI版は全体場をrootへ集約せず分散FFTする |
 | PAR-002 | 実空間所有配置はzスラブとする |
+| PAR-003 | CPU MPI FFTはスラブとペンシルを選択でき、既定値をスラブとする |
 | GPU-001 | 単一GPU版は時間ループ中に `psi` をGPU常駐させる |
 | GPU-002 | cuFFTMp版は1 rank 1 GPUとする |
-| GPU-003 | cuFFTMp順FFT後のshuffled layoutを直接処理する |
+| GPU-003 | cuFFTMp順FFT後の局所波数空間layoutを直接処理する |
+| GPU-004 | cuFFTMp FFTはスラブとペンシルを選択でき、実空間とSLFはzスラブを維持する |
 
 ### 30.3 入出力
 
@@ -1664,6 +1730,9 @@ C:\Users\Owner\Documents\Codex\FrameWork\後処理_ParaView可視化手順書.md
 | 擬スペクトル法 | 微分演算をFourier空間で処理する方法 |
 | zスラブ | z方向の一部を各rankが所有する分割 |
 | yスラブ | z方向FFTのためy方向を分割した一時配置 |
+| Xペンシル | x方向を全保持し、y・z方向を2次元プロセス格子で分割する配置 |
+| Zペンシル | z方向を全保持し、x・y方向を2次元プロセス格子で分割する配置 |
+| 2DECOMP&FFT | ペンシル分割の転置と分散FFTを提供するMPIライブラリ |
 | ARGLE | Advective Real Ginzburg–Landau Equationによる緩和 |
 | cuFFT | NVIDIAの単一GPU FFT |
 | cuFFTMp | NVIDIAのMPI対応分散GPU FFT |
@@ -1685,4 +1754,3 @@ C:\Users\Owner\Documents\Codex\FrameWork\後処理_ParaView可視化手順書.md
 8. 既知の制約を解消または追加した。
 
 Markdown版を内容の正本とし、Word版はMarkdown版から同時に再生成します。
-

@@ -116,14 +116,16 @@ python .\prepare_environment.py .\environment.gpe.yaml `
 同じMPI/CUDA方式の互換profileも同梱されます。`run_case.py`は`case.yaml`を読み、
 HIT初期条件やPetersen-Livescu forcingに必要なFFT profileへ自動切替します。
 
-| model | MPI | CUDA | 生成時の基準profile |
-|---|---:|---:|---|
-| `nse` | true | false | `cpu_mpi` |
-| `nse` | false | true | `cuda_single` |
-| `gpe` | false | false | `cpu_serial_fftw` |
-| `gpe` | true | false | `cpu_mpi_fftw` |
-| `gpe` | false | true | `cuda_single` |
-| `gpe` | true | true | `cuda_mpi_cufftmp` |
+| model | MPI | CUDA | FFT分割 | 生成時の基準profile |
+|---|---:|---:|---|---|
+| `nse` | true | false | - | `cpu_mpi` |
+| `nse` | false | true | - | `cuda_single` |
+| `gpe` | false | false | - | `cpu_serial_fftw` |
+| `gpe` | true | false | `slab` | `cpu_mpi_fftw` |
+| `gpe` | true | false | `pencil` | `cpu_mpi_pencil_fftw` |
+| `gpe` | false | true | - | `cuda_single` |
+| `gpe` | true | true | `slab` | `cuda_mpi_cufftmp` |
+| `gpe` | true | true | `pencil` | `cuda_mpi_cufftmp_pencil` |
 
 NSEのCPU逐次など、表にない組合せは生成時にエラーになります。NSEの
 `cpu_mpi_2decomp_fftw`は通常は明示不要です。`flow.type: hit`または
@@ -176,6 +178,8 @@ parallel:
   use_mpi: true
   use_openmp: true
   use_cuda: false
+  # GPE MPI CPU / MPI cuFFTMp: slab or pencil
+  fft_decomposition: slab
 ```
 
 ### scheduler
@@ -202,11 +206,12 @@ parallel:
 | `parallel.use_mpi` | 実行環境設計書 | MPI対応ソースと実行方式を選ぶ |
 | `parallel.use_openmp` | 実行環境設計書 | 新規caseのOpenMP初期値を指定する |
 | `parallel.use_cuda` | 実行環境設計書 | CUDAバックエンドを選ぶ |
+| `parallel.fft_decomposition` | 実行環境設計書 | GPE MPI CPU／MPI cuFFTMpのFFT分割を`slab`または`pencil`から選ぶ |
 | `solver.use_openmp` | 生成後の`case.yaml` | OpenMP対応profileでケースごとに有効・無効を切り替える |
 | `solver.mpi_processes` | 生成後の`case.yaml` | 実行時のMPIプロセス数を指定する |
 | `solver.omp_threads` | 生成後の`case.yaml` | MPIランク当たりのOpenMPスレッド数を指定する |
 
-MPI/CUDAの使用有無を変更した場合は、実行環境を再生成してビルドし直します。
+MPI/CUDAの使用有無または`parallel.fft_decomposition`を変更した場合は、実行環境を再生成してビルドし直します。
 `solver.use_openmp`、`solver.mpi_processes`、`solver.omp_threads`だけを変更する場合は、
 対応profileの範囲内なら再ビルドは不要です。`solver.use_mpi`、`solver.use_cuda`、
 `solver.profile`は新規caseには出力されません。
@@ -232,6 +237,7 @@ parallel:
   use_mpi: true
   use_openmp: false
   use_cuda: false
+  fft_decomposition: slab
 ```
 
 候補の一部だけを変更するときは、同名セクションへ上書き値を書きます。

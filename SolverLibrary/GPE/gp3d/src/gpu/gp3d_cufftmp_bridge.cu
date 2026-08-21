@@ -4,6 +4,7 @@
 #include <mpi.h>
 
 #include <cfloat>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -12,6 +13,10 @@
 #include <utility>
 
 #define GP3D_CUFFTMP_API extern "C"
+
+#if defined(GP3D_CUFFTMP_PENCIL) && defined(GP3D_CUFFTMP_LEGACY_API)
+#error "cuFFTMp pencil decomposition requires cufftMpMakePlanDecomposition"
+#endif
 
 namespace {
 
@@ -32,6 +37,10 @@ struct GpuContext {
   int local_nz = 0;
   int y_start = 0;
   int local_ny = 0;
+  int spectral_z_start = 0;
+  int local_spectral_nz = 0;
+  int process_y = 1;
+  int process_z = 1;
   size_t n_global = 0;
   size_t n_real = 0;
   size_t n_spectral = 0;
@@ -115,6 +124,28 @@ void block_range(int n, int rank, int nprocs, int* start, int* count) {
   }
 }
 
+bool choose_process_grid(int nprocs, int ny, int nz, int* process_y,
+                         int* process_z) {
+  int best_distance = INT_MAX;
+  int best_y = 0;
+  int best_z = 0;
+  for (int candidate_y = 1; candidate_y <= nprocs; ++candidate_y) {
+    if (nprocs % candidate_y != 0) continue;
+    const int candidate_z = nprocs / candidate_y;
+    if (candidate_y > ny || candidate_z > nz) continue;
+    const int distance = std::abs(candidate_y - candidate_z);
+    if (distance < best_distance) {
+      best_distance = distance;
+      best_y = candidate_y;
+      best_z = candidate_z;
+    }
+  }
+  if (best_y == 0) return false;
+  *process_y = best_y;
+  *process_z = best_z;
+  return true;
+}
+
 cufftDoubleComplex* descriptor_data(cudaLibXtDesc* desc) {
   if (desc == nullptr || desc->descriptor == nullptr) return nullptr;
   return static_cast<cufftDoubleComplex*>(desc->descriptor->data[0]);
@@ -122,8 +153,14 @@ cufftDoubleComplex* descriptor_data(cudaLibXtDesc* desc) {
 
 bool allocate_fft_buffer(GpuContext* ctx, cudaLibXtDesc** desc,
                          const char* operation) {
-  if (!cufft_ok(cufftXtMalloc(ctx->plan, desc, CUFFT_XT_FORMAT_INPLACE),
-                operation)) {
+#if defined(GP3D_CUFFTMP_PENCIL)
+  constexpr cufftXtSubFormat allocation_format =
+      CUFFT_XT_FORMAT_DISTRIBUTED_INPUT;
+#else
+  constexpr cufftXtSubFormat allocation_format = CUFFT_XT_FORMAT_INPLACE;
+#endif
+  if (!cufft_ok(cufftXtMalloc(ctx->plan, desc, allocation_format),
+                 operation)) {
     return false;
   }
   if (descriptor_data(*desc) == nullptr) {
@@ -242,18 +279,20 @@ __global__ void local_half_step_kernel(cufftDoubleComplex* psi,
   psi[index] = complex_multiply(value, factor);
 }
 
-// cuFFTMp's forward transform changes [local_z][ny][nx] into
-// [nz][local_y][nx].  This kernel works directly on that shuffled layout.
-__global__ void kinetic_shuffled_kernel(
+// The built-in slab transform produces [nz][local_y][nx].  The custom
+// decomposition produces [local_spectral_z][local_y][nx].  Both layouts keep
+// x contiguous, so one indexing rule covers both backends.
+__global__ void kinetic_spectral_kernel(
     cufftDoubleComplex* spectral, const double* kx, const double* ky,
-    const double* kz, int nx, int local_ny, int y_start, int nz, size_t n,
-    double tau, double kinetic_coefficient, int imaginary_time) {
+    const double* kz, int nx, int local_ny, int y_start,
+    int spectral_z_start, size_t n, double tau, double kinetic_coefficient,
+    int imaginary_time) {
   const size_t index = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (index >= n) return;
   const int i = static_cast<int>(index % nx);
   const size_t row = index / nx;
   const int j = static_cast<int>(row % local_ny) + y_start;
-  const int k = static_cast<int>(row / local_ny);
+  const int k = static_cast<int>(row / local_ny) + spectral_z_start;
   const double k2 = kx[i] * kx[i] + ky[j] * ky[j] + kz[k] * kz[k];
   const double energy = kinetic_coefficient * k2;
   cufftDoubleComplex factor;
@@ -278,16 +317,16 @@ __global__ void norm_kernel(const cufftDoubleComplex* psi, size_t n,
   if (index < n) atomic_add_double(sum, complex_abs2(psi[index]));
 }
 
-__global__ void derivative_shuffled_kernel(
+__global__ void derivative_spectral_kernel(
     const cufftDoubleComplex* spectral, cufftDoubleComplex* derivative,
     const double* kx, const double* ky, const double* kz, int nx,
-    int local_ny, int y_start, size_t n, int axis) {
+    int local_ny, int y_start, int spectral_z_start, size_t n, int axis) {
   const size_t index = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (index >= n) return;
   const int i = static_cast<int>(index % nx);
   const size_t row = index / nx;
   const int j = static_cast<int>(row % local_ny) + y_start;
-  const int k = static_cast<int>(row / local_ny);
+  const int k = static_cast<int>(row / local_ny) + spectral_z_start;
   const double wave_number = axis == 0 ? kx[i] : (axis == 1 ? ky[j] : kz[k]);
   const cufftDoubleComplex value = spectral[index];
   derivative[index] = make_cuDoubleComplex(-wave_number * value.y,
@@ -326,16 +365,17 @@ __global__ void argle_rhs_natural_kernel(
                                     reaction * value.y - advection.x);
 }
 
-__global__ void argle_update_shuffled_kernel(
+__global__ void argle_update_spectral_kernel(
     cufftDoubleComplex* spectral, const cufftDoubleComplex* rhs_spectral,
     const double* kx, const double* ky, const double* kz, int nx,
-    int local_ny, int y_start, size_t n, double alpha, double dtau) {
+    int local_ny, int y_start, int spectral_z_start, size_t n, double alpha,
+    double dtau) {
   const size_t index = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (index >= n) return;
   const int i = static_cast<int>(index % nx);
   const size_t row = index / nx;
   const int j = static_cast<int>(row % local_ny) + y_start;
-  const int k = static_cast<int>(row / local_ny);
+  const int k = static_cast<int>(row / local_ny) + spectral_z_start;
   const double k2 = kx[i] * kx[i] + ky[j] * ky[j] + kz[k] * kz[k];
   const double implicit_term = 0.5 * dtau * alpha * k2;
   const double denominator = 1.0 + implicit_term;
@@ -371,16 +411,16 @@ __global__ void local_diagnostics_kernel(const cufftDoubleComplex* psi,
                     potential[index] * density + 0.5 * g * density * density);
 }
 
-__global__ void spectral_diagnostics_shuffled_kernel(
+__global__ void spectral_diagnostics_kernel(
     const cufftDoubleComplex* spectral, const double* kx, const double* ky,
-    const double* kz, int nx, int local_ny, int y_start, size_t n,
-    double* reductions) {
+    const double* kz, int nx, int local_ny, int y_start,
+    int spectral_z_start, size_t n, double* reductions) {
   const size_t index = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
   if (index >= n) return;
   const int i = static_cast<int>(index % nx);
   const size_t row = index / nx;
   const int j = static_cast<int>(row % local_ny) + y_start;
-  const int k = static_cast<int>(row / local_ny);
+  const int k = static_cast<int>(row / local_ny) + spectral_z_start;
   const double k2 = kx[i] * kx[i] + ky[j] * ky[j] + kz[k] * kz[k];
   atomic_add_double(&reductions[2], k2 * complex_abs2(spectral[index]));
 }
@@ -436,7 +476,9 @@ void print_topology(GpuContext* ctx) {
   cudaRuntimeGetVersion(&cuda_runtime_version);
   cudaDriverGetVersion(&cuda_driver_version);
   if (ctx->rank == 0) {
-#if defined(GP3D_CUFFTMP_LEGACY_API)
+#if defined(GP3D_CUFFTMP_PENCIL)
+    const char* api_name = "custom decomposition API";
+#elif defined(GP3D_CUFFTMP_LEGACY_API)
     const char* api_name = "legacy attach-communicator API";
 #else
     const char* api_name = "direct communicator plan API";
@@ -445,6 +487,12 @@ void print_topology(GpuContext* ctx) {
     std::printf("# cuFFTMp ranks=%d global_grid=%dx%dx%d workspace_bytes=%zu\n",
                 ctx->nprocs, ctx->nx, ctx->ny, ctx->nz,
                 ctx->workspace_bytes);
+#if defined(GP3D_CUFFTMP_PENCIL)
+    std::printf("# cuFFTMp decomposition=pencil process_grid=%dx%d\n",
+                ctx->process_y, ctx->process_z);
+#else
+    std::printf("# cuFFTMp decomposition=slab\n");
+#endif
     std::printf("# library_versions cufftMp=%d cuda_runtime=%d cuda_driver=%d\n",
                 cufft_version, cuda_runtime_version, cuda_driver_version);
   }
@@ -453,10 +501,12 @@ void print_topology(GpuContext* ctx) {
     if (owner == ctx->rank) {
       std::printf(
           "# cufftmp rank=%d local_rank=%d device=%d name=\"%s\" "
-          "real_z=[%d,%d] spectral_y=[%d,%d]\n",
+          "real_z=[%d,%d] spectral_y=[%d,%d] spectral_z=[%d,%d]\n",
           ctx->rank, ctx->local_rank, ctx->device, properties.name,
           ctx->z_start + 1, ctx->z_start + ctx->local_nz,
-          ctx->y_start + 1, ctx->y_start + ctx->local_ny);
+          ctx->y_start + 1, ctx->y_start + ctx->local_ny,
+          ctx->spectral_z_start + 1,
+          ctx->spectral_z_start + ctx->local_spectral_nz);
       std::fflush(stdout);
     }
   }
@@ -505,11 +555,18 @@ GP3D_CUFFTMP_API int gp3d_cufftmp_create(
     destroy_context(ctx);
     return 1;
   }
-  if (ctx->nprocs > nz || ctx->nprocs > ny) {
-    set_error("cuFFTMp built-in slabs require both nz and ny to be at least the MPI process count");
+  if (ctx->nprocs > nz) {
+    set_error("the solver's real-space z slabs require nz to be at least the MPI process count");
     destroy_context(ctx);
     return 1;
   }
+#if !defined(GP3D_CUFFTMP_PENCIL)
+  if (ctx->nprocs > ny) {
+    set_error("cuFFTMp built-in spectral slabs require ny to be at least the MPI process count");
+    destroy_context(ctx);
+    return 1;
+  }
+#endif
 
   if (!mpi_ok(MPI_Comm_split_type(ctx->comm, MPI_COMM_TYPE_SHARED, ctx->rank,
                                   MPI_INFO_NULL, &ctx->local_comm),
@@ -542,7 +599,24 @@ GP3D_CUFFTMP_API int gp3d_cufftmp_create(
   }
 
   block_range(nz, ctx->rank, ctx->nprocs, &ctx->z_start, &ctx->local_nz);
+#if defined(GP3D_CUFFTMP_PENCIL)
+  if (!choose_process_grid(ctx->nprocs, ny, nz, &ctx->process_y,
+                           &ctx->process_z)) {
+    set_error("cannot factor MPI ranks into a non-empty cuFFTMp y-z process grid");
+    destroy_context(ctx);
+    return 1;
+  }
+  const int process_y_coordinate = ctx->rank / ctx->process_z;
+  const int process_z_coordinate = ctx->rank % ctx->process_z;
+  block_range(ny, process_y_coordinate, ctx->process_y, &ctx->y_start,
+              &ctx->local_ny);
+  block_range(nz, process_z_coordinate, ctx->process_z,
+              &ctx->spectral_z_start, &ctx->local_spectral_nz);
+#else
   block_range(ny, ctx->rank, ctx->nprocs, &ctx->y_start, &ctx->local_ny);
+  ctx->spectral_z_start = 0;
+  ctx->local_spectral_nz = nz;
+#endif
   if (ctx->local_nz != expected_local_nz ||
       ctx->z_start + 1 != expected_k_start) {
     set_error("Fortran grid decomposition does not match cuFFTMp's natural z-slab layout");
@@ -551,14 +625,38 @@ GP3D_CUFFTMP_API int gp3d_cufftmp_create(
   }
   ctx->n_global = static_cast<size_t>(nx) * ny * nz;
   ctx->n_real = static_cast<size_t>(nx) * ny * ctx->local_nz;
-  ctx->n_spectral = static_cast<size_t>(nx) * ctx->local_ny * nz;
+  ctx->n_spectral = static_cast<size_t>(nx) * ctx->local_ny *
+                    ctx->local_spectral_nz;
 
   if (!cufft_ok(cufftCreate(&ctx->plan), "create cuFFTMp plan handle")) {
     destroy_context(ctx);
     return 1;
   }
   ctx->plan_created = true;
-#if defined(GP3D_CUFFTMP_LEGACY_API)
+#if defined(GP3D_CUFFTMP_PENCIL)
+  int dimensions[3] = {nz, ny, nx};
+  const long long int lower_input[3] = {ctx->z_start, 0, 0};
+  const long long int upper_input[3] = {
+      ctx->z_start + ctx->local_nz, ny, nx};
+  const long long int strides_input[3] = {
+      static_cast<long long int>(ny) * nx, nx, 1};
+  const long long int lower_output[3] = {
+      ctx->spectral_z_start, ctx->y_start, 0};
+  const long long int upper_output[3] = {
+      ctx->spectral_z_start + ctx->local_spectral_nz,
+      ctx->y_start + ctx->local_ny, nx};
+  const long long int strides_output[3] = {
+      static_cast<long long int>(ctx->local_ny) * nx, nx, 1};
+  if (!cufft_ok(cufftMpMakePlanDecomposition(
+                    ctx->plan, 3, dimensions, lower_input, upper_input,
+                    strides_input, lower_output, upper_output, strides_output,
+                    CUFFT_Z2Z, &ctx->comm, CUFFT_COMM_MPI,
+                    &ctx->workspace_bytes),
+                "create pencil-distributed Z2Z plan")) {
+    destroy_context(ctx);
+    return 1;
+  }
+#elif defined(GP3D_CUFFTMP_LEGACY_API)
   if (!cufft_ok(cufftMpAttachComm(ctx->plan, CUFFT_COMM_MPI, &ctx->comm),
                 "attach MPI communicator to cuFFTMp plan") ||
       !cufft_ok(cufftMakePlan3d(ctx->plan, nz, ny, nx, CUFFT_Z2Z,
@@ -576,10 +674,19 @@ GP3D_CUFFTMP_API int gp3d_cufftmp_create(
     return 1;
   }
 #endif
+#if defined(GP3D_CUFFTMP_PENCIL)
+  constexpr cufftXtSubFormat forward_format =
+      CUFFT_XT_FORMAT_DISTRIBUTED_INPUT;
+  constexpr cufftXtSubFormat inverse_format =
+      CUFFT_XT_FORMAT_DISTRIBUTED_OUTPUT;
+#else
+  constexpr cufftXtSubFormat forward_format = CUFFT_XT_FORMAT_INPLACE;
+  constexpr cufftXtSubFormat inverse_format =
+      CUFFT_XT_FORMAT_INPLACE_SHUFFLED;
+#endif
   if (!cufft_ok(cufftXtSetSubformatDefault(
-                    ctx->plan, CUFFT_XT_FORMAT_INPLACE,
-                    CUFFT_XT_FORMAT_INPLACE_SHUFFLED),
-                "set natural and shuffled cuFFTMp layouts")) {
+                    ctx->plan, forward_format, inverse_format),
+                "set input and spectral cuFFTMp layouts")) {
     destroy_context(ctx);
     return 1;
   }
@@ -725,11 +832,11 @@ GP3D_CUFFTMP_API int gp3d_cufftmp_step(
   if (!forward_fft(ctx, psi, "forward distributed Z2Z transform")) return 1;
   if (measure_timing != 0 && !synchronize_for_timing(ctx, &stamps[2])) return 1;
 
-  kinetic_shuffled_kernel<<<block_count(ctx->n_spectral), kThreads>>>(
+  kinetic_spectral_kernel<<<block_count(ctx->n_spectral), kThreads>>>(
       psi, ctx->kx, ctx->ky, ctx->kz, ctx->nx, ctx->local_ny,
-      ctx->y_start, ctx->nz, ctx->n_spectral, dt / hbar,
+      ctx->y_start, ctx->spectral_z_start, ctx->n_spectral, dt / hbar,
       0.5 * hbar * hbar / mass, imaginary_time);
-  if (!kernel_ok("shuffled spectral kinetic kernel")) return 1;
+  if (!kernel_ok("spectral kinetic kernel")) return 1;
   if (measure_timing != 0 && !synchronize_for_timing(ctx, &stamps[3])) return 1;
 
   if (!inverse_fft(ctx, psi, "inverse distributed Z2Z transform")) return 1;
@@ -794,10 +901,11 @@ GP3D_CUFFTMP_API int gp3d_cufftmp_argle_step(
     return 1;
   }
 
-  derivative_shuffled_kernel<<<block_count(ctx->n_spectral), kThreads>>>(
+  derivative_spectral_kernel<<<block_count(ctx->n_spectral), kThreads>>>(
       spectral, grad_x, ctx->kx, ctx->ky, ctx->kz, ctx->nx,
-      ctx->local_ny, ctx->y_start, ctx->n_spectral, 0);
-  if (!kernel_ok("ARGLE shuffled x-derivative kernel") ||
+      ctx->local_ny, ctx->y_start, ctx->spectral_z_start,
+      ctx->n_spectral, 0);
+  if (!kernel_ok("ARGLE spectral x-derivative kernel") ||
       !inverse_fft(ctx, grad_x, "ARGLE x-derivative inverse transform")) {
     return 1;
   }
@@ -805,10 +913,11 @@ GP3D_CUFFTMP_API int gp3d_cufftmp_argle_step(
       grad_x, ctx->n_real, 1.0 / static_cast<double>(ctx->n_global));
   if (!kernel_ok("ARGLE x-derivative scale kernel")) return 1;
 
-  derivative_shuffled_kernel<<<block_count(ctx->n_spectral), kThreads>>>(
+  derivative_spectral_kernel<<<block_count(ctx->n_spectral), kThreads>>>(
       spectral, grad_y, ctx->kx, ctx->ky, ctx->kz, ctx->nx,
-      ctx->local_ny, ctx->y_start, ctx->n_spectral, 1);
-  if (!kernel_ok("ARGLE shuffled y-derivative kernel") ||
+      ctx->local_ny, ctx->y_start, ctx->spectral_z_start,
+      ctx->n_spectral, 1);
+  if (!kernel_ok("ARGLE spectral y-derivative kernel") ||
       !inverse_fft(ctx, grad_y, "ARGLE y-derivative inverse transform")) {
     return 1;
   }
@@ -826,9 +935,9 @@ GP3D_CUFFTMP_API int gp3d_cufftmp_argle_step(
     return 1;
   }
 
-  argle_update_shuffled_kernel<<<block_count(ctx->n_spectral), kThreads>>>(
+  argle_update_spectral_kernel<<<block_count(ctx->n_spectral), kThreads>>>(
       spectral, rhs, ctx->kx, ctx->ky, ctx->kz, ctx->nx, ctx->local_ny,
-      ctx->y_start, ctx->n_spectral, alpha, dtau);
+      ctx->y_start, ctx->spectral_z_start, ctx->n_spectral, alpha, dtau);
   if (!kernel_ok("distributed ARGLE semi-implicit update kernel") ||
       !inverse_fft(ctx, spectral, "ARGLE final inverse distributed transform")) {
     return 1;
@@ -905,11 +1014,11 @@ GP3D_CUFFTMP_API int gp3d_cufftmp_diagnostics(
       !forward_fft(ctx, spectral, "diagnostic forward distributed transform")) {
     return 1;
   }
-  spectral_diagnostics_shuffled_kernel<<<block_count(ctx->n_spectral),
-                                          kThreads>>>(
+  spectral_diagnostics_kernel<<<block_count(ctx->n_spectral), kThreads>>>(
       spectral, ctx->kx, ctx->ky, ctx->kz, ctx->nx, ctx->local_ny,
-      ctx->y_start, ctx->n_spectral, ctx->reductions);
-  if (!kernel_ok("shuffled spectral diagnostic kernel")) return 1;
+      ctx->y_start, ctx->spectral_z_start, ctx->n_spectral,
+      ctx->reductions);
+  if (!kernel_ok("spectral diagnostic kernel")) return 1;
 
   double local[3]{};
   if (!cuda_ok(cudaMemcpy(local, ctx->reductions, sizeof(local),

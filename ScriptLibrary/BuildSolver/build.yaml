@@ -13,6 +13,7 @@ models:
     cmake_overrides: {}
 
   gpe:
+    # choices include cpu_mpi_fftw (slab) and cpu_mpi_pencil_fftw (2DECOMP&FFT)
     profile: cpu_mpi_dft
     input_file:
     cmake_overrides: {}

@@ -7,8 +7,10 @@ model: gpe
 default_profiles:
   serial: cpu_serial_fftw
   mpi: cpu_mpi_fftw
+  mpi_pencil: cpu_mpi_pencil_fftw
   cuda: cuda_single
   mpi_cuda: cuda_mpi_cufftmp
+  mpi_cuda_pencil: cuda_mpi_cufftmp_pencil
 build_adapter: gp3d_cmake_v1
 input_adapter: gp3d_gpe_namelist_v1
 cmake_file: CMakeLists.txt
@@ -53,6 +55,10 @@ components:
   fft_mpi:
     files:
       - src/fft/gp3d_fft_mpi.f90
+
+  fft_mpi_pencil_2decomp:
+    files:
+      - src/fft/gp3d_fft_pencil_2decomp.f90
 
   local_fft_dft:
     files:
@@ -116,7 +122,7 @@ components:
       - tests/cuda_smoke.nml
       - tests/cufftmp_scaling_256.nml
 
-# case.yamlのsolver.profileが、以下のいずれか一つを選択する。
+# 通常はenvironment設計書のparallelから自動選択し、特殊用途だけsolver.profileで固定する。
 profiles:
   cpu_serial_dft:
     description: Single-process CPU build with the reference DFT backend
@@ -133,6 +139,7 @@ profiles:
       USE_MPI: false
       USE_OPENMP: false
       FFT_BACKEND: dft
+      FFT_DECOMPOSITION: slab
       GPU_BACKEND: none
 
   cpu_serial_fftw:
@@ -150,6 +157,7 @@ profiles:
       USE_MPI: false
       USE_OPENMP: false
       FFT_BACKEND: fftw
+      FFT_DECOMPOSITION: slab
       GPU_BACKEND: none
 
   cpu_mpi_dft:
@@ -169,6 +177,7 @@ profiles:
       USE_MPI: true
       USE_OPENMP: true
       FFT_BACKEND: dft
+      FFT_DECOMPOSITION: slab
       GPU_BACKEND: none
 
   cpu_mpi_fftw:
@@ -188,6 +197,26 @@ profiles:
       USE_MPI: true
       USE_OPENMP: true
       FFT_BACKEND: fftw
+      FFT_DECOMPOSITION: slab
+      GPU_BACKEND: none
+
+  cpu_mpi_pencil_fftw:
+    description: MPI pencil-distributed FFT with 2DECOMP&FFT and FFTW
+    components:
+      - core
+      - mpi_real
+      - fft_mpi_pencil_2decomp
+      - main_serial
+      - runtime_tools
+    test_components:
+      - tests_common
+      - tests_mpi
+    executable: gp3d_mpi
+    cmake:
+      USE_MPI: true
+      USE_OPENMP: true
+      FFT_BACKEND: fftw
+      FFT_DECOMPOSITION: pencil
       GPU_BACKEND: none
 
   cuda_single:
@@ -207,6 +236,7 @@ profiles:
       USE_MPI: false
       USE_OPENMP: false
       FFT_BACKEND: dft
+      FFT_DECOMPOSITION: slab
       GPU_BACKEND: cuda
 
   cuda_mpi_cufftmp:
@@ -228,4 +258,28 @@ profiles:
       USE_MPI: true
       USE_OPENMP: false
       FFT_BACKEND: dft
+      FFT_DECOMPOSITION: slab
       GPU_BACKEND: cufftmp
+
+  cuda_mpi_cufftmp_pencil:
+    description: One MPI rank per GPU with a custom cuFFTMp pencil transform
+    components:
+      - core
+      - mpi_real
+      - local_fft_dft
+      - fft_mpi
+      - cufftmp
+      - main_cufftmp
+      - runtime_tools
+    test_components:
+      - tests_common
+      - tests_mpi
+      - tests_cufftmp
+    executable: gp3d_cufftmp
+    cmake:
+      USE_MPI: true
+      USE_OPENMP: false
+      FFT_BACKEND: dft
+      FFT_DECOMPOSITION: pencil
+      GPU_BACKEND: cufftmp
+      CUFFTMP_API: modern

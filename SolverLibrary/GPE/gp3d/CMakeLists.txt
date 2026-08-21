@@ -12,6 +12,10 @@ option(USE_MPI "Build with MPI support" OFF)
 option(USE_OPENMP "Build CPU kernels with runtime-selectable OpenMP support" OFF)
 set(FFT_BACKEND "dft" CACHE STRING "CPU FFT backend: dft or fftw")
 set_property(CACHE FFT_BACKEND PROPERTY STRINGS dft fftw)
+set(FFT_DECOMPOSITION "slab" CACHE STRING "MPI FFT decomposition: slab or pencil")
+set_property(CACHE FFT_DECOMPOSITION PROPERTY STRINGS slab pencil)
+set(GP3D_2DECOMP_ROOT "$ENV{DECOMP2D_ROOT}" CACHE PATH
+  "Optional 2DECOMP&FFT installation prefix containing lib/decomp2d")
 set(GPU_BACKEND "none" CACHE STRING "GPU backend: none, cuda, or cufftmp")
 set_property(CACHE GPU_BACKEND PROPERTY STRINGS none cuda cufftmp)
 set(GP3D_CUDA_ARCHITECTURES "" CACHE STRING
@@ -70,6 +74,31 @@ if(NOT GPU_BACKEND STREQUAL "none" AND
    NOT GPU_BACKEND STREQUAL "cufftmp")
   message(FATAL_ERROR
     "Unsupported GPU_BACKEND=${GPU_BACKEND}. Use none, cuda, or cufftmp.")
+endif()
+
+message(STATUS "GP3D FFT backend: ${FFT_BACKEND}")
+message(STATUS "GP3D FFT decomposition: ${FFT_DECOMPOSITION}")
+if(FFT_DECOMPOSITION STREQUAL "pencil" AND GPU_BACKEND STREQUAL "none")
+  message(STATUS "GP3D 2DECOMP root: ${GP3D_2DECOMP_ROOT}")
+endif()
+if(NOT FFT_DECOMPOSITION STREQUAL "slab" AND
+   NOT FFT_DECOMPOSITION STREQUAL "pencil")
+  message(FATAL_ERROR
+    "Unsupported FFT_DECOMPOSITION=${FFT_DECOMPOSITION}. Use slab or pencil.")
+endif()
+if(FFT_DECOMPOSITION STREQUAL "pencil" AND NOT USE_MPI)
+  message(FATAL_ERROR "The pencil FFT decomposition requires USE_MPI=ON.")
+endif()
+if(FFT_DECOMPOSITION STREQUAL "pencil" AND GPU_BACKEND STREQUAL "cuda")
+  message(FATAL_ERROR
+    "The single-GPU CUDA backend does not use an MPI FFT decomposition. "
+    "Use FFT_DECOMPOSITION=slab for GPU_BACKEND=cuda.")
+endif()
+if(FFT_DECOMPOSITION STREQUAL "pencil" AND
+   GPU_BACKEND STREQUAL "none" AND
+   NOT FFT_BACKEND STREQUAL "fftw")
+  message(FATAL_ERROR
+    "The CPU pencil FFT decomposition requires FFT_BACKEND=fftw.")
 endif()
 if(GPU_BACKEND STREQUAL "cuda" AND USE_MPI)
   message(FATAL_ERROR "The CUDA backend is single-GPU only. Configure with USE_MPI=OFF.")
@@ -142,13 +171,18 @@ else()
 endif()
 
 if(USE_MPI)
-  set(GP3D_FFT_SOURCE src/fft/gp3d_fft_mpi.f90)
-  if(FFT_BACKEND STREQUAL "dft")
-    set(GP3D_LOCAL_FFT_SOURCE src/fft/gp3d_local_fft_dft.f90)
-  elseif(FFT_BACKEND STREQUAL "fftw")
-    set(GP3D_LOCAL_FFT_SOURCE src/fft/gp3d_local_fft_fftw.f90)
+  if(FFT_DECOMPOSITION STREQUAL "pencil" AND GPU_BACKEND STREQUAL "none")
+    set(GP3D_FFT_SOURCE src/fft/gp3d_fft_pencil_2decomp.f90)
+    set(GP3D_LOCAL_FFT_SOURCE "")
   else()
-    message(FATAL_ERROR "Unsupported FFT_BACKEND=${FFT_BACKEND}. Use dft or fftw.")
+    set(GP3D_FFT_SOURCE src/fft/gp3d_fft_mpi.f90)
+    if(FFT_BACKEND STREQUAL "dft")
+      set(GP3D_LOCAL_FFT_SOURCE src/fft/gp3d_local_fft_dft.f90)
+    elseif(FFT_BACKEND STREQUAL "fftw")
+      set(GP3D_LOCAL_FFT_SOURCE src/fft/gp3d_local_fft_fftw.f90)
+    else()
+      message(FATAL_ERROR "Unsupported FFT_BACKEND=${FFT_BACKEND}. Use dft or fftw.")
+    endif()
   endif()
 else()
   set(GP3D_LOCAL_FFT_SOURCE "")
@@ -184,6 +218,17 @@ if(USE_MPI)
   endif()
 endif()
 
+if(FFT_DECOMPOSITION STREQUAL "pencil" AND GPU_BACKEND STREQUAL "none")
+  if(GP3D_2DECOMP_ROOT)
+    find_package(decomp2d CONFIG REQUIRED
+      PATHS "${GP3D_2DECOMP_ROOT}"
+      PATH_SUFFIXES lib/decomp2d lib64/decomp2d
+      NO_DEFAULT_PATH)
+  else()
+    find_package(decomp2d CONFIG REQUIRED)
+  endif()
+endif()
+
 add_library(gp3d STATIC ${GP3D_LIBRARY_SOURCES})
 target_include_directories(gp3d PUBLIC "${CMAKE_Fortran_MODULE_DIRECTORY}")
 
@@ -204,6 +249,10 @@ if(FFT_BACKEND STREQUAL "fftw")
       "FFTW backend selected, but FFTW3 library was not found. Set FFTW_ROOT or FFTW3_LIBRARY.")
   endif()
   target_link_libraries(gp3d PUBLIC "${FFTW3_LIBRARY}")
+endif()
+
+if(FFT_DECOMPOSITION STREQUAL "pencil" AND GPU_BACKEND STREQUAL "none")
+  target_link_libraries(gp3d PUBLIC decomp2d)
 endif()
 
 if(GPU_BACKEND STREQUAL "cuda")
@@ -264,6 +313,9 @@ elseif(GPU_BACKEND STREQUAL "cufftmp")
   endif()
 
   set(GP3D_CUFFTMP_LEGACY_API OFF)
+  file(STRINGS "${CUFFTMP_INCLUDE_DIR}/cufftMp.h"
+    GP3D_CUFFTMP_DECOMPOSITION_DECLARATION
+    REGEX "cufftMpMakePlanDecomposition")
   if(CUFFTMP_API STREQUAL "legacy")
     set(GP3D_CUFFTMP_LEGACY_API ON)
   elseif(CUFFTMP_API STREQUAL "auto")
@@ -271,6 +323,16 @@ elseif(GPU_BACKEND STREQUAL "cufftmp")
       GP3D_CUFFTMP_MODERN_DECLARATION REGEX "cufftMpMakePlan3d")
     if(NOT GP3D_CUFFTMP_MODERN_DECLARATION)
       set(GP3D_CUFFTMP_LEGACY_API ON)
+    endif()
+  endif()
+
+  if(FFT_DECOMPOSITION STREQUAL "pencil")
+    if(GP3D_CUFFTMP_LEGACY_API OR
+       NOT GP3D_CUFFTMP_DECOMPOSITION_DECLARATION)
+      message(FATAL_ERROR
+        "The cuFFTMp pencil backend requires "
+        "cufftMpMakePlanDecomposition (cuFFTMp 11.4.0 / "
+        "NVIDIA HPC SDK 25.3 or newer).")
     endif()
   endif()
 
@@ -291,8 +353,17 @@ elseif(GPU_BACKEND STREQUAL "cufftmp")
     target_compile_definitions(gp3d_cufftmp_bridge PRIVATE
       GP3D_CUFFTMP_LEGACY_API=1)
     message(STATUS "cuFFTMp plan API: legacy cufftMpAttachComm")
+  elseif(FFT_DECOMPOSITION STREQUAL "pencil")
+    message(STATUS
+      "cuFFTMp plan API: modern cufftMpMakePlanDecomposition")
   else()
     message(STATUS "cuFFTMp plan API: modern cufftMpMakePlan3d")
+  endif()
+  if(FFT_DECOMPOSITION STREQUAL "pencil")
+    target_compile_definitions(gp3d_cufftmp_bridge PRIVATE
+      GP3D_CUFFTMP_PENCIL=1)
+    message(STATUS
+      "cuFFTMp data layout: custom z-slab input / x-pencil output")
   endif()
   target_link_libraries(gp3d_cufftmp_bridge PRIVATE
     "${CUFFTMP_LIBRARY}"
@@ -386,6 +457,19 @@ if(BUILD_TESTING)
         PROCESSORS 2
         RUN_SERIAL TRUE
         TIMEOUT 120)
+
+      if(FFT_DECOMPOSITION STREQUAL "pencil")
+        add_test(NAME cufftmp_pencil_splitstep_np4
+          COMMAND "${MPIEXEC_EXECUTABLE}" ${MPIEXEC_NUMPROC_FLAG} 4
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:gp3d_test_cufftmp_splitstep>
+            ${MPIEXEC_POSTFLAGS})
+        set_tests_properties(cufftmp_pencil_splitstep_np4 PROPERTIES
+          PASS_REGULAR_EXPRESSION "process_grid=2x2"
+          PROCESSORS 4
+          RUN_SERIAL TRUE
+          TIMEOUT 180)
+      endif()
     else()
       message(WARNING "MPI launcher was not found; cuFFTMp tests are disabled.")
     endif()
@@ -398,6 +482,14 @@ if(BUILD_TESTING)
         COMMAND "${GP3D_MPIEXEC_EXECUTABLE}" -n 2 $<TARGET_FILE:gp3d_test_distributed_fft>)
       add_test(NAME distributed_fft_np3
         COMMAND "${GP3D_MPIEXEC_EXECUTABLE}" -n 3 $<TARGET_FILE:gp3d_test_distributed_fft>)
+      if(FFT_DECOMPOSITION STREQUAL "pencil")
+        add_test(NAME distributed_fft_pencil_np4
+          COMMAND "${GP3D_MPIEXEC_EXECUTABLE}" -n 4 $<TARGET_FILE:gp3d_test_distributed_fft>)
+        set_tests_properties(distributed_fft_pencil_np4 PROPERTIES
+          PASS_REGULAR_EXPRESSION "process_grid=2x2"
+          PROCESSORS 4
+          TIMEOUT 30)
+      endif()
       add_test(NAME taylor_green_argle_np2
         COMMAND "${GP3D_MPIEXEC_EXECUTABLE}" -n 2 $<TARGET_FILE:${GP3D_EXECUTABLE_NAME}>
           "${CMAKE_SOURCE_DIR}/tests/taylor_green_smoke.nml")

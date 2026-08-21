@@ -24,7 +24,9 @@ program test_cufftmp_splitstep
 
   call gp3d_mpi_init(mpi)
   if (mpi%nprocs > 4) error stop "cuFFTMp test supports at most four ranks"
-  call gp3d_grid_init(grid, 4, 4, 4, 2.0_dp * pi, 2.0_dp * pi, &
+  ! Uneven, non-cubic dimensions exercise different real-slab and spectral-
+  ! pencil buffer sizes in the four-rank cuFFTMp test.
+  call gp3d_grid_init(grid, 6, 5, 7, 2.0_dp * pi, 2.0_dp * pi, &
     2.0_dp * pi, mpi%rank, mpi%nprocs)
   call gp3d_state_allocate(cpu_state, grid)
   do k = 1, grid%local_nz

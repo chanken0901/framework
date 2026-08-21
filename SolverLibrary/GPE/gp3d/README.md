@@ -44,16 +44,50 @@ NSEとGPEを同じ入口からビルド・実行する場合は、フレーム�
 
 - 検証用DFTまたはFFTWを使用するCPU逐次実行
 - z方向スラブ分割と、局所DFTまたはFFTWを使用するMPI分散実行
+- 2DECOMP&FFTとFFTWを使用するCPU MPIペンシル分割FFT
 - MPI rank内のCPU処理をOpenMPで並列化するMPI+OpenMPハイブリッド実行
 - CUDAとcuFFTを使用するNVIDIA GPU 1台での実行
-- 1 MPI rankにつき1 GPUを使用する、CUDAとcuFFTMpによる分散実行
+- 1 MPI rankにつき1 GPUを使用する、CUDAとcuFFTMpによるスラブ／ペンシル分散実行
 
-複数GPU版は`cuda_mpi_cufftmp`プロファイルとして独立しているため、
+複数GPU版は`cuda_mpi_cufftmp`（スラブ）と
+`cuda_mpi_cufftmp_pencil`（ペンシル）として独立しているため、
 既存のCPU版および単一GPU版で使用しているケースYAMLの形式を維持できます。
+
+## スラブ分割とペンシル分割
+
+GPEのCPU/MPI版とMPI/cuFFTMp版は、environment設計書の
+`parallel.fft_decomposition`で選択します。
+既定値は従来互換の`slab`です。
+
+```yaml
+parallel:
+  use_mpi: true
+  use_openmp: false
+  use_cuda: false
+  fft_decomposition: pencil
+```
+
+| 値 | 自動選択profile | FFT実装 |
+|---|---|---|
+| `slab` | `cpu_mpi_fftw` | zスラブとyスラブ間の`MPI_Alltoallv`、局所FFTW |
+| `pencil` | `cpu_mpi_pencil_fftw` | 2DECOMP&FFTの2次元プロセス格子、FFTW |
+| `slab` + CUDA | `cuda_mpi_cufftmp` | cuFFTMp組み込みz/yスラブ |
+| `pencil` + CUDA | `cuda_mpi_cufftmp_pencil` | cuFFTMp任意分割APIによるzスラブ入力、xペンシル出力 |
+
+CPUペンシルでは、マシンプロファイルの`libraries.decomp2d_root`へ
+2DECOMP&FFTのインストール先を指定します。GPUペンシルでは
+`use_mpi: true`かつ`use_cuda: true`を指定し、cuFFTMp 11.4.0
+（NVIDIA HPC SDK 25.3）以降が必要です。どちらもプロセス格子はrank数から自動決定します。
+
+互換性のため、物理場とSLFはどちらの方式でも従来どおりzスラブで保持します。
+ペンシル版はFFT入口・出口だけX/Zペンシルへ再分配するため、既存の再スタートデータと
+後処理ツールをそのまま使用できます。この構成では保存配列由来の`nprocs <= nz`制約は残ります。
+cuFFTMpペンシル版も実空間とSLFをzスラブのまま保持し、FFT後の波数空間だけを
+`p_y × p_z`に分割します。このため既存ケース、再スタート、後処理との互換性を維持します。
 
 ## MPI+OpenMPハイブリッド実行
 
-`cpu_mpi_dft`と`cpu_mpi_fftw`はOpenMP対応でビルドされます。同じ実行ファイルのまま、
+`cpu_mpi_dft`、`cpu_mpi_fftw`、`cpu_mpi_pencil_fftw`はOpenMP対応でビルドされます。同じ実行ファイルのまま、
 ケースごとに`solver.use_openmp`を切り替えられるため、ON/OFFのたびに再ビルドする必要はありません。
 
 ```yaml
@@ -91,6 +125,7 @@ cmake -S . -B build/cufftmp -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DUSE_MPI=ON \
   -DFFT_BACKEND=dft \
+  -DFFT_DECOMPOSITION=slab \
   -DGPU_BACKEND=cufftmp \
   -DCUFFTMP_ROOT="$CUFFTMP_HOME" \
   -DNVSHMEM_ROOT="$NVSHMEM_HOME"
@@ -99,8 +134,10 @@ cmake --build build/cufftmp --parallel 8
 
 HPC SDK 25.3以降のAPIは自動検出されます。古いHPC SDKで自動検出が合わない場合は
 `-DCUFFTMP_API=legacy`、新しいAPIを明示する場合は`-DCUFFTMP_API=modern`を追加します。
+ペンシル版は`-DFFT_DECOMPOSITION=pencil -DCUFFTMP_API=modern`を指定します。
+`cufftMpMakePlanDecomposition`がない環境は構成時に明示的に拒否されます。
 
-2 GPUでの比較テストと実行例は次のとおりです。
+スラブ版は2 GPU、ペンシル版は4 GPUの比較テストを用意しています。
 
 ```bash
 ctest --test-dir build/cufftmp --output-on-failure -R cufftmp
@@ -115,9 +152,10 @@ Linux用ランナーへ渡します。
 python3 tools/run_workflow_linux.py workflow.cufftmp.example.json
 ```
 
-実空間の波動関数はzスラブで保持され、順FFT後はcuFFTMpの組み込みyスラブ配置を
-運動項カーネルが直接処理します。SLFは従来どおりrank別zスラブとして出力されるため、
-既存の再スタート機能とParaView変換ツールを利用できます。
+実空間の波動関数はzスラブで保持されます。順FFT後は、スラブ版ではcuFFTMpの
+組み込みyスラブ、ペンシル版ではx方向を連続に保ったy-zペンシルを運動項カーネルが
+直接処理します。SLFは従来どおりrank別zスラブとして出力されるため、既存の
+再スタート機能とParaView変換ツールを利用できます。
 
 SLFからVTI/PVDへの変換と、ParaViewでの密度・位相・量子渦表示の標準手順は、
 [`後処理_ParaView可視化手順書.md`](../../../後処理_ParaView可視化手順書.md)を参照してください。

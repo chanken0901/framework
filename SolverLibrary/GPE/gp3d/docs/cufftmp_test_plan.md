@@ -1,7 +1,8 @@
 # cuFFTMpスパコン検証手順
 
-この手順は、最初の移植結果を再現可能な形で採取し、次の修正と性能最適化に使うためのものです。
-最初は同一ノード内の2 GPUで正しさを確認し、その後に1、2、4 GPUの比較を行います。
+この手順は、スラブ版とペンシル版の移植結果を再現可能な形で採取し、
+次の修正と性能最適化に使うためのものです。最初は同一ノード内の2 GPUで
+スラブ版を確認し、ペンシル版は4 GPUの2×2プロセス格子で確認します。
 
 ## 1. 実行環境の記録
 
@@ -38,6 +39,7 @@ cmake -S . -B build/cufftmp -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DUSE_MPI=ON \
   -DFFT_BACKEND=dft \
+  -DFFT_DECOMPOSITION=slab \
   -DGPU_BACKEND=cufftmp \
   -DCUFFTMP_ROOT="$CUFFTMP_HOME" \
   -DNVSHMEM_ROOT="$NVSHMEM_HOME" \
@@ -47,6 +49,22 @@ cmake --build build/cufftmp --parallel 8
 
 HPC SDK 25.3より前で`cufftMpMakePlan3d`が見つからない場合は、
 `-DCUFFTMP_API=legacy`を追加して再構成します。
+
+ペンシル版はcuFFTMp 11.4.0（NVIDIA HPC SDK 25.3）以降で構成します。
+
+```bash
+cmake -S . -B build/cufftmp-pencil -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DUSE_MPI=ON \
+  -DFFT_BACKEND=dft \
+  -DFFT_DECOMPOSITION=pencil \
+  -DGPU_BACKEND=cufftmp \
+  -DCUFFTMP_API=modern \
+  -DCUFFTMP_ROOT="$CUFFTMP_HOME" \
+  -DNVSHMEM_ROOT="$NVSHMEM_HOME" \
+  -DBUILD_TESTING=ON
+cmake --build build/cufftmp-pencil --parallel 8
+```
 
 ## 3. 2 GPU正しさ確認
 
@@ -59,6 +77,14 @@ ctest --test-dir build/cufftmp -V -R cufftmp
 
 - `cufftmp_splitstep_np2`
 - `cufftmp_argle_smoke_np2`
+
+ペンシル版では次も成功し、ログに`process_grid=2x2`が出ることを確認します。
+
+```bash
+ctest --test-dir build/cufftmp-pencil -V -R cufftmp_pencil_splitstep_np4
+```
+
+- `cufftmp_pencil_splitstep_np4`
 
 CTestがサイトのGPU割り当てと合わない場合は、確保した計算ノード上で直接実行します。
 

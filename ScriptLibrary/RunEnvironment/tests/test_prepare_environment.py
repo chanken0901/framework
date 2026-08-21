@@ -161,6 +161,61 @@ class ParallelFeatureTests(unittest.TestCase):
                 resolved = _resolve_solver_profile(design, self.gpe_manifest)
                 self.assertEqual(resolved[0], profile)
 
+    def test_gpe_pencil_decomposition_selects_2decomp_profile(self) -> None:
+        design = {
+            "parallel": {
+                "use_mpi": True,
+                "use_openmp": False,
+                "use_cuda": False,
+                "fft_decomposition": "pencil",
+            }
+        }
+
+        resolved = _resolve_solver_profile(design, self.gpe_manifest)
+
+        self.assertEqual(resolved[0], "cpu_mpi_pencil_fftw")
+
+    def test_gpe_pencil_decomposition_selects_cufftmp_profile(self) -> None:
+        design = {
+            "parallel": {
+                "use_mpi": True,
+                "use_openmp": False,
+                "use_cuda": True,
+                "fft_decomposition": "pencil",
+            }
+        }
+
+        resolved = _resolve_solver_profile(design, self.gpe_manifest)
+
+        self.assertEqual(resolved[0], "cuda_mpi_cufftmp_pencil")
+
+    def test_gpe_pencil_decomposition_rejects_single_gpu(self) -> None:
+        design = {
+            "parallel": {
+                "use_mpi": False,
+                "use_openmp": False,
+                "use_cuda": True,
+                "fft_decomposition": "pencil",
+            }
+        }
+
+        with self.assertRaisesRegex(EnvironmentError, "multi-GPU"):
+            _resolve_solver_profile(design, self.gpe_manifest)
+
+    def test_explicit_slab_profile_rejects_pencil_selection(self) -> None:
+        design = {
+            "parallel": {
+                "use_mpi": True,
+                "use_openmp": False,
+                "use_cuda": False,
+                "fft_decomposition": "pencil",
+            },
+            "solver": {"profile": "cpu_mpi_fftw"},
+        }
+
+        with self.assertRaisesRegex(EnvironmentError, "fft_decomposition"):
+            _resolve_solver_profile(design, self.gpe_manifest)
+
     def test_nse_profile_is_derived_from_mpi_and_cuda(self) -> None:
         mpi = {
             "parallel": {
@@ -285,6 +340,7 @@ class NseCaseTemplateTests(unittest.TestCase):
         self.assertNotIn("profile: {{solver_profile}}", template)
         self.assertNotIn("use_mpi: {{use_mpi}}", template)
         self.assertNotIn("use_cuda: {{use_cuda}}", template)
+        self.assertIn("parallel.fft_decomposition", template)
 
     def test_flow_conditions_share_one_nse_template(self) -> None:
         template = (

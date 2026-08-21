@@ -101,7 +101,8 @@
       "properties": {
         "use_mpi": {"type": "boolean"},
         "use_openmp": {"type": "boolean"},
-        "use_cuda": {"type": "boolean"}
+        "use_cuda": {"type": "boolean"},
+        "fft_decomposition": {"enum": ["slab", "pencil"]}
       },
       "additionalProperties": false
     },

@@ -19,6 +19,8 @@ parallel:
   use_mpi: true
   use_openmp: false
   use_cuda: false
+  # choices: slab, pencil。CPU/MPIでは2DECOMP&FFT、MPI/CUDAではcuFFTMpを選択する。
+  fft_decomposition: slab
 
 # 標準CPU版はFFTWを自動選択する。参照DFTを使う場合だけ、次を追加する。
 # solver:

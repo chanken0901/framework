@@ -17,6 +17,8 @@ parallel:
   use_mpi: true
   use_openmp: false
   use_cuda: false
+  # choices: slab, pencil。CPU/MPIでは2DECOMP&FFT、MPI/CUDAではcuFFTMpを選択する。
+  fft_decomposition: slab
 
 # サイト固有値やジョブごとに変える値だけを上書きする。
 case:

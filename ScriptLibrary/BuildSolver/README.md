@@ -66,8 +66,10 @@ python .\build_model.py .\build.yaml `
 | `cpu_serial_fftw` | FFTWによるCPU逐次実行 |
 | `cpu_mpi_dft` | MPI分散FFTと局所DFT |
 | `cpu_mpi_fftw` | MPI分散FFTと局所FFTW |
+| `cpu_mpi_pencil_fftw` | 2DECOMP&FFTによるMPIペンシル分割FFT |
 | `cuda_single` | 単一GPUのCUDA・cuFFT |
 | `cuda_mpi_cufftmp` | 1ランク1GPUのMPI・cuFFTMp |
+| `cuda_mpi_cufftmp_pencil` | 1ランク1GPUのMPI・cuFFTMpペンシル分割 |
 
 ## 3. ビルド
 
@@ -169,6 +171,7 @@ models:
 ```yaml
 libraries:
   fftw_root: C:/fftw
+  decomp2d_root: C:/path/to/2decomp-fft
   cuda_compiler: C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/bin/nvcc.exe
   cuda_toolkit_root: C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0
   cuda_architectures: 86
@@ -182,6 +185,9 @@ libraries:
   nvshmem_root: /path/to/nvhpc/comm_libs/nvshmem
   cufftmp_api: auto
 ```
+
+`cuda_mpi_cufftmp_pencil`は`cufftMpMakePlanDecomposition`を使用するため、
+cuFFTMp 11.4.0（NVIDIA HPC SDK 25.3）以降が必要です。
 
 Windowsの`cuda_single`では、ランナーがVisual Studio x64 C++環境を検出してから
 CMakeを起動します。`cuda_mpi_cufftmp`はWindowsでは明示的に拒否されます。

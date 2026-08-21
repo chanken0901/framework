@@ -443,6 +443,28 @@ def _parallel_features(
             f"parallel.use_openmp=true requires an OpenMP-capable profile; "
             f"{profile!r} is not OpenMP-capable"
         )
+    if str(manifest.get("model", "")).lower() == "gpe":
+        requested_decomposition = str(
+            parallel.get("fft_decomposition", "slab")
+        ).strip().lower()
+        if requested_decomposition not in {"slab", "pencil"}:
+            raise EnvironmentError(
+                "parallel.fft_decomposition must be slab or pencil"
+            )
+        profiles = _mapping(manifest.get("profiles"), "solver manifest.profiles")
+        profile_record = _mapping(profiles.get(profile), f"solver profile {profile}")
+        cmake = _mapping(
+            profile_record.get("cmake", {}), f"solver profile {profile}.cmake"
+        )
+        profile_decomposition = str(
+            cmake.get("FFT_DECOMPOSITION", "slab")
+        ).strip().lower()
+        if requested_decomposition != profile_decomposition:
+            raise EnvironmentError(
+                f"parallel.fft_decomposition={requested_decomposition!r} does not "
+                f"match solver profile {profile!r} "
+                f"(FFT_DECOMPOSITION={profile_decomposition})"
+            )
     return values["use_mpi"], values["use_openmp"], values["use_cuda"]
 
 
@@ -468,6 +490,26 @@ def _resolve_solver_profile(
         mode = "mpi"
     else:
         mode = "serial"
+
+    if str(manifest.get("model", "")).lower() == "gpe":
+        fft_decomposition = str(
+            parallel.get("fft_decomposition", "slab")
+        ).strip().lower()
+        if fft_decomposition not in {"slab", "pencil"}:
+            raise EnvironmentError(
+                "parallel.fft_decomposition must be slab or pencil"
+            )
+        if fft_decomposition == "pencil":
+            if mode == "mpi":
+                mode = "mpi_pencil"
+            elif mode == "mpi_cuda":
+                mode = "mpi_cuda_pencil"
+            else:
+                raise EnvironmentError(
+                    "parallel.fft_decomposition=pencil requires "
+                    "use_mpi=true; CUDA pencil decomposition requires "
+                    "the multi-GPU cuFFTMp mode"
+                )
 
     solver = _mapping(design.get("solver", {}), "solver")
     configured_profile = solver.get("profile")
@@ -911,6 +953,13 @@ def prepare(args: argparse.Namespace) -> Path:
     profile, use_mpi, use_openmp, use_cuda, openmp_capable = (
         _resolve_solver_profile(design, manifest)
     )
+    fft_decomposition = None
+    if model == "gpe":
+        fft_decomposition = str(
+            _mapping(design.get("parallel"), "parallel").get(
+                "fft_decomposition", "slab"
+            )
+        ).strip().lower()
     profile_explicit = _profile_is_explicit(design)
     staged_profiles = [profile]
     runtime_profile_selection = manifest.get(
@@ -1033,6 +1082,8 @@ def prepare(args: argparse.Namespace) -> Path:
             "  parallel:    "
             f"MPI={use_mpi}, OpenMP={use_openmp}, CUDA={use_cuda}"
         )
+        if fft_decomposition is not None:
+            print(f"  FFT layout:  {fft_decomposition}")
         print(f"  components:  {', '.join(components)}")
         print(f"  solver files:{len(selected_files)}")
         return output
@@ -1197,6 +1248,8 @@ def prepare(args: argparse.Namespace) -> Path:
             "openmp_capable": openmp_capable,
             "use_cuda": use_cuda,
         }
+        if fft_decomposition is not None:
+            lock["fft_decomposition"] = fft_decomposition
         provenance = {
             "schema_version": 1,
             "generated_at_utc": generated_at,
