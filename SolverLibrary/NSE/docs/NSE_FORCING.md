@@ -13,11 +13,15 @@ Forcingは各SSPRK3段の運動量RHSへ加算される。論文の内部エネ�
 |---|---|---|
 | CPU + MPI/OpenMP | 2DECOMP&FFT + FFTW3 | 実装・動作確認済み |
 | 単一GPU | cuFFT | 実装・動作確認済み |
-| MPI + CUDA | cuFFTMp | 契約テストのみ。実計算は無効 |
+| MPI + CUDA | cuFFTMp | 実装済み（LinuxマルチGPU環境で実機検証が必要） |
 
 CPU版はroot集約を行わず、既存のx-pencil分割と2DECOMPの転置を使う。単一GPU版は
 速度場、スペクトル、射影、逆FFT、RHS加算をGPU上で処理し、係数を求めるスカラー
 だけをホストへ転送する。
+
+MPI＋CUDA版もroot集約を行わない。局所状態とFFT記述子をGPU上に保持し、
+Helmholtz射影後の分母と圧力膨張相関だけを`MPI_Allreduce`する。詳細は
+[`NSE_CUFFTMP.md`](NSE_CUFFTMP.md)を参照する。
 
 ## case.yaml
 
@@ -78,13 +82,12 @@ environment設計書ではMPI/CUDAの使用有無だけを選ぶ。生成環境�
 `python .\tools\run_case.py --prepare`で`input.dat`へ展開される。MPIプロセス数と
 OpenMPスレッド数は従来どおり`case.yaml`または実行時オプションで指定する。
 
-## cuFFTMp拡張境界
+## cuFFTMp実装
 
-現在の環境にはcuFFTMpとCUDA-aware MPIがないため、MPI + CUDA実行ファイルは
-生成しない。将来のバックエンドが満たす契約は
-`src/forcing/cufftmp_forcing_contract.yaml`に固定し、CTestで検証する。
-この契約はGPU常駐、root集約禁止、3成分バッチ分散FFT、局所スペクトル射影、
-係数の全ランク縮約、局所RHS加算を要求する。
+`cuda_mpi_cufftmp`ではGPU常駐、root集約禁止、3成分分散FFT、局所スペクトル
+射影、係数の全ランク縮約、局所RHS加算を実装している。現在のWindows開発機には
+cuFFTMp/NVSHMEMがないため、ここでは契約・構文と既存バックエンドの回帰を検証し、
+分散FFTの実機検証はLinuxマルチGPU計算機で行う。
 
 ## 診断出力
 

@@ -1,6 +1,6 @@
 # NSE 生成・ビルド・実行手順
 
-更新日: 2026-08-18
+更新日: 2026-08-25
 
 ## 1. 推奨フロー
 
@@ -30,7 +30,7 @@ Windows CPU/MPI版:
 - GNU Fortran
 - Microsoft MPI RuntimeとSDK
 
-Windows単一GPU版では、上記にCUDA Toolkit、NVIDIAドライバ、
+Windows CUDA版（単一GPU／MPI＋CUDA）では、上記にCUDA Toolkit、NVIDIAドライバ、
 Visual Studio Build Toolsのx64 C++環境が必要となる。
 
 ```powershell
@@ -103,6 +103,26 @@ parallel:
   use_cuda: true
 ```
 
+MPI＋CUDAマルチGPU:
+
+```yaml
+select:
+  model: nse
+  execution: release
+
+parallel:
+  use_mpi: true
+  use_openmp: false
+  use_cuda: true
+```
+
+この組合せでは通常の時間発展に`cuda_mpi` profileが選択される。`case.yaml`の
+`solver.mpi_processes`は使用するGPU総数にし、原則として1 MPI rankを1 GPUへ
+割り当てる。Taylor–Greenと保存済み乱流場は`cuda_mpi`で実行する。
+分散HIT初期化またはPetersen–Livescu forcingにはLinux上で
+`cuda_mpi_cufftmp`を選択する。cuFFTMp版のビルド方法は
+[`NSE_CUFFTMP.md`](NSE_CUFFTMP.md)を参照する。
+
 生成前に選択肢と展開内容を確認する。
 
 ```powershell
@@ -125,7 +145,7 @@ Set-Location "$env:USERPROFILE\ResearchRuns\nse_caseNNNN"
 - `grid`: 格子数、領域、ghostセル数
 - `time`: CFL、時間刻み、最大ステップ、出力間隔
 - `physics.nse`: 比熱比、Mach数、Reynolds数、Prandtl数
-- `flow`: Taylor-GreenまたはHIT初期条件
+- `flow`: Taylor-Green、HIT、または保存済み乱流場の初期条件
 - `forcing`: Forcingの有無と方式
 - `numerics`: 対流流束、粘性項、境界条件、時間積分
 - `solver`: MPIランク数、OpenMPスレッド数、CUDAデバイス
@@ -149,6 +169,22 @@ numerics:
 
 `hybrid`以外の場合、`hybrid`以下の項目は使用されない。設定と混合則は
 [`NSE_HYBRID_FLUX.md`](NSE_HYBRID_FLUX.md)を参照する。
+
+保存済み乱流を長いx領域へ配置する場合は、先にrank別SLFを可搬SLFへ変換する。
+元計算と読込み先の組合せは、CPU MPI→CPU MPI、CPU MPI→CUDA、CUDA→CPU MPI、
+CUDA→CUDAのすべてに対応する。元計算と読込み先でMPIプロセス数を一致させる
+必要はない。
+
+```powershell
+python .\SolverLibrary\NSE\tools\nse_prepare_imported_turbulence.py `
+  .\previous_case\output `
+  --step latest `
+  --output .\cases\caseNNNN\initial_data\turbulence.slf
+```
+
+続いて`case.yaml`の`flow.type`を`imported_turbulence`へ変更する。`embed`と`tile`の
+入力例、CPU/CUDA別の実行可能なPowerShell手順、格子互換条件、平均速度の追加方法は
+[`NSE_IMPORTED_TURBULENCE.md`](NSE_IMPORTED_TURBULENCE.md)を参照する。
 
 全領域でWENO5-Z/Roeを使う場合は`convective_scheme: weno5z_roe`、全領域で
 KEEP6を使う場合は`convective_scheme: keep6`とする。後者ではWENO計算を行わず、
@@ -220,6 +256,8 @@ python .\build_model.py .\build.yaml `
   --model nse --profile cpu_mpi --test
 python .\build_model.py .\build.yaml `
   --model nse --profile cuda_single --test
+python .\build_model.py .\build.yaml `
+  --model nse --profile cuda_mpi --build
 ```
 
 主なプロファイル:
@@ -229,6 +267,7 @@ python .\build_model.py .\build.yaml `
 | `cpu_mpi` | MPI + OpenMP、Taylor-Greenなど |
 | `cpu_mpi_2decomp_fftw` | 2DECOMP&FFTを使うHIT初期化・Forcing |
 | `cuda_single` | 単一GPU CUDA |
+| `cuda_mpi` | MPI＋CUDA、1 rank＝1 GPUのマルチGPU時間発展 |
 
 ビルド生成物は既定で次へ置く。
 
@@ -275,6 +314,10 @@ python .\build_model.py .\build.yaml `
 # 単一GPU全テスト
 python .\build_model.py .\build.yaml `
   --model nse --profile cuda_single --test
+
+# MPI＋CUDAビルド（実機smoke testは複数GPUノードで実行）
+python .\build_model.py .\build.yaml `
+  --model nse --profile cuda_mpi --build
 
 # 外部実行環境ツール
 python -m unittest discover ..\RunEnvironment\tests

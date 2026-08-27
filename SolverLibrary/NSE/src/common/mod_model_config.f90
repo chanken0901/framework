@@ -49,6 +49,18 @@ module mod_model_config
     real(dp) :: hit_isotropy_k_cutoff = 2.5_dp
     real(dp) :: hit_isotropy_tolerance = 1.0e-8_dp
     integer :: hit_isotropy_max_iterations = 80
+    character(len=512) :: imported_turbulence_file = ''
+    character(len=32) :: imported_turbulence_mode = 'embed'
+    real(dp) :: imported_turbulence_x_start = -1.0e300_dp
+    integer :: imported_turbulence_blend_cells = 0
+    real(dp) :: imported_turbulence_velocity_offset_x = 0.0_dp
+    real(dp) :: imported_turbulence_velocity_offset_y = 0.0_dp
+    real(dp) :: imported_turbulence_velocity_offset_z = 0.0_dp
+    real(dp) :: imported_turbulence_background_rho = -1.0_dp
+    real(dp) :: imported_turbulence_background_u = 0.0_dp
+    real(dp) :: imported_turbulence_background_v = 0.0_dp
+    real(dp) :: imported_turbulence_background_w = 0.0_dp
+    real(dp) :: imported_turbulence_background_p = -1.0_dp
     character(len=32) :: forcing_scheme = 'none'
     character(len=32) :: forcing_spectrum = 'low_wavenumber'
     character(len=32) :: forcing_fft_backend = 'auto'
@@ -219,6 +231,26 @@ contains
       cfg%hit_isotropy_tolerance
     write(u,'(A,I10)') 'hit_isotropy_max_iterations = ', &
       cfg%hit_isotropy_max_iterations
+    if (len_trim(cfg%imported_turbulence_file) > 0) then
+      write(u,'(A,A)') 'imported_turbulence_file = ', &
+        trim(cfg%imported_turbulence_file)
+      write(u,'(A,A)') 'imported_turbulence_mode = ', &
+        trim(cfg%imported_turbulence_mode)
+      write(u,'(A,ES16.8)') 'imported_turbulence_x_start = ', &
+        cfg%imported_turbulence_x_start
+      write(u,'(A,I10)') 'imported_turbulence_blend_cells = ', &
+        cfg%imported_turbulence_blend_cells
+      write(u,'(A,3ES16.8)') 'imported_turbulence_velocity_offset = ', &
+        cfg%imported_turbulence_velocity_offset_x, &
+        cfg%imported_turbulence_velocity_offset_y, &
+        cfg%imported_turbulence_velocity_offset_z
+      write(u,'(A,5ES16.8)') 'imported_turbulence_background = ', &
+        cfg%imported_turbulence_background_rho, &
+        cfg%imported_turbulence_background_u, &
+        cfg%imported_turbulence_background_v, &
+        cfg%imported_turbulence_background_w, &
+        cfg%imported_turbulence_background_p
+    end if
     write(u,'(A,A)') 'forcing_scheme    = ', trim(cfg%forcing_scheme)
     write(u,'(A,A)') 'forcing_spectrum  = ', trim(cfg%forcing_spectrum)
     write(u,'(A,A)') 'forcing_fft_backend = ', trim(cfg%forcing_fft_backend)

@@ -1,8 +1,8 @@
-# NSE 単一GPU CUDA版
+# NSE CUDA版（単一GPU／MPI＋マルチGPU）
 
 ## 対応範囲
 
-`cuda_single` profileは、現在のCPU版と同じ保存変数
+`cuda_single` profileと`cuda_mpi` profileは、CPU版と同じ保存変数
 `rho, rho_u, rho_v, rho_w, rho_E`を使い、次の組み合わせをGPUで計算します。
 
 - 対流項: `keep2`、`keep6`、特性空間`weno5z_roe`、またはKEEP/WENO `hybrid`
@@ -10,11 +10,12 @@
 - 境界条件: 三方向周期境界
 - 時間積分: SSPRK3
 - 精度: float64
-- GPU数: 1
-- MPI/OpenMP: 使用しない
+- `cuda_single`: GPU 1台、MPI/OpenMPなし
+- `cuda_mpi`: MPI 1 rankにつきGPU 1台、OpenMPなし
 
 `central6`は一定粘性係数のNewton流体、Stokesの仮定、Fourier熱伝導を
-CUDAカーネルで計算します。現在の`cuda_single`は単一GPU専用です。
+CUDAカーネルで計算します。対流方式、粘性方式、周期境界、SSPRK3は
+単一GPU版とマルチGPU版で共通です。
 
 ## GPU化される処理
 
@@ -33,6 +34,35 @@ CUDAカーネルで計算します。現在の`cuda_single`は単一GPU専用で
 
 GPU版は面流束配列を保存せず、各セルで必要な左右6面の流束を直接計算します。
 これにより、三方向分の大きな流束配列をGPUメモリへ保持しません。
+
+## MPI＋CUDAの実装
+
+`cuda_mpi`は、既存CPU版と同じくx方向を各rankが全域保持し、y-z面を
+二次元MPI分割します。各rankは自分の局所領域だけをGPUに保持します。
+
+SSPRK3の各段で、次の順序でghostセルを完成させます。
+
+1. x方向と非分割方向の周期ghostをCUDAカーネルで更新
+2. y面をGPUからhost staging bufferへpackし、隣接rankとMPI交換してGPUへunpack
+3. z面を同様に交換。先に更新したy ghostも送ることで辺・角ghostを完成
+4. 局所RHSとSSPRK3段更新をGPUで実行
+
+CFL時間刻みは各GPUの局所値を計算した後、`MPI_Allreduce(MIN)`で全rankを
+同じ値にします。SLF出力はCPU版と同じrank別形式で、`meta.json`には全rankの
+局所範囲が記録されます。通信はhost staging方式なのでCUDA-aware MPIは必須では
+ありません。
+
+各y/z局所ブロックは少なくとも`nghost`セル必要です。GPU割当ての既定は
+MPI shared-memory communicatorから得たノード内rank番号です。Slurmなどが
+各rankへ`CUDA_VISIBLE_DEVICES`を1台だけ公開する場合は、そのrankから見える
+device 0を自動選択します。1台のGPUを複数rankで共有するデバッグ時だけ、
+`NSE_CUDA_DEVICE_POLICY=fixed`を設定できます。
+
+`cuda_mpi`はTaylor–Green初期条件と`imported_turbulence`を利用します。
+分散HIT初期化またはPetersen–Livescu forcingが必要なLinux計算機では、
+`cuda_mpi_cufftmp`を選択します。このプロファイルは既存のY-Z領域分割を
+`cufftMpMakePlanDecomposition`へ直接渡します。必要環境とビルド方法は
+[`NSE_CUFFTMP.md`](NSE_CUFFTMP.md)を参照してください。
 
 ## 実行環境の生成
 
@@ -62,6 +92,19 @@ parallel:
   use_cuda: true
 ```
 
+MPI＋CUDA（マルチGPU）では、同じ設計書を次のようにします。
+
+```yaml
+select:
+  model: nse
+  execution: release
+
+parallel:
+  use_mpi: true
+  use_openmp: false
+  use_cuda: true
+```
+
 ```powershell
 python "$tool\prepare_environment.py" `
   "$designs\nse_tgv_cuda.yaml" --dry-run
@@ -78,14 +121,24 @@ python .\tools\run_case.py --build
 python .\tools\run_case.py --run
 ```
 
-CUDA版ではenvironment設計書でMPIとOpenMPを無効にします。profile、MPI、CUDAは
-この設計から自動決定されるため、`case.yaml`には重ねて記述しません。GPU番号は
-次の項目で選択できます。
+単一GPU版ではMPIとOpenMPを無効にし、マルチGPU版ではMPIだけを有効にします。
+profile、MPI、CUDAはenvironment設計から自動決定されるため、`case.yaml`には
+重ねて記述しません。単一GPUのcase設定例は次のとおりです。
 
 ```yaml
 solver:
   use_openmp: false
   mpi_processes: 1
+  omp_threads: 1
+  cuda_device: 0
+```
+
+マルチGPUでは`mpi_processes`をGPU総数に合わせます。通常は1 rank＝1 GPUです。
+
+```yaml
+solver:
+  use_openmp: false
+  mpi_processes: 4
   omp_threads: 1
   cuda_device: 0
 ```
@@ -124,6 +177,21 @@ python .\build_model.py .\build.yaml `
 
 実行ファイル名は`nse_cuda.exe`です。
 
+MPI＋CUDA版:
+
+```powershell
+python .\build_model.py .\build.yaml `
+  --model nse `
+  --profile cuda_mpi `
+  --build
+```
+
+実行ファイル名は`nse_mpi_cuda.exe`です。例えば4 GPUでは次のように実行します。
+
+```powershell
+mpiexec -n 4 .\nse_mpi_cuda.exe .\input.dat
+```
+
 ## GPUアーキテクチャ
 
 使用GPUに合わせて、machine profileの`cuda_architectures`を設定します。
@@ -148,11 +216,12 @@ libraries:
 + Ntotal * 4 * 8 byte
 + reduction workspace
 
-Ntotal = (nx+2*nghost) * (ny+2*nghost) * (nz+2*nghost)
+Ntotal = (nx+2*nghost) * (local_ny+2*nghost) * (local_nz+2*nghost)
 ```
 
-256立方格子、`nghost=3`では、主要配列だけで約2.60 GiBです。このほかに
-CUDA reduction用の小さな作業領域が必要です。
+単一GPUでは`local_ny=ny`、`local_nz=nz`です。MPI＋CUDAでは各GPUの局所y-z
+範囲を使います。このほかにCUDA reduction領域と、最大y/z面1組分のGPU・host
+staging bufferが必要です。
 
 ## ParaView
 
@@ -176,3 +245,5 @@ python .\tools\postprocess_case.py
 6. 非一様な三次元場の`central6`粘性項と時間刻みがCPU参照実装と一致すること
 7. 8立方Taylor-Green渦のKEEP、WENO5-Z/Roe、ハイブリッド 2ステップsmoke test
 8. 従来の`cpu_mpi` profileが引き続きビルドできること
+9. `cuda_mpi`のWindows MPI＋CUDAビルドと2 rank／4 rank smoke test
+10. 2×2 y-z分割の全物理セル2,560値が単一GPU結果と完全一致すること

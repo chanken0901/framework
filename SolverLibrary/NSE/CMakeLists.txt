@@ -6,7 +6,7 @@ set(CMAKE_OBJECT_PATH_MAX 240)
 project(
   NSE
   VERSION 1.0.0
-  DESCRIPTION "MPI/OpenMP and CUDA Navier-Stokes solver"
+  DESCRIPTION "MPI/OpenMP, single-GPU CUDA, and MPI+CUDA Navier-Stokes solver"
   LANGUAGES Fortran
 )
 
@@ -19,8 +19,18 @@ option(NSE_ENABLE_WARNINGS "Enable additional Fortran compiler warnings" ON)
 option(NSE_ENABLE_OPENMP "Enable OpenMP support" ON)
 option(NSE_USE_MPI "Build the MPI domain-decomposition backend" ON)
 option(
+  NSE_ENABLE_MULTI_GPU_TESTS
+  "Run MPI+CUDA tests that require one visible GPU per MPI rank"
+  OFF
+)
+set(
+  NSE_MULTI_GPU_TEST_PROCESSES 4
+  CACHE STRING
+  "MPI process/GPU count for the optional MPI+CUDA smoke test"
+)
+option(
   NSE_ENABLE_CUFFTMP_CONTRACT_TESTS
-  "Validate the future MPI+CUDA cuFFTMp forcing interface contract"
+  "Validate the MPI+CUDA cuFFTMp forcing interface contract"
   ON
 )
 set(
@@ -62,25 +72,35 @@ set_property(CACHE NSE_BOUNDARY_SCHEME PROPERTY STRINGS periodic)
 set(
   NSE_INIT_FFT_BACKEND "none"
   CACHE STRING
-  "Initial-condition FFT backend: none, 2decomp_fftw, or cufft"
+  "Initial-condition FFT backend: none, 2decomp_fftw, cufft, or cufftmp"
 )
 set_property(
   CACHE NSE_INIT_FFT_BACKEND
-  PROPERTY STRINGS none 2decomp_fftw cufft
+  PROPERTY STRINGS none 2decomp_fftw cufft cufftmp
 )
 set(
   NSE_FORCING_FFT_BACKEND "none"
   CACHE STRING
-  "Forcing Helmholtz FFT backend: none, 2decomp_fftw, or cufft"
+  "Forcing Helmholtz FFT backend: none, 2decomp_fftw, cufft, or cufftmp"
 )
 set_property(
   CACHE NSE_FORCING_FFT_BACKEND
-  PROPERTY STRINGS none 2decomp_fftw cufft
+  PROPERTY STRINGS none 2decomp_fftw cufft cufftmp
 )
 set(
   NSE_2DECOMP_ROOT "$ENV{DECOMP2D_ROOT}"
   CACHE PATH
   "2DECOMP&FFT installation prefix containing lib/decomp2d"
+)
+set(
+  NSE_CUFFTMP_ROOT "$ENV{CUFFTMP_ROOT}"
+  CACHE PATH
+  "cuFFTMp prefix containing include/cufftmp and lib64/libcufftMp"
+)
+set(
+  NSE_NVSHMEM_ROOT "$ENV{NVSHMEM_ROOT}"
+  CACHE PATH
+  "NVSHMEM prefix matching the selected cuFFTMp installation"
 )
 
 string(TOLOWER "${NSE_CONVECTIVE_BACKEND}" NSE_CONVECTIVE_BACKEND)
@@ -97,17 +117,13 @@ if(NOT NSE_GPU_BACKEND STREQUAL "none" AND
     "Available backends: none, cuda"
   )
 endif()
-if(NSE_GPU_BACKEND STREQUAL "cuda" AND NSE_USE_MPI)
-  message(FATAL_ERROR
-    "The NSE CUDA backend is single-GPU only. Configure with NSE_USE_MPI=OFF."
-  )
-endif()
 if(NOT NSE_INIT_FFT_BACKEND STREQUAL "none" AND
    NOT NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw" AND
-   NOT NSE_INIT_FFT_BACKEND STREQUAL "cufft")
+   NOT NSE_INIT_FFT_BACKEND STREQUAL "cufft" AND
+   NOT NSE_INIT_FFT_BACKEND STREQUAL "cufftmp")
   message(FATAL_ERROR
     "Unsupported NSE_INIT_FFT_BACKEND='${NSE_INIT_FFT_BACKEND}'. "
-    "Available backends: none, 2decomp_fftw, cufft"
+    "Available backends: none, 2decomp_fftw, cufft, cufftmp"
   )
 endif()
 if(NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw" AND NOT NSE_USE_MPI)
@@ -127,13 +143,26 @@ if(NSE_INIT_FFT_BACKEND STREQUAL "cufft" AND
     "The cufft initialization backend requires NSE_GPU_BACKEND=cuda."
   )
 endif()
+if(NSE_INIT_FFT_BACKEND STREQUAL "cufftmp" AND
+   (NOT NSE_USE_MPI OR NOT NSE_GPU_BACKEND STREQUAL "cuda"))
+  message(FATAL_ERROR
+    "The cufftmp initialization backend requires NSE_USE_MPI=ON and "
+    "NSE_GPU_BACKEND=cuda."
+  )
+endif()
+if(NSE_INIT_FFT_BACKEND STREQUAL "cufft" AND NSE_USE_MPI)
+  message(FATAL_ERROR
+    "The cufft initialization backend is single-GPU only. "
+    "Use NSE_INIT_FFT_BACKEND=none for MPI+CUDA."
+  )
+endif()
 if(NOT NSE_FORCING_FFT_BACKEND STREQUAL "none" AND
    NOT NSE_FORCING_FFT_BACKEND STREQUAL "2decomp_fftw" AND
-   NOT NSE_FORCING_FFT_BACKEND STREQUAL "cufft")
+   NOT NSE_FORCING_FFT_BACKEND STREQUAL "cufft" AND
+   NOT NSE_FORCING_FFT_BACKEND STREQUAL "cufftmp")
   message(FATAL_ERROR
     "Unsupported NSE_FORCING_FFT_BACKEND='${NSE_FORCING_FFT_BACKEND}'. "
-    "Available runtime backends: none, 2decomp_fftw, cufft. "
-    "cuFFTMp is represented by a test-only interface contract."
+    "Available runtime backends: none, 2decomp_fftw, cufft, cufftmp."
   )
 endif()
 if(NSE_FORCING_FFT_BACKEND STREQUAL "2decomp_fftw" AND
@@ -146,6 +175,25 @@ if(NSE_FORCING_FFT_BACKEND STREQUAL "cufft" AND
    NOT NSE_GPU_BACKEND STREQUAL "cuda")
   message(FATAL_ERROR
     "The cufft forcing backend requires NSE_GPU_BACKEND=cuda."
+  )
+endif()
+if(NSE_FORCING_FFT_BACKEND STREQUAL "cufftmp" AND
+   (NOT NSE_USE_MPI OR NOT NSE_GPU_BACKEND STREQUAL "cuda"))
+  message(FATAL_ERROR
+    "The cufftmp forcing backend requires NSE_USE_MPI=ON and "
+    "NSE_GPU_BACKEND=cuda."
+  )
+endif()
+if((NSE_INIT_FFT_BACKEND STREQUAL "cufftmp" OR
+    NSE_FORCING_FFT_BACKEND STREQUAL "cufftmp") AND WIN32)
+  message(FATAL_ERROR
+    "cuFFTMp is supported by this project on Linux HPC systems only."
+  )
+endif()
+if(NSE_FORCING_FFT_BACKEND STREQUAL "cufft" AND NSE_USE_MPI)
+  message(FATAL_ERROR
+    "The cufft forcing backend is single-GPU only. "
+    "Use NSE_FORCING_FFT_BACKEND=none for MPI+CUDA."
   )
 endif()
 
@@ -199,6 +247,7 @@ if(NSE_ENABLE_OPENMP)
 endif()
 
 set(NSE_INIT_FFT_SOURCE src/init/mod_init_hit_spectral_stub.f90)
+set(NSE_INIT_FFT_SUPPORT_SOURCE "")
 if(NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw" OR
    NSE_FORCING_FFT_BACKEND STREQUAL "2decomp_fftw")
   if(NSE_2DECOMP_ROOT)
@@ -212,10 +261,22 @@ if(NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw" OR
   endif()
   if(NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw")
     set(NSE_INIT_FFT_SOURCE src/init/mod_init_hit_spectral_2decomp.f90)
+    set_source_files_properties(
+      src/init/mod_init_hit_spectral_2decomp.f90
+      PROPERTIES Fortran_PREPROCESS ON
+    )
   endif()
 endif()
 if(NSE_INIT_FFT_BACKEND STREQUAL "cufft")
   set(NSE_INIT_FFT_SOURCE src/init/mod_init_hit_spectral_cufft.f90)
+endif()
+if(NSE_INIT_FFT_BACKEND STREQUAL "cufftmp")
+  set(NSE_INIT_FFT_SUPPORT_SOURCE src/gpu/mod_nse_cufftmp_fft.f90)
+  set(NSE_INIT_FFT_SOURCE src/init/mod_init_hit_spectral_2decomp.f90)
+  set_source_files_properties(
+    src/init/mod_init_hit_spectral_2decomp.f90
+    PROPERTIES Fortran_PREPROCESS ON
+  )
 endif()
 
 set(NSE_FORCING_SOURCE src/forcing/mod_nse_forcing_stub.f90)
@@ -242,8 +303,14 @@ set(NSE_DEFAULT_MAIN_SOURCE src/main/main_nse.f90)
 set(NSE_DEFAULT_OUTPUT_NAME solver)
 if(NSE_GPU_BACKEND STREQUAL "cuda")
   set(NSE_GPU_FORTRAN_SOURCE src/gpu/mod_nse_gpu_cuda.f90)
-  set(NSE_DEFAULT_MAIN_SOURCE src/main/main_nse_cuda.f90)
-  set(NSE_DEFAULT_OUTPUT_NAME nse_cuda)
+  if(NSE_USE_MPI)
+    list(APPEND NSE_GPU_FORTRAN_SOURCE src/gpu/mod_nse_gpu_mpi.f90)
+    set(NSE_DEFAULT_MAIN_SOURCE src/main/main_nse_mpi_cuda.f90)
+    set(NSE_DEFAULT_OUTPUT_NAME nse_mpi_cuda)
+  else()
+    set(NSE_DEFAULT_MAIN_SOURCE src/main/main_nse_cuda.f90)
+    set(NSE_DEFAULT_OUTPUT_NAME nse_cuda)
+  endif()
 
   # nvcc uses MSVC as its host compiler on Windows while the final executable
   # is linked by GNU Fortran. Build the CUDA C ABI as a DLL between them.
@@ -272,6 +339,55 @@ if(NSE_GPU_BACKEND STREQUAL "cuda")
   find_package(CUDAToolkit REQUIRED)
 endif()
 
+set(NSE_CUFFTMP_ENABLED OFF)
+if(NSE_INIT_FFT_BACKEND STREQUAL "cufftmp" OR
+   NSE_FORCING_FFT_BACKEND STREQUAL "cufftmp")
+  set(NSE_CUFFTMP_ENABLED ON)
+  find_path(
+    NSE_CUFFTMP_INCLUDE_DIR
+    NAMES cufftMp.h
+    HINTS
+      "${NSE_CUFFTMP_ROOT}"
+      "$ENV{CUFFT_INC}"
+    PATH_SUFFIXES include include/cufftmp math_libs/include/cufftmp
+    REQUIRED
+  )
+  find_library(
+    NSE_CUFFTMP_LIBRARY
+    NAMES cufftMp
+    HINTS
+      "${NSE_CUFFTMP_ROOT}"
+      "$ENV{CUFFT_LIB}"
+    PATH_SUFFIXES lib lib64 math_libs/lib64
+    REQUIRED
+  )
+  find_path(
+    NSE_NVSHMEM_INCLUDE_DIR
+    NAMES nvshmem.h
+    HINTS
+      "${NSE_NVSHMEM_ROOT}"
+      "$ENV{NVSHMEM_INC}"
+    PATH_SUFFIXES include comm_libs/nvshmem/include
+    REQUIRED
+  )
+  find_library(
+    NSE_NVSHMEM_HOST_LIBRARY
+    NAMES nvshmem_host
+    HINTS
+      "${NSE_NVSHMEM_ROOT}"
+      "$ENV{NVSHMEM_LIB}"
+    PATH_SUFFIXES lib lib64 comm_libs/nvshmem/lib
+    REQUIRED
+  )
+  find_path(
+    NSE_CUFFTMP_MPI_INCLUDE_DIR
+    NAMES mpi.h
+    HINTS "$ENV{MPI_HOME}" ${MPI_Fortran_INCLUDE_DIRS}
+    PATH_SUFFIXES include
+    REQUIRED
+  )
+endif()
+
 set(
   NSE_DEFAULT_CORE_SOURCES
   src/common/mod_precision.f90
@@ -285,7 +401,9 @@ set(
   ${NSE_MPI_SOURCE}
   ${NSE_OPENMP_RUNTIME_SOURCE}
   src/init/mod_init_taylor_green.f90
+  src/init/mod_init_imported_turbulence.f90
   src/init/mod_hit_isotropy_math.f90
+  ${NSE_INIT_FFT_SUPPORT_SOURCE}
   ${NSE_INIT_FFT_SOURCE}
   src/init/mod_nse_initial_conditions.f90
   src/io/mod_slf_output.f90
@@ -372,6 +490,9 @@ if(NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw" OR
    NSE_FORCING_FFT_BACKEND STREQUAL "2decomp_fftw")
   target_link_libraries(nse_core PUBLIC decomp2d)
 endif()
+if(NSE_INIT_FFT_BACKEND STREQUAL "cufftmp")
+  target_compile_definitions(nse_core PRIVATE NSE_INIT_CUFFTMP=1)
+endif()
 
 if(NSE_GPU_BACKEND STREQUAL "cuda")
   add_library(nse_cuda_bridge SHARED src/gpu/nse_cuda_bridge.cu)
@@ -401,12 +522,36 @@ if(NSE_GPU_BACKEND STREQUAL "cuda")
   if(NSE_FORCING_FFT_BACKEND STREQUAL "cufft")
     target_compile_definitions(nse_cuda_bridge PRIVATE NSE_FORCING_CUFFT=1)
   endif()
+  if(NSE_FORCING_FFT_BACKEND STREQUAL "cufftmp")
+    target_compile_definitions(nse_cuda_bridge PRIVATE NSE_FORCING_CUFFTMP=1)
+  endif()
   if(NSE_INIT_FFT_BACKEND STREQUAL "cufft")
     target_compile_definitions(nse_cuda_bridge PRIVATE NSE_INIT_CUFFT=1)
   endif()
+  if(NSE_INIT_FFT_BACKEND STREQUAL "cufftmp")
+    target_compile_definitions(nse_cuda_bridge PRIVATE NSE_INIT_CUFFTMP=1)
+  endif()
   if(NSE_FORCING_FFT_BACKEND STREQUAL "cufft" OR
-     NSE_INIT_FFT_BACKEND STREQUAL "cufft")
+     NSE_INIT_FFT_BACKEND STREQUAL "cufft" OR
+     NSE_FORCING_FFT_BACKEND STREQUAL "cufftmp" OR
+     NSE_INIT_FFT_BACKEND STREQUAL "cufftmp")
     target_link_libraries(nse_cuda_bridge PRIVATE CUDA::cufft)
+  endif()
+  if(NSE_CUFFTMP_ENABLED)
+    target_include_directories(
+      nse_cuda_bridge
+      PRIVATE
+        "${NSE_CUFFTMP_INCLUDE_DIR}"
+        "${NSE_NVSHMEM_INCLUDE_DIR}"
+        "${NSE_CUFFTMP_MPI_INCLUDE_DIR}"
+    )
+    target_link_libraries(
+      nse_cuda_bridge
+      PRIVATE
+        nse_mpi
+        "${NSE_CUFFTMP_LIBRARY}"
+        "${NSE_NVSHMEM_HOST_LIBRARY}"
+    )
   endif()
   target_link_libraries(nse_core PUBLIC nse_cuda_bridge)
 endif()
@@ -463,6 +608,28 @@ if(BUILD_TESTING AND NSE_ENABLE_CUFFTMP_CONTRACT_TESTS)
   )
 endif()
 if(BUILD_TESTING)
+  add_executable(
+    nse_test_imported_turbulence
+    tests/test_imported_turbulence.f90
+  )
+  set_target_properties(
+    nse_test_imported_turbulence
+    PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/imported_turbulence_test"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+  )
+  target_link_libraries(nse_test_imported_turbulence PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_imported_turbulence)
+  add_test(
+    NAME nse_imported_turbulence
+    COMMAND $<TARGET_FILE:nse_test_imported_turbulence>
+  )
+  set_tests_properties(
+    nse_imported_turbulence
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION "Imported turbulence initialization tests passed"
+  )
+
   add_executable(
     nse_test_hit_parameter_resolution
     tests/test_hit_parameter_resolution.f90
@@ -710,7 +877,7 @@ if(BUILD_TESTING AND NSE_USE_MPI AND
         "floating-point exceptions are signalling;HIT low-wavenumber isotropy did not converge"
   )
 endif()
-if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda")
+if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda" AND NOT NSE_USE_MPI)
   add_executable(nse_test_cuda_keep tests/test_cuda_keep.f90)
   set_target_properties(
     nse_test_cuda_keep
@@ -869,6 +1036,25 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda")
           "CUDA backend failure"
     )
   endif()
+endif()
+
+if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda" AND NSE_USE_MPI AND
+   NSE_ENABLE_MULTI_GPU_TESTS)
+  add_test(
+    NAME nse_mpi_cuda_tgv_smoke
+    COMMAND "${MPIEXEC_EXECUTABLE}" ${MPIEXEC_NUMPROC_FLAG}
+      ${NSE_MULTI_GPU_TEST_PROCESSES} ${MPIEXEC_PREFLAGS}
+      $<TARGET_FILE:nse_solver> ${MPIEXEC_POSTFLAGS}
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_cuda_small.dat"
+  )
+  set_tests_properties(
+    nse_mpi_cuda_tgv_smoke
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION
+        "NSE MPI\\+CUDA calculation completed successfully:"
+      FAIL_REGULAR_EXPRESSION
+        "CUDA backend failure;floating-point exceptions are signalling"
+  )
 endif()
 
 message(STATUS "NSE MPI provider: ${NSE_MPI_PROVIDER_RESOLVED}")

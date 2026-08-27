@@ -361,10 +361,6 @@ module module_mpi
       ierr = 2
       return
     end if
-    if( nprocs .le. 3 ) then ! at least, 2 x 2 = 4 processes
-      ierr = 3
-      return
-    end if
 !    i = int( log(dble(nprocs)) / log(2.0d0) )
 !    j = int( (i+1) / 2.0 )
 !    k = int( i / 2.0)
@@ -373,12 +369,14 @@ module module_mpi
 !      return
 !    end if
 
+    j = 1
+    k = nprocs
     if(nprocs==4) then
     j=2
     k=2
     else
     idum=int(dsqrt(dble(nprocs)))
-    kdum=nprocs
+    kdum=huge(kdum)
     do i=1,idum
      jdum1=i
      jdum2=nprocs/i

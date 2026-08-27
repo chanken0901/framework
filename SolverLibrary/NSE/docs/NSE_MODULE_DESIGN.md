@@ -37,9 +37,14 @@ mainは計算手順だけを制御し、流束式、初期条件式、境界処�
 | 分類 | ファイル | 公開APIまたは役割 |
 |---|---|---|
 | 実行制御 | `src/main/main_nse.f90` | 入力、MPI初期化、時間ループ、出力 |
+| 単一GPU実行制御 | `src/main/main_nse_cuda.f90` | 単一GPUの時間ループと出力 |
+| MPI＋CUDA実行制御 | `src/main/main_nse_mpi_cuda.f90` | MPI分割、GPU割当て、段別SSPRK3、全rank CFL同期 |
+| CUDA API | `src/gpu/mod_nse_gpu_cuda.f90` | FortranからCUDA context、時間積分、halo pack/unpackを操作 |
+| MPI＋CUDA halo | `src/gpu/mod_nse_gpu_mpi.f90` | host stagingによるy→z面交換と辺・角ghost伝播 |
 | 初期条件選択 | `src/init/mod_nse_initial_conditions.f90` | `initialize_nse_state` |
 | Taylor–Green | `src/init/mod_init_taylor_green.f90` | `initialize_taylor_green` |
 | 分散FFT HIT | `src/init/mod_init_hit_spectral_2decomp.f90` | `initialize_hit_spectral` |
+| 保存乱流場 | `src/init/mod_init_imported_turbulence.f90` | 可搬SLFの`embed`/`tile`配置 |
 | 周期境界 | `src/boundary/mod_boundary_periodic.f90` | `apply_nse_boundary`ほか |
 | 対流項ディスパッチ | `src/numerics/convective/mod_convective_dispatch.f90` | 単一方式とハイブリッドの実行時選択 |
 | KEEP流束 | `src/numerics/convective/mod_convective_keep.f90` | 2次・6次精度KEEP |
@@ -78,7 +83,7 @@ CPU/MPI/OpenMP版とCUDA版は同じ離散式を使用し、3層のゴースト�
 `convective_scheme='weno5z_roe'`では、Roe平均で得た固有ベクトルを各面の
 5点ステンシルへ適用し、特性空間で左右状態をWENO-Z再構築する。再構築状態から
 Harten-Hyman型entropy fix付きRoe流束を計算する。CPU逐次、MPI、OpenMP、
-MPI+OpenMP、単一GPU CUDA版に対応し、3層のゴーストセルを必要とする。
+MPI+OpenMP、単一GPU CUDA版、MPI＋CUDA版に対応し、3層のゴーストセルを必要とする。
 
 ### 粘性項
 
@@ -149,7 +154,8 @@ time_integrator = 'ssprk3'
 ```
 
 対流項は`keep2`、`keep6`、`weno5z_roe`、`hybrid`で指定する。`keep`や`weno`単独の指定は
-使用できない。4方式はCPU逐次、MPI、OpenMP、MPI+OpenMP、単一GPU CUDA版で利用できる。
+使用できない。4方式はCPU逐次、MPI、OpenMP、MPI+OpenMP、単一GPU CUDA版、
+MPI＋CUDA版で利用できる。
 `hybrid`の構成流束とセンサーは`NSE_HYBRID_FLUX.md`の設定で選択する。
 
 CMakeでは対応するバックエンドを選択する。
@@ -168,11 +174,13 @@ cmake -S . -B build `
 - 旧MPIハロー交換との互換性により、周期境界は`nghost = 3`、`nv = 5`を要求する。
 - `viscous_scheme = 'central6'`は一定粘性係数、Stokesの仮定、Fourier熱伝導を用いる。`reynolds_number`と`prandtl_number`は粘性・熱伝導項へ反映される。
 - `viscous_scheme = 'none'`を選ぶと、同じ実行プロファイルで非粘性計算を行える。
-- `central6`は3層のghostセルを必要とし、CPU/MPI/OpenMP版と単一GPU CUDA版で利用できる。
+- `central6`は3層のghostセルを必要とし、CPU/MPI/OpenMP版、単一GPU CUDA版、MPI＋CUDA版で利用できる。
 - MPI分割は既存のy-z二次元分割を維持している。
 - `default`は互換性のためTaylor–Greenへ対応付けている。
 - `hit_spectral`は2DECOMP&FFT版を選んだMPIビルドで利用できる。
-- WENO5-Z/RoeはCPU版と単一GPU CUDA版で利用できる。positivity-preserving limiterは未実装である。
+- `imported_turbulence`は通常CPU版、2DECOMP&FFT版、単一GPU版、MPI＋CUDA版で利用できる。入力SLFの作成方法は`NSE_IMPORTED_TURBULENCE.md`に従う。
+- WENO5-Z/RoeはCPU版、単一GPU CUDA版、MPI＋CUDA版で利用できる。positivity-preserving limiterは未実装である。
+- MPI＋CUDA時間発展のhalo通信はCUDA-aware MPIを要求しないhost staging方式である。`cuda_mpi_cufftmp`では、同じY-Z分割をcuFFTMpへ渡して分散HIT初期化とFFT forcingを実行する。
 - SSPRK3とCFL時間刻みのみを実装している。
 
 この制約は各モジュールの検証手続きで明示的に検査し、未対応条件を黙って計算しない。

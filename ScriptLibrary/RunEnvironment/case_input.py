@@ -92,6 +92,18 @@ NSE_KEYS = (
     "hit_isotropy_k_cutoff",
     "hit_isotropy_tolerance",
     "hit_isotropy_max_iterations",
+    "imported_turbulence_file",
+    "imported_turbulence_mode",
+    "imported_turbulence_x_start",
+    "imported_turbulence_blend_cells",
+    "imported_turbulence_velocity_offset_x",
+    "imported_turbulence_velocity_offset_y",
+    "imported_turbulence_velocity_offset_z",
+    "imported_turbulence_background_rho",
+    "imported_turbulence_background_u",
+    "imported_turbulence_background_v",
+    "imported_turbulence_background_w",
+    "imported_turbulence_background_p",
     "forcing_scheme",
     "forcing_spectrum",
     "forcing_fft_backend",
@@ -242,6 +254,27 @@ def _positive_float(value: Any, label: str, *, allow_zero: bool = False) -> floa
         comparison = "non-negative" if allow_zero else "positive"
         raise CaseInputError(f"{label} must be {comparison}")
     return number
+
+
+def _finite_float(value: Any, label: str) -> float:
+    if isinstance(value, bool):
+        raise CaseInputError(f"{label} must be a number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise CaseInputError(f"{label} must be a number") from exc
+    if not math.isfinite(number):
+        raise CaseInputError(f"{label} must be finite")
+    return number
+
+
+def _vector3(value: Any, label: str) -> tuple[float, float, float]:
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        raise CaseInputError(f"{label} must contain exactly three numbers")
+    return tuple(
+        _finite_float(component, f"{label}[{index}]")
+        for index, component in enumerate(value)
+    )
 
 
 def derive_nse_hit_transport(
@@ -493,6 +526,136 @@ def _resolve_nse_hit(case: dict[str, Any]) -> dict[str, Any]:
     return values
 
 
+def _resolve_nse_imported_turbulence(
+    case: dict[str, Any],
+    *,
+    case_dir: Path | None = None,
+    runtime_root: Path | None = None,
+) -> dict[str, Any]:
+    flow_type = _canonical_selector(str(nested(case, "flow.type", "")))
+    aliases = {
+        "imported_turbulence",
+        "turbulence_import",
+        "turbulence_embed",
+        "turbulence_tile",
+    }
+    if flow_type not in aliases:
+        return {}
+
+    imported = _mapping(
+        nested(case, "flow.imported_turbulence", {}),
+        "flow.imported_turbulence",
+    )
+    allowed = {
+        "file",
+        "mode",
+        "x_start",
+        "blend_cells",
+        "velocity_offset",
+        "background",
+    }
+    unknown = sorted(set(imported) - allowed)
+    if unknown:
+        raise CaseInputError(
+            "unknown flow.imported_turbulence key(s): " + ", ".join(unknown)
+        )
+
+    source_file = imported.get("file")
+    if not isinstance(source_file, str) or not source_file.strip():
+        raise CaseInputError("flow.imported_turbulence.file is required")
+
+    implied_mode = "tile" if flow_type == "turbulence_tile" else "embed"
+    mode = _canonical_selector(str(imported.get("mode", implied_mode)))
+    if mode not in {"embed", "tile"}:
+        raise CaseInputError(
+            "flow.imported_turbulence.mode must be EMBED or TILE"
+        )
+
+    blend_cells = imported.get("blend_cells", 0)
+    if (
+        not isinstance(blend_cells, int)
+        or isinstance(blend_cells, bool)
+        or blend_cells < 0
+    ):
+        raise CaseInputError(
+            "flow.imported_turbulence.blend_cells must be a non-negative integer"
+        )
+    if mode == "tile" and blend_cells != 0:
+        raise CaseInputError(
+            "flow.imported_turbulence tile mode requires blend_cells: 0"
+        )
+
+    velocity_offset = _vector3(
+        imported.get("velocity_offset", [0.0, 0.0, 0.0]),
+        "flow.imported_turbulence.velocity_offset",
+    )
+    background = _mapping(
+        imported.get("background", {}),
+        "flow.imported_turbulence.background",
+    )
+    allowed_background = {"density", "velocity", "pressure"}
+    unknown_background = sorted(set(background) - allowed_background)
+    if unknown_background:
+        raise CaseInputError(
+            "unknown flow.imported_turbulence.background key(s): "
+            + ", ".join(unknown_background)
+        )
+
+    gamma = _positive_float(
+        nested(case, "physics.nse.gamma", 1.4), "physics.nse.gamma"
+    )
+    if gamma <= 1.0:
+        raise CaseInputError("physics.nse.gamma must be greater than 1")
+    rho0 = _positive_float(
+        nested(case, "physics.nse.rho0", 1.0), "physics.nse.rho0"
+    )
+    background_rho = _positive_float(
+        background.get("density", rho0),
+        "flow.imported_turbulence.background.density",
+    )
+    background_pressure = _positive_float(
+        background.get("pressure", 1.0 / gamma),
+        "flow.imported_turbulence.background.pressure",
+    )
+    background_velocity = _vector3(
+        background.get("velocity", [0.0, 0.0, 0.0]),
+        "flow.imported_turbulence.background.velocity",
+    )
+    x_start = _finite_float(
+        imported.get("x_start", nested(case, "grid.x_min", 0.0)),
+        "flow.imported_turbulence.x_start",
+    )
+
+    source_file = source_file.strip()
+    if case_dir is not None and runtime_root is not None:
+        source_path = Path(source_file)
+        if not source_path.is_absolute():
+            source_path = (case_dir / source_path).resolve()
+            try:
+                source_file = source_path.relative_to(
+                    runtime_root.resolve()
+                ).as_posix()
+            except ValueError:
+                source_file = source_path.as_posix()
+        else:
+            source_file = source_path.as_posix()
+
+    return {
+        "imported_turbulence_file": source_file,
+        "imported_turbulence_mode": mode,
+        "imported_turbulence_x_start": x_start,
+        "imported_turbulence_blend_cells": blend_cells,
+        "imported_turbulence_velocity_offset_x": velocity_offset[0],
+        "imported_turbulence_velocity_offset_y": velocity_offset[1],
+        "imported_turbulence_velocity_offset_z": velocity_offset[2],
+        "imported_turbulence_background_rho": background_rho,
+        "imported_turbulence_background_u": background_velocity[0],
+        "imported_turbulence_background_v": background_velocity[1],
+        "imported_turbulence_background_w": background_velocity[2],
+        "imported_turbulence_background_p": background_pressure,
+    }
+
+
 def _resolve_nse_forcing(case: dict[str, Any]) -> dict[str, Any]:
     forcing = _mapping(nested(case, "forcing", {}), "forcing")
     legacy_parameters = set(
@@ -611,7 +774,10 @@ def _profile_settings(
     if gpu_backend == "cufftmp":
         backend = "cufftmp"
     elif gpu_backend == "cuda":
-        backend = "cuda" if model == "nse" else "cufft"
+        if model == "nse":
+            backend = "cuda_mpi" if use_mpi else "cuda"
+        else:
+            backend = "cufft"
     elif model == "nse":
         backend = "cpu_mpi" if use_mpi else "serial"
     else:
@@ -633,7 +799,7 @@ def _validate_solver_selection(
     profile, use_mpi, profile_openmp, backend = _profile_settings(
         manifest, profile_name
     )
-    use_cuda = backend in {"cuda", "cufft", "cufftmp"}
+    use_cuda = backend in {"cuda", "cuda_mpi", "cufft", "cufftmp"}
     solver = _mapping(nested(case, "solver", {}), "case solver")
     if "processes" in solver:
         raise CaseInputError(
@@ -653,10 +819,10 @@ def _validate_solver_selection(
     if (
         str(manifest.get("model", "")).lower() == "nse"
         and use_mpi
-        and processes < 4
+        and processes < 2
     ):
         raise CaseInputError(
-            "the current NSE y-z decomposition requires at least 4 MPI processes"
+            "the NSE y-z decomposition requires at least 2 MPI processes"
         )
     requested_mpi = solver.get("use_mpi", use_mpi)
     requested_openmp = solver.get("use_openmp", False)
@@ -697,14 +863,16 @@ def _common_values(
     processes = int(nested(case, "solver.mpi_processes", 1))
     initial_condition = str(_required(case, "flow.type")).strip()
     if equation.upper() == "NSE":
+        initial_condition = _canonical_selector(initial_condition)
         initial_condition = {
             "tgv": "taylor_green",
-            "taylor-green": "taylor_green",
             "taylor_green_vortex": "taylor_green",
             "hit": "hit_spectral",
             "homogeneous_isotropic_turbulence": "hit_spectral",
-            "homogeneous-isotropic-turbulence": "hit_spectral",
-        }.get(initial_condition.lower(), initial_condition.lower())
+            "turbulence_import": "imported_turbulence",
+            "turbulence_embed": "imported_turbulence",
+            "turbulence_tile": "imported_turbulence",
+        }.get(initial_condition, initial_condition)
 
     values = [
         ("equation", equation),
@@ -741,7 +909,12 @@ def _common_values(
 
 
 def render_nse(
-    case: dict[str, Any], manifest: dict[str, Any], profile_name: str
+    case: dict[str, Any],
+    manifest: dict[str, Any],
+    profile_name: str,
+    *,
+    case_dir: Path | None = None,
+    runtime_root: Path | None = None,
 ) -> str:
     profile, use_mpi, use_openmp, backend = _profile_settings(
         manifest, profile_name
@@ -805,6 +978,10 @@ def render_nse(
         nse["cfl"] = nested(case, "time.cfl")
     hit_values = _resolve_nse_hit(case)
     nse.update(hit_values)
+    imported_turbulence_values = _resolve_nse_imported_turbulence(
+        case, case_dir=case_dir, runtime_root=runtime_root
+    )
+    nse.update(imported_turbulence_values)
     forcing_values = _resolve_nse_forcing(case)
     for target, value in forcing_values.items():
         if target not in nse or nse[target] in {None, ""}:
@@ -819,6 +996,7 @@ def render_nse(
         "time_integrator",
         "hit_spectrum",
         "hit_isotropy_mode",
+        "imported_turbulence_mode",
         "forcing_scheme",
         "forcing_spectrum",
         "forcing_fft_backend",
@@ -988,7 +1166,14 @@ def render_case_input(
     input_cfg = _mapping(manifest.get("input"), "solver manifest.input")
     input_name = str(input_cfg.get("default_name") or "input.dat")
     if model.lower() == "nse":
-        return input_name, render_nse(case, manifest, profile_name)
+        runtime_root = manifest_path.parent.parent.parent
+        return input_name, render_nse(
+            case,
+            manifest,
+            profile_name,
+            case_dir=case_path.parent,
+            runtime_root=runtime_root,
+        )
     if model.lower() == "gpe":
         return input_name, render_gpe(case, manifest, profile_name)
     raise CaseInputError(f"unsupported model: {model}")

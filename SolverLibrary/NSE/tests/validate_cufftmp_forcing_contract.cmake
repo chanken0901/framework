@@ -4,7 +4,7 @@ endif()
 file(READ "${CONTRACT_FILE}" _contract)
 foreach(_required IN ITEMS
     "backend: cufftmp"
-    "status: test_only"
+    "status: implemented"
     "host_gather_allowed: false"
     "state_location: distributed_device_resident"
     "forward_distributed_fft"
@@ -12,7 +12,7 @@ foreach(_required IN ITEMS
     "allreduce_forcing_denominators"
     "inverse_distributed_fft"
     "add_local_momentum_rhs"
-    "runtime_available: false")
+    "runtime_available: true")
   string(FIND "${_contract}" "${_required}" _position)
   if(_position EQUAL -1)
     message(FATAL_ERROR "cuFFTMp contract is missing: ${_required}")

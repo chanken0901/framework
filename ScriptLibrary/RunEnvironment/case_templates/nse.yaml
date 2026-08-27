@@ -56,17 +56,36 @@ flow:
         dissipation_constant: 0.40
         large_scale_exponent: 2.0
         dissipation_exponent: 5.2
+  imported_turbulence:
+    # First convert rank-wise solver output to one ghost-free portable SLF:
+    # python SolverLibrary/NSE/tools/nse_prepare_imported_turbulence.py <output-dir> -o <case-dir>/initial_data/turbulence.slf
+    file: initial_data/turbulence.slf
+    # embed: place one turbulence block in a longer x domain.
+    # tile: periodically repeat it; target nx must be a multiple of source nx.
+    mode: embed
+    # Physical x coordinate of the source block's lower cell boundary.
+    x_start: 0.0
+    # Raised-cosine transition cells at both x ends; use 0 for an exact copy.
+    blend_cells: 8
+    # Added to the velocity stored in the source field, e.g. a mean x flow.
+    velocity_offset: [0.0, 0.0, 0.0]
+    # State used outside the block and in the embed transition.
+    background:
+      density: 1.0
+      velocity: [0.0, 0.0, 0.0]
+      pressure: 0.7142857142857143
 
 # Petersen-Livescu linear forcing. Set type to petersen_livescu for
 # statistically stationary periodic turbulence. run_case.py selects the
-# staged CPU/MPI 2DECOMP&FFT or single-GPU cuFFT profile automatically.
+# staged CPU/MPI 2DECOMP&FFT, single-GPU cuFFT, or MPI+CUDA cuFFTMp
+# profile automatically.
 forcing:
   # choices: none, petersen_livescu
   type: none
   petersen_livescu:
     # choices: full_spectrum, low_wavenumber
     spectrum: low_wavenumber
-    # choices: auto, 2decomp_fftw, cufft
+    # choices: auto, 2decomp_fftw, cufft, cufftmp
     fft_backend: auto
     k_cutoff: 2.5
     target_dissipation: 0.1

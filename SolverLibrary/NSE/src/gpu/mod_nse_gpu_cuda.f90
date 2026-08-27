@@ -1,6 +1,6 @@
 module mod_nse_gpu
   use, intrinsic :: iso_c_binding, only : c_ptr, c_null_ptr, c_associated, &
-    c_int, c_double, c_char, c_null_char
+    c_int, c_double, c_char, c_null_char, c_size_t
   use, intrinsic :: iso_fortran_env, only : error_unit
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
@@ -15,6 +15,10 @@ module mod_nse_gpu
   integer(c_int), parameter :: cuda_convective_weno5z_roe = 3_c_int
   integer(c_int), parameter :: cuda_convective_hybrid = 4_c_int
   integer(c_int), parameter :: cuda_sensor_ducros_pressure = 1_c_int
+  integer, parameter, public :: nse_gpu_halo_y = 1
+  integer, parameter, public :: nse_gpu_halo_z = 2
+  integer, parameter, public :: nse_gpu_halo_low = -1
+  integer, parameter, public :: nse_gpu_halo_high = 1
 
   type, public :: nse_gpu_context
     private
@@ -22,16 +26,32 @@ module mod_nse_gpu
   end type nse_gpu_context
 
   public :: nse_gpu_initialize
+  public :: nse_gpu_select_device
+  public :: nse_gpu_configure_cufftmp
   public :: nse_gpu_upload
   public :: nse_gpu_download
   public :: nse_gpu_compute_dt
   public :: nse_gpu_advance_ssprk3
+  public :: nse_gpu_begin_ssprk3
+  public :: nse_gpu_advance_ssprk3_stage
+  public :: nse_gpu_apply_local_periodic
+  public :: nse_gpu_halo_count
+  public :: nse_gpu_pack_halo
+  public :: nse_gpu_unpack_halo
   public :: nse_gpu_synchronize
   public :: nse_gpu_finalize
   public :: validate_nse_gpu_configuration
 
   interface
+    function c_nse_cuda_set_device(device) &
+        bind(C, name="nse_cuda_set_device") result(status)
+      import :: c_int
+      integer(c_int), value :: device
+      integer(c_int) :: status
+    end function c_nse_cuda_set_device
+
     function c_nse_cuda_create(handle, nx, ny, nz, nghost, nvar, device, &
+        distributed_y, distributed_z, &
         convective_scheme, hybrid_smooth_scheme, hybrid_shock_scheme, &
         hybrid_sensor, viscous_enabled, forcing_enabled, forcing_spectrum, &
         forcing_report_interval, gamma, cfl, small_rho, small_p, reynolds, &
@@ -42,6 +62,7 @@ module mod_nse_gpu
       import :: c_ptr, c_int, c_double
       type(c_ptr), intent(out) :: handle
       integer(c_int), value :: nx, ny, nz, nghost, nvar, device
+      integer(c_int), value :: distributed_y, distributed_z
       integer(c_int), value :: convective_scheme
       integer(c_int), value :: hybrid_smooth_scheme, hybrid_shock_scheme
       integer(c_int), value :: hybrid_sensor, viscous_enabled
@@ -56,6 +77,17 @@ module mod_nse_gpu
       real(c_double), value :: hybrid_sensor_onset, hybrid_sensor_full
       integer(c_int) :: status
     end function c_nse_cuda_create
+
+    function c_nse_cuda_configure_cufftmp(handle, global_ny, global_nz, &
+        global_y_start, global_z_start, communicator) &
+        bind(C, name="nse_cuda_configure_cufftmp") result(status)
+      import :: c_ptr, c_int
+      type(c_ptr), value :: handle
+      integer(c_int), value :: global_ny, global_nz
+      integer(c_int), value :: global_y_start, global_z_start
+      integer(c_int), value :: communicator
+      integer(c_int) :: status
+    end function c_nse_cuda_configure_cufftmp
 
     function c_nse_cuda_upload(handle, q) &
         bind(C, name="nse_cuda_upload") result(status)
@@ -73,6 +105,40 @@ module mod_nse_gpu
       integer(c_int) :: status
     end function c_nse_cuda_download
 
+    function c_nse_cuda_apply_local_periodic(handle) &
+        bind(C, name="nse_cuda_apply_local_periodic") result(status)
+      import :: c_ptr, c_int
+      type(c_ptr), value :: handle
+      integer(c_int) :: status
+    end function c_nse_cuda_apply_local_periodic
+
+    function c_nse_cuda_halo_count(handle, direction, count) &
+        bind(C, name="nse_cuda_halo_count") result(status)
+      import :: c_ptr, c_int, c_size_t
+      type(c_ptr), value :: handle
+      integer(c_int), value :: direction
+      integer(c_size_t), intent(out) :: count
+      integer(c_int) :: status
+    end function c_nse_cuda_halo_count
+
+    function c_nse_cuda_pack_halo(handle, direction, side, buffer) &
+        bind(C, name="nse_cuda_pack_halo") result(status)
+      import :: c_ptr, c_int, c_double
+      type(c_ptr), value :: handle
+      integer(c_int), value :: direction, side
+      real(c_double), intent(out) :: buffer(*)
+      integer(c_int) :: status
+    end function c_nse_cuda_pack_halo
+
+    function c_nse_cuda_unpack_halo(handle, direction, side, buffer) &
+        bind(C, name="nse_cuda_unpack_halo") result(status)
+      import :: c_ptr, c_int, c_double
+      type(c_ptr), value :: handle
+      integer(c_int), value :: direction, side
+      real(c_double), intent(in) :: buffer(*)
+      integer(c_int) :: status
+    end function c_nse_cuda_unpack_halo
+
     function c_nse_cuda_compute_dt(handle, dt) &
         bind(C, name="nse_cuda_compute_dt") result(status)
       import :: c_ptr, c_int, c_double
@@ -88,6 +154,23 @@ module mod_nse_gpu
       real(c_double), value :: dt
       integer(c_int) :: status
     end function c_nse_cuda_advance
+
+    function c_nse_cuda_begin_ssprk3(handle, dt) &
+        bind(C, name="nse_cuda_begin_ssprk3") result(status)
+      import :: c_ptr, c_int, c_double
+      type(c_ptr), value :: handle
+      real(c_double), value :: dt
+      integer(c_int) :: status
+    end function c_nse_cuda_begin_ssprk3
+
+    function c_nse_cuda_advance_stage(handle, dt, stage) &
+        bind(C, name="nse_cuda_advance_ssprk3_stage") result(status)
+      import :: c_ptr, c_int, c_double
+      type(c_ptr), value :: handle
+      real(c_double), value :: dt
+      integer(c_int), value :: stage
+      integer(c_int) :: status
+    end function c_nse_cuda_advance_stage
 
     function c_nse_cuda_synchronize(handle) &
         bind(C, name="nse_cuda_synchronize") result(status)
@@ -159,17 +242,34 @@ contains
       error stop "CUDA backend currently supports time_integrator=ssprk3"
     end if
     if (forcing_is_enabled(nse)) then
-      call validate_forcing_parameters(nse, 'cufft')
+      if (sim%use_mpi) then
+        call validate_forcing_parameters(nse, 'cufftmp')
+      else
+        call validate_forcing_parameters(nse, 'cufft')
+      end if
     end if
   end subroutine validate_nse_gpu_configuration
 
-  subroutine nse_gpu_initialize(context, sim, nse)
+  subroutine nse_gpu_select_device(device)
+    integer, intent(in) :: device
+    integer(c_int) :: status
+
+    status = c_nse_cuda_set_device(int(device,c_int))
+    call require_success(status, "select CUDA device")
+  end subroutine nse_gpu_select_device
+
+  subroutine nse_gpu_initialize(context, sim, nse, local_ny, local_nz, &
+      distributed_y, distributed_z, device)
     type(nse_gpu_context), intent(inout) :: context
     type(simulation_config), intent(in) :: sim
     type(nse_config), intent(in) :: nse
+    integer, intent(in), optional :: local_ny, local_nz, device
+    logical, intent(in), optional :: distributed_y, distributed_z
     integer(c_int) :: status, viscous_enabled, convective_scheme
     integer(c_int) :: forcing_enabled, forcing_spectrum
     integer(c_int) :: hybrid_smooth_scheme, hybrid_shock_scheme, hybrid_sensor
+    integer(c_int) :: cuda_distributed_y, cuda_distributed_z
+    integer :: cuda_ny, cuda_nz, cuda_device
 
     call validate_nse_gpu_configuration(sim, nse)
     if (kind(1.0_dp) /= c_double) then
@@ -177,6 +277,24 @@ contains
     end if
     if (c_associated(context%handle)) then
       error stop "NSE CUDA context is already initialized"
+    end if
+
+    cuda_ny = sim%ny
+    cuda_nz = sim%nz
+    cuda_device = sim%cuda_device
+    if (present(local_ny)) cuda_ny = local_ny
+    if (present(local_nz)) cuda_nz = local_nz
+    if (present(device)) cuda_device = device
+    if (cuda_ny <= 0 .or. cuda_nz <= 0) then
+      error stop "local CUDA domain dimensions must be positive"
+    end if
+    cuda_distributed_y = 0_c_int
+    cuda_distributed_z = 0_c_int
+    if (present(distributed_y)) then
+      if (distributed_y) cuda_distributed_y = 1_c_int
+    end if
+    if (present(distributed_z)) then
+      if (distributed_z) cuda_distributed_z = 1_c_int
     end if
 
     viscous_enabled = 0_c_int
@@ -202,8 +320,9 @@ contains
     end if
 
     status = c_nse_cuda_create(context%handle, int(sim%nx, c_int), &
-      int(sim%ny, c_int), int(sim%nz, c_int), int(sim%nghost, c_int), &
-      int(nse%nv, c_int), int(sim%cuda_device, c_int), &
+      int(cuda_ny, c_int), int(cuda_nz, c_int), int(sim%nghost, c_int), &
+      int(nse%nv, c_int), int(cuda_device, c_int), &
+      cuda_distributed_y, cuda_distributed_z, &
       convective_scheme, hybrid_smooth_scheme, hybrid_shock_scheme, &
       hybrid_sensor, viscous_enabled, forcing_enabled, forcing_spectrum, &
       int(nse%forcing_report_interval, c_int), &
@@ -214,6 +333,22 @@ contains
       nse%hybrid_sensor_onset, nse%hybrid_sensor_full)
     call require_success(status, "initialize NSE CUDA context")
   end subroutine nse_gpu_initialize
+
+  subroutine nse_gpu_configure_cufftmp(context, global_ny, global_nz, &
+      global_y_start, global_z_start, communicator)
+    type(nse_gpu_context), intent(in) :: context
+    integer, intent(in) :: global_ny, global_nz
+    integer, intent(in) :: global_y_start, global_z_start
+    integer, intent(in) :: communicator
+    integer(c_int) :: status
+
+    call require_context(context)
+    status = c_nse_cuda_configure_cufftmp(context%handle, &
+      int(global_ny,c_int), int(global_nz,c_int), &
+      int(global_y_start,c_int), int(global_z_start,c_int), &
+      int(communicator,c_int))
+    call require_success(status, "configure distributed cuFFTMp forcing")
+  end subroutine nse_gpu_configure_cufftmp
 
   pure integer(c_int) function requested_cuda_convective_scheme(nse) &
       result(scheme)
@@ -280,6 +415,61 @@ contains
     call require_success(status, "download NSE state")
   end subroutine nse_gpu_download
 
+  subroutine nse_gpu_apply_local_periodic(context)
+    type(nse_gpu_context), intent(in) :: context
+    integer(c_int) :: status
+
+    call require_context(context)
+    status = c_nse_cuda_apply_local_periodic(context%handle)
+    call require_success(status, "apply local CUDA periodic boundaries")
+  end subroutine nse_gpu_apply_local_periodic
+
+  integer function nse_gpu_halo_count(context, direction) result(count)
+    type(nse_gpu_context), intent(in) :: context
+    integer, intent(in) :: direction
+    integer(c_size_t) :: c_count
+    integer(c_int) :: status
+
+    call require_context(context)
+    status = c_nse_cuda_halo_count(context%handle, &
+      int(direction, c_int), c_count)
+    call require_success(status, "query CUDA MPI halo size")
+    if (c_count > int(huge(count), c_size_t)) then
+      error stop "CUDA MPI halo exceeds the MPI default-integer count limit"
+    end if
+    count = int(c_count)
+  end function nse_gpu_halo_count
+
+  subroutine nse_gpu_pack_halo(context, direction, side, buffer)
+    type(nse_gpu_context), intent(in) :: context
+    integer, intent(in) :: direction, side
+    real(dp), contiguous, intent(out) :: buffer(:)
+    integer(c_int) :: status
+
+    call require_context(context)
+    if (size(buffer) < nse_gpu_halo_count(context, direction)) then
+      error stop "host send buffer is too small for the CUDA MPI halo"
+    end if
+    status = c_nse_cuda_pack_halo(context%handle, int(direction, c_int), &
+      int(side, c_int), buffer)
+    call require_success(status, "pack CUDA MPI halo")
+  end subroutine nse_gpu_pack_halo
+
+  subroutine nse_gpu_unpack_halo(context, direction, side, buffer)
+    type(nse_gpu_context), intent(in) :: context
+    integer, intent(in) :: direction, side
+    real(dp), contiguous, intent(in) :: buffer(:)
+    integer(c_int) :: status
+
+    call require_context(context)
+    if (size(buffer) < nse_gpu_halo_count(context, direction)) then
+      error stop "host receive buffer is too small for the CUDA MPI halo"
+    end if
+    status = c_nse_cuda_unpack_halo(context%handle, &
+      int(direction, c_int), int(side, c_int), buffer)
+    call require_success(status, "unpack CUDA MPI halo")
+  end subroutine nse_gpu_unpack_halo
+
   subroutine nse_gpu_compute_dt(context, dt)
     type(nse_gpu_context), intent(in) :: context
     real(dp), intent(out) :: dt
@@ -301,6 +491,27 @@ contains
     status = c_nse_cuda_advance(context%handle, dt)
     call require_success(status, "advance CUDA SSPRK3 step")
   end subroutine nse_gpu_advance_ssprk3
+
+  subroutine nse_gpu_begin_ssprk3(context, dt)
+    type(nse_gpu_context), intent(in) :: context
+    real(dp), intent(in) :: dt
+    integer(c_int) :: status
+
+    call require_context(context)
+    status = c_nse_cuda_begin_ssprk3(context%handle, dt)
+    call require_success(status, "begin distributed CUDA SSPRK3 step")
+  end subroutine nse_gpu_begin_ssprk3
+
+  subroutine nse_gpu_advance_ssprk3_stage(context, dt, stage)
+    type(nse_gpu_context), intent(in) :: context
+    real(dp), intent(in) :: dt
+    integer, intent(in) :: stage
+    integer(c_int) :: status
+
+    call require_context(context)
+    status = c_nse_cuda_advance_stage(context%handle, dt, int(stage, c_int))
+    call require_success(status, "advance distributed CUDA SSPRK3 stage")
+  end subroutine nse_gpu_advance_ssprk3_stage
 
   subroutine nse_gpu_synchronize(context)
     type(nse_gpu_context), intent(in) :: context

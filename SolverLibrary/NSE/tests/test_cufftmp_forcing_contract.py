@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the test-only cuFFTMp forcing extension contract."""
+"""Validate the implemented cuFFTMp forcing extension contract."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ def main() -> int:
     contract = contract_path.read_text(encoding="utf-8")
     required = {
         "backend: cufftmp",
-        "status: test_only",
+        "status: implemented",
         "host_gather_allowed: false",
         "state_location: distributed_device_resident",
         "forward_distributed_fft",
@@ -19,7 +19,7 @@ def main() -> int:
         "allreduce_forcing_denominators",
         "inverse_distributed_fft",
         "add_local_momentum_rhs",
-        "runtime_available: false",
+        "runtime_available: true",
     }
     missing = sorted(item for item in required if item not in contract)
     if missing:

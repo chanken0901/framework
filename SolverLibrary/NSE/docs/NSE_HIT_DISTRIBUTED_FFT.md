@@ -2,8 +2,9 @@
 
 ## 概要
 
-`initial_condition = 'hit_spectral'`を指定すると、2DECOMP&FFTとFFTW3を使って
-一様等方性乱流（HIT）の初期速度場を生成する。
+`initial_condition = 'hit_spectral'`を指定すると、一様等方性乱流（HIT）の
+初期速度場を分散FFTで生成する。CPU MPI/OpenMP版は2DECOMP&FFTとFFTW3、
+MPI＋CUDA版はcuFFTMpを使用する。
 
 初期化処理でも計算本体と同じx-pencil分割を使用する。rootプロセスへの三次元場の
 集約は行わない。
@@ -44,6 +45,10 @@
 エラー終了する。この場合は主に`hit_turbulent_mach`と初期スペクトルを確認する。
 
 ## ビルド
+
+CPU MPI/OpenMP版は`cpu_mpi_2decomp_fftw`、MPI＋CUDA版は
+`cuda_mpi_cufftmp`を選択する。cuFFTMp版の必要環境、ビルド、実行方法は
+[`NSE_CUFFTMP.md`](NSE_CUFFTMP.md)を参照する。
 
 PowerShellでは、インストール済み2DECOMP&FFTの場所を指定して構成する。
 

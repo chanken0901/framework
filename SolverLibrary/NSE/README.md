@@ -1,6 +1,9 @@
 # NSE SolverLibrary
 
-MPI/OpenMPまたは単一GPU CUDAで実行する、5保存変数の三次元圧縮性
+MPI＋CUDAで分散HIT初期化またはPetersen–Livescu forcingを使う場合は、
+[`docs/NSE_CUFFTMP.md`](docs/NSE_CUFFTMP.md)の`cuda_mpi_cufftmp`手順を参照してください。
+
+MPI/OpenMP、単一GPU CUDA、またはMPI＋CUDAマルチGPUで実行する、5保存変数の三次元圧縮性
 Navier-Stokesソルバーです。周期境界、SSPRK3、KEEP/WENO系の対流流束、
 6次精度粘性項、Taylor-Green/HIT初期条件、Petersen-Livescu Forcingをモジュール化しています。
 
@@ -15,6 +18,7 @@ Navier-Stokesソルバーです。周期境界、SSPRK3、KEEP/WENO系の対流�
 - HITと分散FFT: [`docs/NSE_HIT_DISTRIBUTED_FFT.md`](docs/NSE_HIT_DISTRIBUTED_FFT.md)
 - Forcing: [`docs/NSE_FORCING.md`](docs/NSE_FORCING.md)
 - 乱流統計: [`docs/NSE_TURBULENCE_STATISTICS.md`](docs/NSE_TURBULENCE_STATISTICS.md)
+- 保存済み乱流場の配置: [`docs/NSE_IMPORTED_TURBULENCE.md`](docs/NSE_IMPORTED_TURBULENCE.md)
 
 ## 対応プロファイル
 
@@ -23,6 +27,8 @@ Navier-Stokesソルバーです。周期境界、SSPRK3、KEEP/WENO系の対流�
 | `cpu_mpi` | MPI + OpenMP | Taylor-Green、汎用CPU計算 |
 | `cpu_mpi_2decomp_fftw` | MPI + 2DECOMP&FFT | HIT初期化、分散FFT Forcing |
 | `cuda_single` | 単一GPU | CUDAによる時間発展、cuFFT HIT/Forcing |
+| `cuda_mpi` | MPI + CUDA | 1 rank＝1 GPUのy-z分割時間発展 |
+| `cuda_mpi_cufftmp` | MPI + CUDA + cuFFTMp | 分散HIT初期化、分散FFT Forcing |
 
 新規cloneでは`2decomp-fft`サブモジュールも取得します。
 
@@ -32,7 +38,7 @@ git clone --recurse-submodules <SolverLibrary URL>
 
 ## 対流流束
 
-CPU/MPI/OpenMP版と単一GPU CUDA版で、次の4方式を実行時に選択できます。
+CPU/MPI/OpenMP版、単一GPU CUDA版、MPI＋CUDA版で、次の4方式を実行時に選択できます。
 
 | 設定値 | 内容 |
 |---|---|
@@ -71,7 +77,7 @@ numerics:
 
 `central6`は、一定粘性係数のNewton流体、Stokesの仮定、Fourier熱伝導を
 6次精度中心差分で評価します。`none`で粘性項を無効化できます。
-どちらもCPU版と単一GPU版に対応します。
+どちらもCPU版、単一GPU版、MPI＋CUDA版に対応します。
 
 ```yaml
 physics:

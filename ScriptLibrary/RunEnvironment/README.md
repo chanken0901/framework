@@ -20,9 +20,9 @@ numerics:
 `numerics.flux`と未使用だった`numerics.reconstruction`は受け付けない。
 旧項目が残っている場合は、設定を黙って無視せず移行エラーを表示する。
 
-## NSE単一GPU
+## NSE CUDA（単一GPU／MPI＋マルチGPU）
 
-NSEのCPU/MPI版と単一GPU版は、どちらも`environment.nse.yaml`を設計書の
+NSEのCPU/MPI版、単一GPU版、MPI＋CUDA版は、いずれも`environment.nse.yaml`を設計書の
 ひな型にします。`select.model`は物理モデルの`nse`だけを指定し、
 `parallel`でMPI、OpenMP、CUDAの使用可否を指定します。solver profileは
 この組合せと`case.yaml`が要求するFFT機能から自動選択され、
@@ -63,6 +63,24 @@ parallel:
   use_cuda: false
 ```
 
+MPI＋CUDAマルチGPU版では次を選択します。
+
+```yaml
+select:
+  model: nse
+  execution: release
+
+parallel:
+  use_mpi: true
+  use_openmp: false
+  use_cuda: true
+```
+
+この組合せでは通常の時間発展に`cuda_mpi` profileが選択されます。
+`solver.mpi_processes`をGPU総数にし、通常は1 MPI rankを1 GPUへ割り当てます。
+Taylor–Greenと保存済み乱流場は`cuda_mpi`、分散HIT初期化または
+Petersen–Livescu forcingはLinux用`cuda_mpi_cufftmp`を使用します。
+
 実行環境生成後は、GPEおよびNSE CPU版と同じコマンドを使います。
 
 ```powershell
@@ -84,7 +102,7 @@ solver:
   omp_threads: 4
 ```
 
-CPU逐次・MPI・OpenMP・単一GPU CUDA版では、`case.yaml`の対流流束を次の4種類から選べます。
+CPU逐次・MPI・OpenMP・単一GPU CUDA・MPI＋CUDA版では、`case.yaml`の対流流束を次の4種類から選べます。
 
 ```yaml
 numerics:
@@ -94,7 +112,7 @@ numerics:
 
 `weno5z_roe`は特性空間の5次精度WENO-Z再構築とRoe流束です。`hybrid`は
 滑らかな領域のKEEPと衝撃波領域のWENO5-Z/Roeをセンサーで連続的に混合します。
-どちらも単一GPU CUDA版に対応しており、`cuda_single`プロファイルでも同じ
+どちらも単一GPU CUDA版とMPI＋CUDA版に対応しており、`cuda_single`／`cuda_mpi`プロファイルでも同じ
 `case.yaml`設定を使用できます。
 
 ## GPEとNSEを同じ手順で実行する
@@ -144,7 +162,8 @@ python .\tools\run_case.py --run
 計算条件は`cases\caseNNNN\case.yaml`を編集します。編集後の`input.dat`は
 `--prepare`、`--validate-only`、`--build`、`--run`のいずれでも必要に応じて
 自動再生成されます。結果は`cases\caseNNNN\output`へ出力されます。
-現在のNSE MPI分割は4プロセス以上を必要とします。
+現在のNSE MPI分割は2プロセス以上を必要とします。MPI＋CUDA版ではさらに
+各y/z局所ブロックが`nghost`セル以上になる格子数とrank数を選びます。
 `solver.mpi_processes`と`solver.omp_threads`は実行時設定であり、実行環境を
 作り直さずに変更できます。
 
@@ -451,6 +470,43 @@ Johnsenでは`length_scale_ratio`が元コードの`L_lambda`に対応し、
 `projected_shell`は低波数シェルの二次統計を等方化し、Helmholtz射影で
 発散ゼロ条件を維持します。`isotropy_k_cutoff`は、低波数Forcingを使う場合は
 通常`forcing.petersen_livescu.k_cutoff`と同じ値にします。
+
+保存済みNSE乱流場を長いx領域へ配置する場合は、元ケースのrank別SLFを
+ghostなしの可搬SLFへ変換します。実行環境ルートで次を実行します。
+
+元計算と読込み先はCPU MPI／CUDAのどちらでもよく、CPU MPI→CPU MPI、
+CPU MPI→CUDA、CUDA→CPU MPI、CUDA→CUDAのすべてに対応します。元計算と
+読込み先のMPIプロセス数を一致させる必要はありません。
+
+```powershell
+python .\SolverLibrary\NSE\tools\nse_prepare_imported_turbulence.py `
+  .\previous_case\output `
+  --step latest `
+  --output .\cases\caseNNNN\initial_data\turbulence.slf
+```
+
+`case.yaml`では次のように指定します。
+
+```yaml
+flow:
+  type: imported_turbulence
+  imported_turbulence:
+    file: initial_data/turbulence.slf
+    mode: embed  # embed または tile
+    x_start: 2.0
+    blend_cells: 8
+    velocity_offset: [0.5, 0.0, 0.0]
+    background:
+      density: 1.0
+      velocity: [0.5, 0.0, 0.0]
+      pressure: 0.7142857142857143
+```
+
+`embed`は一つの乱流ブロックを背景場へ滑らかに接続し、`tile`はx方向へ
+周期反復します。CPU/CUDA別のコピー可能なPowerShell手順、格子互換条件、
+正常終了の確認方法は
+[`NSE_IMPORTED_TURBULENCE.md`](../../SolverLibrary/NSE/docs/NSE_IMPORTED_TURBULENCE.md)
+を参照してください。
 
 Forcingも流れ場と同様に`type`で選択し、方式固有の設定を同名のブロックへ
 まとめます。無効化するときは`type: none`のままにします。

@@ -427,7 +427,7 @@ def _parallel_features(
         values[name] = value
 
     _, profile_mpi, profile_openmp, backend = _profile_settings(manifest, profile)
-    profile_cuda = backend in {"cuda", "cufft", "cufftmp"}
+    profile_cuda = backend in {"cuda", "cuda_mpi", "cufft", "cufftmp"}
     if values["use_mpi"] != profile_mpi:
         raise EnvironmentError(
             f"parallel.use_mpi={values['use_mpi']} does not match solver "
@@ -568,7 +568,9 @@ def _compatible_profile_names(
     _, selected_mpi, _, selected_backend = _profile_settings(
         manifest, selected_profile
     )
-    selected_cuda = selected_backend in {"cuda", "cufft", "cufftmp"}
+    selected_cuda = selected_backend in {
+        "cuda", "cuda_mpi", "cufft", "cufftmp"
+    }
     profiles = _mapping(manifest.get("profiles"), "solver manifest.profiles")
     compatible = [selected_profile]
     for name in profiles:
@@ -578,7 +580,7 @@ def _compatible_profile_names(
         _, use_mpi, openmp_capable, backend = _profile_settings(
             manifest, profile_name
         )
-        use_cuda = backend in {"cuda", "cufft", "cufftmp"}
+        use_cuda = backend in {"cuda", "cuda_mpi", "cufft", "cufftmp"}
         if use_mpi != selected_mpi or use_cuda != selected_cuda:
             continue
         if require_openmp and not openmp_capable:

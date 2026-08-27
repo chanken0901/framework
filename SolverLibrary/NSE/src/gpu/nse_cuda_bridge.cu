@@ -1,6 +1,9 @@
 #include <cuda_runtime.h>
 #include <cub/device/device_reduce.cuh>
-#if defined(NSE_FORCING_CUFFT) || defined(NSE_INIT_CUFFT)
+#if defined(NSE_FORCING_CUFFTMP) || defined(NSE_INIT_CUFFTMP)
+#include <cufftMp.h>
+#include <mpi.h>
+#elif defined(NSE_FORCING_CUFFT) || defined(NSE_INIT_CUFFT)
 #include <cufft.h>
 #endif
 
@@ -25,6 +28,10 @@ constexpr int convective_keep6 = 2;
 constexpr int convective_weno5z_roe = 3;
 constexpr int convective_hybrid = 4;
 constexpr int sensor_ducros_pressure = 1;
+constexpr int halo_direction_y = 1;
+constexpr int halo_direction_z = 2;
+constexpr int halo_side_low = -1;
+constexpr int halo_side_high = 1;
 
 thread_local std::string last_error;
 
@@ -43,6 +50,12 @@ struct NseCudaContext {
   GridView grid{};
   int nvar = 0;
   int device = 0;
+  bool distributed_y = false;
+  bool distributed_z = false;
+  int global_ny = 0;
+  int global_nz = 0;
+  int global_y_start = 0;
+  int global_z_start = 0;
   int convective_scheme = convective_keep6;
   int hybrid_smooth_scheme = convective_keep6;
   int hybrid_shock_scheme = convective_weno5z_roe;
@@ -76,6 +89,8 @@ struct NseCudaContext {
   double* primitive = nullptr;
   double* speed = nullptr;
   double* max_speed = nullptr;
+  double* halo_buffer = nullptr;
+  std::size_t halo_buffer_count = 0;
   void* reduce_storage = nullptr;
   std::size_t reduce_storage_bytes = 0;
 #if defined(NSE_FORCING_CUFFT)
@@ -85,7 +100,30 @@ struct NseCudaContext {
   double* forcing_energy_d = nullptr;
   double* forcing_sum = nullptr;
 #endif
+#if defined(NSE_FORCING_CUFFTMP)
+  MPI_Comm forcing_comm = MPI_COMM_NULL;
+  int forcing_rank = 0;
+  cufftHandle forcing_plan = 0;
+  cudaLibXtDesc* forcing_physical[3] = {nullptr, nullptr, nullptr};
+  cudaLibXtDesc* forcing_spectral[3] = {nullptr, nullptr, nullptr};
+  cufftDoubleComplex* forcing_phi = nullptr;
+  double* forcing_energy_d = nullptr;
+  double* forcing_sum = nullptr;
+  bool forcing_distributed_ready = false;
+#endif
 };
+
+#if defined(NSE_INIT_CUFFTMP)
+struct HitCufftMpContext {
+  MPI_Comm comm = MPI_COMM_NULL;
+  cufftHandle plan = 0;
+  cudaLibXtDesc* physical = nullptr;
+  cudaLibXtDesc* spectral = nullptr;
+  std::size_t local_count = 0;
+};
+
+HitCufftMpContext hit_cufftmp;
+#endif
 
 void set_error(const std::string& operation, cudaError_t status) {
   last_error = operation + ": " + cudaGetErrorString(status);
@@ -103,7 +141,8 @@ bool check_cuda(cudaError_t status, const char* operation) {
   return false;
 }
 
-#if defined(NSE_FORCING_CUFFT) || defined(NSE_INIT_CUFFT)
+#if defined(NSE_FORCING_CUFFT) || defined(NSE_INIT_CUFFT) || \
+    defined(NSE_FORCING_CUFFTMP) || defined(NSE_INIT_CUFFTMP)
 bool check_cufft(cufftResult status, const char* operation) {
   if (status == CUFFT_SUCCESS) {
     return true;
@@ -111,6 +150,17 @@ bool check_cufft(cufftResult status, const char* operation) {
   last_error = std::string(operation) + ": cuFFT status "
       + std::to_string(static_cast<int>(status));
   return false;
+}
+#endif
+
+#if defined(NSE_FORCING_CUFFTMP) || defined(NSE_INIT_CUFFTMP)
+cufftDoubleComplex* descriptor_data(cudaLibXtDesc* descriptor) {
+  if (descriptor == nullptr || descriptor->descriptor == nullptr
+      || descriptor->descriptor->data[0] == nullptr) {
+    set_error("cuFFTMp descriptor has no local device allocation");
+    return nullptr;
+  }
+  return static_cast<cufftDoubleComplex*>(descriptor->descriptor->data[0]);
 }
 #endif
 
@@ -128,7 +178,25 @@ void release_context(NseCudaContext* context) {
   cudaFree(context->forcing_phi);
   cudaFree(context->forcing_spectral);
 #endif
+#if defined(NSE_FORCING_CUFFTMP)
+  for (int component = 0; component < 3; ++component) {
+    if (context->forcing_spectral[component] != nullptr) {
+      cufftXtFree(context->forcing_spectral[component]);
+    }
+    if (context->forcing_physical[component] != nullptr) {
+      cufftXtFree(context->forcing_physical[component]);
+    }
+  }
+  if (context->forcing_plan != 0) cufftDestroy(context->forcing_plan);
+  cudaFree(context->forcing_sum);
+  cudaFree(context->forcing_energy_d);
+  cudaFree(context->forcing_phi);
+  if (context->forcing_comm != MPI_COMM_NULL) {
+    MPI_Comm_free(&context->forcing_comm);
+  }
+#endif
   cudaFree(context->reduce_storage);
+  cudaFree(context->halo_buffer);
   cudaFree(context->max_speed);
   cudaFree(context->speed);
   cudaFree(context->primitive);
@@ -159,7 +227,7 @@ __device__ inline int positive_mod(int value, int modulus) {
 }
 
 __global__ void periodic_halo_kernel(
-    double* q, GridView grid, int nvar) {
+    double* q, GridView grid, int nvar, int wrap_y, int wrap_z) {
   const std::size_t linear =
       static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (linear >= grid.cell_count) {
@@ -170,24 +238,105 @@ __global__ void periodic_halo_kernel(
   const std::size_t yz = linear / grid.nx_total;
   const int y = static_cast<int>(yz % grid.ny_total);
   const int z = static_cast<int>(yz / grid.ny_total);
-  const bool interior =
-      x >= grid.nghost && x < grid.nghost + grid.nx
-      && y >= grid.nghost && y < grid.nghost + grid.ny
-      && z >= grid.nghost && z < grid.nghost + grid.nz;
+  const bool x_halo = x < grid.nghost || x >= grid.nghost + grid.nx;
+  const bool y_halo = y < grid.nghost || y >= grid.nghost + grid.ny;
+  const bool z_halo = z < grid.nghost || z >= grid.nghost + grid.nz;
+  const bool interior = !x_halo && !y_halo && !z_halo;
   if (interior) {
+    return;
+  }
+  if ((y_halo && wrap_y == 0) || (z_halo && wrap_z == 0)) {
     return;
   }
 
   const int wrapped_x =
       grid.nghost + positive_mod(x - grid.nghost, grid.nx);
-  const int wrapped_y =
-      grid.nghost + positive_mod(y - grid.nghost, grid.ny);
-  const int wrapped_z =
-      grid.nghost + positive_mod(z - grid.nghost, grid.nz);
+  const int wrapped_y = wrap_y != 0
+      ? grid.nghost + positive_mod(y - grid.nghost, grid.ny) : y;
+  const int wrapped_z = wrap_z != 0
+      ? grid.nghost + positive_mod(z - grid.nghost, grid.nz) : z;
   for (int variable = 0; variable < nvar; ++variable) {
     q[state_index(grid, x, y, z, variable)] =
         q[state_index(grid, wrapped_x, wrapped_y, wrapped_z, variable)];
   }
+}
+
+__global__ void pack_y_halo_kernel(
+    const double* q, double* buffer, GridView grid, int nvar, int side,
+    std::size_t count) {
+  const std::size_t linear =
+      static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (linear >= count) return;
+
+  std::size_t value = linear;
+  const int x = static_cast<int>(value % grid.nx_total);
+  value /= grid.nx_total;
+  const int layer = static_cast<int>(value % grid.nghost);
+  value /= grid.nghost;
+  const int z = static_cast<int>(value % grid.nz_total);
+  const int variable = static_cast<int>(value / grid.nz_total);
+  const int y = side == halo_side_low
+      ? grid.nghost + layer
+      : grid.nghost + grid.ny - grid.nghost + layer;
+  buffer[linear] = q[state_index(grid, x, y, z, variable)];
+}
+
+__global__ void unpack_y_halo_kernel(
+    double* q, const double* buffer, GridView grid, int nvar, int side,
+    std::size_t count) {
+  const std::size_t linear =
+      static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (linear >= count) return;
+
+  std::size_t value = linear;
+  const int x = static_cast<int>(value % grid.nx_total);
+  value /= grid.nx_total;
+  const int layer = static_cast<int>(value % grid.nghost);
+  value /= grid.nghost;
+  const int z = static_cast<int>(value % grid.nz_total);
+  const int variable = static_cast<int>(value / grid.nz_total);
+  const int y = side == halo_side_low
+      ? layer : grid.nghost + grid.ny + layer;
+  q[state_index(grid, x, y, z, variable)] = buffer[linear];
+}
+
+__global__ void pack_z_halo_kernel(
+    const double* q, double* buffer, GridView grid, int nvar, int side,
+    std::size_t count) {
+  const std::size_t linear =
+      static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (linear >= count) return;
+
+  std::size_t value = linear;
+  const int x = static_cast<int>(value % grid.nx_total);
+  value /= grid.nx_total;
+  const int y = static_cast<int>(value % grid.ny_total);
+  value /= grid.ny_total;
+  const int layer = static_cast<int>(value % grid.nghost);
+  const int variable = static_cast<int>(value / grid.nghost);
+  const int z = side == halo_side_low
+      ? grid.nghost + layer
+      : grid.nghost + grid.nz - grid.nghost + layer;
+  buffer[linear] = q[state_index(grid, x, y, z, variable)];
+}
+
+__global__ void unpack_z_halo_kernel(
+    double* q, const double* buffer, GridView grid, int nvar, int side,
+    std::size_t count) {
+  const std::size_t linear =
+      static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (linear >= count) return;
+
+  std::size_t value = linear;
+  const int x = static_cast<int>(value % grid.nx_total);
+  value /= grid.nx_total;
+  const int y = static_cast<int>(value % grid.ny_total);
+  value /= grid.ny_total;
+  const int layer = static_cast<int>(value % grid.nghost);
+  const int variable = static_cast<int>(value / grid.nghost);
+  const int z = side == halo_side_low
+      ? layer : grid.nghost + grid.nz + layer;
+  q[state_index(grid, x, y, z, variable)] = buffer[linear];
 }
 
 __device__ inline void primitive_state(
@@ -667,7 +816,7 @@ __global__ void viscous_central6_kernel(
       + dissipation + heat_coefficient * lap_temperature);
 }
 
-#if defined(NSE_FORCING_CUFFT)
+#if defined(NSE_FORCING_CUFFT) || defined(NSE_FORCING_CUFFTMP)
 __device__ inline double complex_norm_squared(cufftDoubleComplex value) {
   return value.x * value.x + value.y * value.y;
 }
@@ -903,6 +1052,153 @@ __global__ void forcing_build_dilatational_kernel(
   spectral[linear + count] = {ky * projection.x, ky * projection.y};
   spectral[linear + 2 * count] = {kz * projection.x, kz * projection.y};
 }
+
+#if defined(NSE_FORCING_CUFFTMP)
+__global__ void forcing_weighted_velocity_component_kernel(
+    const double* q,
+    cufftDoubleComplex* physical,
+    GridView grid,
+    int component,
+    double small_rho,
+    std::size_t count) {
+  const std::size_t linear =
+      static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (linear >= count) return;
+  const int x = static_cast<int>(linear % grid.nx) + grid.nghost;
+  const std::size_t yz = linear / grid.nx;
+  const int y = static_cast<int>(yz % grid.ny) + grid.nghost;
+  const int z = static_cast<int>(yz / grid.ny) + grid.nghost;
+  const std::size_t cell = cell_index(grid, x, y, z);
+  const double inverse_sqrt_rho = 1.0 / sqrt(fmax(q[cell], small_rho));
+  physical[linear] = {
+      q[cell + grid.cell_count * static_cast<std::size_t>(component + 1)]
+          * inverse_sqrt_rho,
+      0.0};
+}
+
+__global__ void forcing_helmholtz_distributed_kernel(
+    cufftDoubleComplex* spectral_x,
+    cufftDoubleComplex* spectral_y,
+    cufftDoubleComplex* spectral_z,
+    cufftDoubleComplex* phi,
+    double* energy_s,
+    double* energy_d,
+    int nx,
+    int local_ny,
+    int global_ny,
+    int global_nz,
+    int y_start,
+    int z_start,
+    double lx,
+    double ly,
+    double lz,
+    int spectrum,
+    double k_cutoff,
+    std::size_t count) {
+  const std::size_t linear =
+      static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (linear >= count) return;
+  const int ix = static_cast<int>(linear % nx);
+  const std::size_t yz = linear / nx;
+  const int iy = static_cast<int>(yz % local_ny) + y_start;
+  const int iz = static_cast<int>(yz / local_ny) + z_start;
+  const int mx = ix <= nx / 2 ? ix : ix - nx;
+  const int my = iy <= global_ny / 2 ? iy : iy - global_ny;
+  const int mz = iz <= global_nz / 2 ? iz : iz - global_nz;
+  constexpr double two_pi = 6.283185307179586476925286766559;
+  const double kx = two_pi * static_cast<double>(mx) / lx;
+  const double ky = two_pi * static_cast<double>(my) / ly;
+  const double kz = two_pi * static_cast<double>(mz) / lz;
+  const double k2 = kx * kx + ky * ky + kz * kz;
+  const bool retained = k2 > 0.0
+      && (spectrum == 1 || sqrt(k2) < k_cutoff);
+  const cufftDoubleComplex wx = spectral_x[linear];
+  const cufftDoubleComplex wy = spectral_y[linear];
+  const cufftDoubleComplex wz = spectral_z[linear];
+  cufftDoubleComplex projection{0.0, 0.0};
+  cufftDoubleComplex sx{0.0, 0.0};
+  cufftDoubleComplex sy{0.0, 0.0};
+  cufftDoubleComplex sz{0.0, 0.0};
+  if (retained) {
+    projection.x = (kx * wx.x + ky * wy.x + kz * wz.x) / k2;
+    projection.y = (kx * wx.y + ky * wy.y + kz * wz.y) / k2;
+    sx = {wx.x - kx * projection.x, wx.y - kx * projection.y};
+    sy = {wy.x - ky * projection.x, wy.y - ky * projection.y};
+    sz = {wz.x - kz * projection.x, wz.y - kz * projection.y};
+  }
+  phi[linear] = projection;
+  spectral_x[linear] = sx;
+  spectral_y[linear] = sy;
+  spectral_z[linear] = sz;
+  energy_s[linear] = complex_norm_squared(sx)
+      + complex_norm_squared(sy) + complex_norm_squared(sz);
+  energy_d[linear] = retained ? k2 * complex_norm_squared(projection) : 0.0;
+}
+
+__global__ void forcing_build_dilatational_distributed_kernel(
+    cufftDoubleComplex* spectral_x,
+    cufftDoubleComplex* spectral_y,
+    cufftDoubleComplex* spectral_z,
+    const cufftDoubleComplex* phi,
+    int nx,
+    int local_ny,
+    int global_ny,
+    int global_nz,
+    int y_start,
+    int z_start,
+    double lx,
+    double ly,
+    double lz,
+    int spectrum,
+    double k_cutoff,
+    std::size_t count) {
+  const std::size_t linear =
+      static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (linear >= count) return;
+  const int ix = static_cast<int>(linear % nx);
+  const std::size_t yz = linear / nx;
+  const int iy = static_cast<int>(yz % local_ny) + y_start;
+  const int iz = static_cast<int>(yz / local_ny) + z_start;
+  const int mx = ix <= nx / 2 ? ix : ix - nx;
+  const int my = iy <= global_ny / 2 ? iy : iy - global_ny;
+  const int mz = iz <= global_nz / 2 ? iz : iz - global_nz;
+  constexpr double two_pi = 6.283185307179586476925286766559;
+  const double kx = two_pi * static_cast<double>(mx) / lx;
+  const double ky = two_pi * static_cast<double>(my) / ly;
+  const double kz = two_pi * static_cast<double>(mz) / lz;
+  const double k2 = kx * kx + ky * ky + kz * kz;
+  const bool retained = k2 > 0.0
+      && (spectrum == 1 || sqrt(k2) < k_cutoff);
+  const cufftDoubleComplex projection = retained
+      ? phi[linear] : cufftDoubleComplex{0.0, 0.0};
+  spectral_x[linear] = {kx * projection.x, kx * projection.y};
+  spectral_y[linear] = {ky * projection.x, ky * projection.y};
+  spectral_z[linear] = {kz * projection.x, kz * projection.y};
+}
+
+__global__ void forcing_add_component_kernel(
+    const cufftDoubleComplex* physical,
+    const double* q,
+    double* rhs,
+    GridView grid,
+    int component,
+    double coefficient,
+    double normalization,
+    double small_rho,
+    std::size_t count) {
+  const std::size_t linear =
+      static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (linear >= count) return;
+  const int i = static_cast<int>(linear % grid.nx) + grid.nghost;
+  const std::size_t yz = linear / grid.nx;
+  const int j = static_cast<int>(yz % grid.ny) + grid.nghost;
+  const int k = static_cast<int>(yz / grid.ny) + grid.nghost;
+  const std::size_t cell = cell_index(grid, i, j, k);
+  rhs[cell + grid.cell_count * static_cast<std::size_t>(component + 1)] +=
+      coefficient * normalization * sqrt(fmax(q[cell], small_rho))
+      * physical[linear].x;
+}
+#endif
 #endif
 
 __global__ void ssprk_stage_kernel(
@@ -1159,9 +1455,282 @@ bool launch_forcing(NseCudaContext* context) {
 }
 #endif
 
+#if defined(NSE_FORCING_CUFFTMP)
+bool reduce_forcing_sum_distributed(
+    NseCudaContext* context,
+    const double* values,
+    double* result,
+    const char* operation) {
+  double local = 0.0;
+  if (!check_cuda(
+          cub::DeviceReduce::Sum(
+              context->reduce_storage,
+              context->reduce_storage_bytes,
+              values,
+              context->forcing_sum,
+              static_cast<int>(context->physical_count)),
+          operation)
+      || !check_cuda(
+          cudaMemcpy(
+              &local,
+              context->forcing_sum,
+              sizeof(double),
+              cudaMemcpyDeviceToHost),
+          "copy local distributed forcing reduction")) {
+    return false;
+  }
+  if (MPI_Allreduce(
+          &local, result, 1, MPI_DOUBLE, MPI_SUM,
+          context->forcing_comm) != MPI_SUCCESS) {
+    set_error(std::string("MPI_Allreduce failed during ") + operation);
+    return false;
+  }
+  return true;
+}
+
+bool launch_forcing_distributed(NseCudaContext* context) {
+  if (!context->forcing_enabled) return true;
+  if (!context->forcing_distributed_ready) {
+    set_error("cuFFTMp forcing was not configured before time advancement");
+    return false;
+  }
+  const double point_count = static_cast<double>(context->grid.nx)
+      * static_cast<double>(context->global_ny)
+      * static_cast<double>(context->global_nz);
+  const double normalization = 1.0 / point_count;
+  const double lx = context->grid.nx * context->dx;
+  const double ly = context->global_ny * context->dy;
+  const double lz = context->global_nz * context->dz;
+  cufftDoubleComplex* physical[3] = {};
+  cufftDoubleComplex* spectral[3] = {};
+
+  for (int component = 0; component < 3; ++component) {
+    physical[component] = descriptor_data(
+        context->forcing_physical[component]);
+    spectral[component] = descriptor_data(
+        context->forcing_spectral[component]);
+    if (physical[component] == nullptr || spectral[component] == nullptr) {
+      return false;
+    }
+    forcing_weighted_velocity_component_kernel<<<
+        block_count(context->physical_count), 256>>>(
+        context->q,
+        physical[component],
+        context->grid,
+        component,
+        context->small_rho,
+        context->physical_count);
+    if (!check_cuda(
+            cudaGetLastError(),
+            "prepare distributed weighted forcing velocity")
+        || !check_cufft(
+            cufftXtExecDescriptor(
+                context->forcing_plan,
+                context->forcing_physical[component],
+                context->forcing_spectral[component],
+                CUFFT_FORWARD),
+            "forward distributed forcing FFT")) {
+      return false;
+    }
+  }
+
+  forcing_helmholtz_distributed_kernel<<<
+      block_count(context->physical_count), 256>>>(
+      spectral[0], spectral[1], spectral[2],
+      context->forcing_phi,
+      context->speed,
+      context->forcing_energy_d,
+      context->grid.nx,
+      context->grid.ny,
+      context->global_ny,
+      context->global_nz,
+      context->global_y_start,
+      context->global_z_start,
+      lx, ly, lz,
+      context->forcing_spectrum,
+      context->forcing_k_cutoff,
+      context->physical_count);
+  if (!check_cuda(
+          cudaGetLastError(), "distributed forcing Helmholtz projection")) {
+    return false;
+  }
+
+  double denominator_s = 0.0;
+  double denominator_d = 0.0;
+  if (!reduce_forcing_sum_distributed(
+          context, context->speed, &denominator_s,
+          "reduce distributed solenoidal forcing energy")
+      || !reduce_forcing_sum_distributed(
+          context, context->forcing_energy_d, &denominator_d,
+          "reduce distributed dilatational forcing energy")) {
+    return false;
+  }
+  denominator_s /= point_count * point_count;
+  denominator_d /= point_count * point_count;
+
+  forcing_pressure_dilatation_kernel<<<
+      block_count(context->physical_count), 256>>>(
+      context->q,
+      context->speed,
+      context->grid,
+      context->gamma,
+      context->small_rho,
+      context->small_p,
+      1.0 / context->dx,
+      1.0 / context->dy,
+      1.0 / context->dz,
+      context->physical_count);
+  if (!check_cuda(
+          cudaGetLastError(), "distributed forcing pressure dilatation")) {
+    return false;
+  }
+  double pressure_dilatation = 0.0;
+  if (!reduce_forcing_sum_distributed(
+          context, context->speed, &pressure_dilatation,
+          "reduce distributed pressure dilatation")) {
+    return false;
+  }
+  pressure_dilatation /= point_count;
+
+  const double ratio = context->forcing_dilatational_ratio;
+  const double target_s =
+      context->forcing_target_dissipation / (1.0 + ratio);
+  const double target_d = context->forcing_target_dissipation - target_s;
+  if (denominator_s <= context->forcing_denominator_floor) {
+    set_error("distributed solenoidal forcing denominator is too small");
+    return false;
+  }
+  double coefficient_s = target_s / denominator_s;
+  double coefficient_d = 0.0;
+  if (denominator_d <= context->forcing_denominator_floor) {
+    if (target_d > context->forcing_denominator_floor) {
+      set_error("distributed dilatational forcing denominator is too small");
+      return false;
+    }
+  } else {
+    coefficient_d = (target_d - pressure_dilatation) / denominator_d;
+  }
+  if (context->forcing_max_coefficient > 0.0) {
+    coefficient_s = std::clamp(
+        coefficient_s,
+        -context->forcing_max_coefficient,
+        context->forcing_max_coefficient);
+    coefficient_d = std::clamp(
+        coefficient_d,
+        -context->forcing_max_coefficient,
+        context->forcing_max_coefficient);
+  }
+
+  for (int component = 0; component < 3; ++component) {
+    if (!check_cufft(
+            cufftXtExecDescriptor(
+                context->forcing_plan,
+                context->forcing_spectral[component],
+                context->forcing_physical[component],
+                CUFFT_INVERSE),
+            "inverse distributed solenoidal forcing FFT")) {
+      return false;
+    }
+    forcing_add_component_kernel<<<
+        block_count(context->physical_count), 256>>>(
+        physical[component], context->q, context->rhs, context->grid,
+        component, coefficient_s, normalization, context->small_rho,
+        context->physical_count);
+    if (!check_cuda(
+            cudaGetLastError(), "add distributed solenoidal forcing")) {
+      return false;
+    }
+  }
+
+  forcing_build_dilatational_distributed_kernel<<<
+      block_count(context->physical_count), 256>>>(
+      spectral[0], spectral[1], spectral[2], context->forcing_phi,
+      context->grid.nx, context->grid.ny,
+      context->global_ny, context->global_nz,
+      context->global_y_start, context->global_z_start,
+      lx, ly, lz,
+      context->forcing_spectrum, context->forcing_k_cutoff,
+      context->physical_count);
+  if (!check_cuda(
+          cudaGetLastError(),
+          "build distributed dilatational forcing spectrum")) {
+    return false;
+  }
+  for (int component = 0; component < 3; ++component) {
+    if (!check_cufft(
+            cufftXtExecDescriptor(
+                context->forcing_plan,
+                context->forcing_spectral[component],
+                context->forcing_physical[component],
+                CUFFT_INVERSE),
+            "inverse distributed dilatational forcing FFT")) {
+      return false;
+    }
+    forcing_add_component_kernel<<<
+        block_count(context->physical_count), 256>>>(
+        physical[component], context->q, context->rhs, context->grid,
+        component, coefficient_d, normalization, context->small_rho,
+        context->physical_count);
+    if (!check_cuda(
+            cudaGetLastError(), "add distributed dilatational forcing")) {
+      return false;
+    }
+  }
+
+  ++context->forcing_evaluations;
+  if (context->forcing_rank == 0 && context->forcing_report_interval > 0
+      && (context->forcing_evaluations == 1
+          || context->forcing_evaluations
+                  % context->forcing_report_interval == 0)) {
+    std::printf(
+        "# forcing %d %.8e %.8e %.8e %.8e %.8e %.8e %.8e\n",
+        context->forcing_evaluations,
+        coefficient_s, coefficient_d,
+        denominator_s, denominator_d,
+        pressure_dilatation, target_s, target_d);
+  }
+  return true;
+}
+#endif
+
+std::size_t halo_value_count(
+    const NseCudaContext* context, int direction) {
+  if (direction == halo_direction_y) {
+    return static_cast<std::size_t>(context->grid.nx_total)
+        * static_cast<std::size_t>(context->grid.nghost)
+        * static_cast<std::size_t>(context->grid.nz_total)
+        * static_cast<std::size_t>(context->nvar);
+  }
+  if (direction == halo_direction_z) {
+    return static_cast<std::size_t>(context->grid.nx_total)
+        * static_cast<std::size_t>(context->grid.ny_total)
+        * static_cast<std::size_t>(context->grid.nghost)
+        * static_cast<std::size_t>(context->nvar);
+  }
+  return 0;
+}
+
+bool valid_halo_request(
+    const NseCudaContext* context, int direction, int side) {
+  if (context == nullptr
+      || (direction != halo_direction_y && direction != halo_direction_z)
+      || (side != halo_side_low && side != halo_side_high)) {
+    set_error("invalid CUDA halo-exchange request");
+    return false;
+  }
+  if ((direction == halo_direction_y && !context->distributed_y)
+      || (direction == halo_direction_z && !context->distributed_z)) {
+    set_error("CUDA halo exchange requested for a local periodic direction");
+    return false;
+  }
+  return true;
+}
+
 bool launch_periodic(NseCudaContext* context) {
   periodic_halo_kernel<<<block_count(context->grid.cell_count), 256>>>(
-      context->q, context->grid, context->nvar);
+      context->q, context->grid, context->nvar,
+      context->distributed_y ? 0 : 1,
+      context->distributed_z ? 0 : 1);
   return check_cuda(cudaGetLastError(), "periodic halo kernel");
 }
 
@@ -1242,9 +1811,11 @@ bool launch_rhs(NseCudaContext* context) {
   }
 #if defined(NSE_FORCING_CUFFT)
   return launch_forcing(context);
+#elif defined(NSE_FORCING_CUFFTMP)
+  return launch_forcing_distributed(context);
 #else
   if (context->forcing_enabled) {
-    set_error("forcing requested, but this CUDA build does not include cuFFT");
+    set_error("forcing requested, but this CUDA build has no FFT backend");
     return false;
   }
   return true;
@@ -1362,6 +1933,156 @@ NSE_CUDA_EXPORT int nse_cuda_forward_complex_3d(
 }
 #endif
 
+#if defined(NSE_FORCING_CUFFTMP) || defined(NSE_INIT_CUFFTMP)
+bool make_cufftmp_pencil_plan(
+    cufftHandle* plan,
+    cudaLibXtDesc** physical,
+    cudaLibXtDesc** spectral,
+    int nx,
+    int ny,
+    int nz,
+    int y_start,
+    int y_count,
+    int z_start,
+    int z_count,
+    MPI_Comm* comm) {
+  int shape[3] = {nz, ny, nx};
+  const long long lower[3] = {z_start, y_start, 0};
+  const long long upper[3] = {
+      z_start + z_count, y_start + y_count, nx};
+  const long long strides[3] = {
+      static_cast<long long>(y_count) * nx,
+      static_cast<long long>(nx),
+      1};
+  std::size_t workspace = 0;
+  return check_cufft(cufftCreate(plan), "create cuFFTMp plan")
+      && check_cufft(
+          cufftMpMakePlanDecomposition(
+              *plan, 3, shape,
+              lower, upper, strides,
+              lower, upper, strides,
+              CUFFT_Z2Z, comm, CUFFT_COMM_MPI, &workspace),
+          "create cuFFTMp custom Y-Z pencil plan")
+      && check_cufft(
+          cufftXtMalloc(
+              *plan, physical, CUFFT_XT_FORMAT_DISTRIBUTED_INPUT),
+          "allocate cuFFTMp physical descriptor")
+      && check_cufft(
+          cufftXtMalloc(
+              *plan, spectral, CUFFT_XT_FORMAT_DISTRIBUTED_OUTPUT),
+          "allocate cuFFTMp spectral descriptor");
+}
+#endif
+
+NSE_CUDA_EXPORT int nse_cuda_set_device(int device) {
+  last_error.clear();
+  if (device < 0) {
+    set_error("CUDA device index must be non-negative");
+    return 1;
+  }
+  return check_cuda(cudaSetDevice(device), "select CUDA device") ? 0 : 1;
+}
+
+#if defined(NSE_INIT_CUFFTMP)
+NSE_CUDA_EXPORT void nse_cufftmp_fft_finalize() {
+  if (hit_cufftmp.spectral != nullptr) {
+    cufftXtFree(hit_cufftmp.spectral);
+  }
+  if (hit_cufftmp.physical != nullptr) {
+    cufftXtFree(hit_cufftmp.physical);
+  }
+  if (hit_cufftmp.plan != 0) cufftDestroy(hit_cufftmp.plan);
+  if (hit_cufftmp.comm != MPI_COMM_NULL) {
+    MPI_Comm_free(&hit_cufftmp.comm);
+  }
+  hit_cufftmp = HitCufftMpContext{};
+}
+
+NSE_CUDA_EXPORT int nse_cufftmp_fft_initialize(
+    int nx,
+    int ny,
+    int nz,
+    int ylo,
+    int yhi,
+    int zlo,
+    int zhi,
+    int communicator) {
+  last_error.clear();
+  if (hit_cufftmp.plan != 0) {
+    set_error("cuFFTMp HIT plan is already initialized");
+    return 1;
+  }
+  if (nx <= 0 || ny <= 0 || nz <= 0
+      || ylo < 1 || yhi < ylo || yhi > ny
+      || zlo < 1 || zhi < zlo || zhi > nz) {
+    set_error("invalid cuFFTMp HIT pencil bounds");
+    return 1;
+  }
+  MPI_Comm source = MPI_Comm_f2c(static_cast<MPI_Fint>(communicator));
+  if (source == MPI_COMM_NULL
+      || MPI_Comm_dup(source, &hit_cufftmp.comm) != MPI_SUCCESS) {
+    set_error("duplicate MPI communicator for cuFFTMp HIT initialization");
+    nse_cufftmp_fft_finalize();
+    return 1;
+  }
+  hit_cufftmp.local_count = static_cast<std::size_t>(nx)
+      * static_cast<std::size_t>(yhi - ylo + 1)
+      * static_cast<std::size_t>(zhi - zlo + 1);
+  if (!make_cufftmp_pencil_plan(
+          &hit_cufftmp.plan,
+          &hit_cufftmp.physical,
+          &hit_cufftmp.spectral,
+          nx, ny, nz,
+          ylo - 1, yhi - ylo + 1,
+          zlo - 1, zhi - zlo + 1,
+          &hit_cufftmp.comm)) {
+    nse_cufftmp_fft_finalize();
+    return 1;
+  }
+  return 0;
+}
+
+NSE_CUDA_EXPORT int nse_cufftmp_fft_execute(
+    const cufftDoubleComplex* input,
+    cufftDoubleComplex* output,
+    int direction) {
+  last_error.clear();
+  if (hit_cufftmp.plan == 0 || input == nullptr || output == nullptr
+      || (direction != CUFFT_FORWARD && direction != CUFFT_INVERSE)) {
+    set_error("invalid cuFFTMp HIT transform request");
+    return 1;
+  }
+  cudaLibXtDesc* input_descriptor = direction == CUFFT_FORWARD
+      ? hit_cufftmp.physical : hit_cufftmp.spectral;
+  cudaLibXtDesc* output_descriptor = direction == CUFFT_FORWARD
+      ? hit_cufftmp.spectral : hit_cufftmp.physical;
+  if (!check_cufft(
+          cufftXtMemcpy(
+              hit_cufftmp.plan,
+              input_descriptor,
+              const_cast<cufftDoubleComplex*>(input),
+              CUFFT_COPY_HOST_TO_DEVICE),
+          "upload local cuFFTMp HIT pencil")
+      || !check_cufft(
+          cufftXtExecDescriptor(
+              hit_cufftmp.plan,
+              input_descriptor,
+              output_descriptor,
+              direction),
+          "execute cuFFTMp HIT transform")
+      || !check_cufft(
+          cufftXtMemcpy(
+              hit_cufftmp.plan,
+              output,
+              output_descriptor,
+              CUFFT_COPY_DEVICE_TO_HOST),
+          "download local cuFFTMp HIT pencil")) {
+    return 1;
+  }
+  return 0;
+}
+#endif
+
 NSE_CUDA_EXPORT int nse_cuda_create(
     void** handle,
     int nx,
@@ -1370,6 +2091,8 @@ NSE_CUDA_EXPORT int nse_cuda_create(
     int nghost,
     int nvar,
     int device,
+    int distributed_y,
+    int distributed_z,
     int convective_scheme,
     int hybrid_smooth_scheme,
     int hybrid_shock_scheme,
@@ -1438,8 +2161,16 @@ NSE_CUDA_EXPORT int nse_cuda_create(
     return 1;
   }
   if (forcing_enabled != 0) {
-#if !defined(NSE_FORCING_CUFFT)
-    set_error("forcing requested, but this CUDA build has no cuFFT backend");
+#if !defined(NSE_FORCING_CUFFTMP)
+    if (distributed_y != 0 || distributed_z != 0) {
+      set_error(
+          "MPI+CUDA forcing requires a distributed FFT backend; "
+          "the cuFFT backend is single-GPU only");
+      return 1;
+    }
+#endif
+#if !defined(NSE_FORCING_CUFFT) && !defined(NSE_FORCING_CUFFTMP)
+    set_error("forcing requested, but this CUDA build has no FFT backend");
     return 1;
 #else
     if ((forcing_spectrum != 1 && forcing_spectrum != 2)
@@ -1461,6 +2192,12 @@ NSE_CUDA_EXPORT int nse_cuda_create(
     return 1;
   }
   context->device = device;
+  context->distributed_y = distributed_y != 0;
+  context->distributed_z = distributed_z != 0;
+  context->global_ny = ny;
+  context->global_nz = nz;
+  context->global_y_start = 0;
+  context->global_z_start = 0;
   context->grid.nx = nx;
   context->grid.ny = ny;
   context->grid.nz = nz;
@@ -1510,6 +2247,13 @@ NSE_CUDA_EXPORT int nse_cuda_create(
   context->state_bytes =
       context->grid.cell_count * static_cast<std::size_t>(nvar)
       * sizeof(double);
+  const std::size_t y_halo_count = halo_value_count(
+      context, halo_direction_y);
+  const std::size_t z_halo_count = halo_value_count(
+      context, halo_direction_z);
+  context->halo_buffer_count = std::max(
+      context->distributed_y ? y_halo_count : std::size_t{0},
+      context->distributed_z ? z_halo_count : std::size_t{0});
 
   if (!check_cuda(cudaSetDevice(device), "select CUDA device")
       || !check_cuda(cudaFree(nullptr), "initialize CUDA runtime")
@@ -1537,7 +2281,12 @@ NSE_CUDA_EXPORT int nse_cuda_create(
       || !check_cuda(
           cudaMalloc(reinterpret_cast<void**>(&context->max_speed),
                      sizeof(double)),
-          "allocate maximum CFL speed")) {
+          "allocate maximum CFL speed")
+      || (context->halo_buffer_count > 0
+          && !check_cuda(
+              cudaMalloc(reinterpret_cast<void**>(&context->halo_buffer),
+                         context->halo_buffer_count * sizeof(double)),
+              "allocate MPI halo staging buffer"))) {
     release_context(context);
     return 1;
   }
@@ -1633,6 +2382,132 @@ NSE_CUDA_EXPORT int nse_cuda_create(
   return 0;
 }
 
+NSE_CUDA_EXPORT int nse_cuda_configure_cufftmp(
+    void* handle,
+    int global_ny,
+    int global_nz,
+    int global_y_start,
+    int global_z_start,
+    int communicator) {
+  last_error.clear();
+  auto* context = static_cast<NseCudaContext*>(handle);
+  if (context == nullptr) {
+    set_error("invalid CUDA context during cuFFTMp configuration");
+    return 1;
+  }
+#if !defined(NSE_FORCING_CUFFTMP)
+  static_cast<void>(global_ny);
+  static_cast<void>(global_nz);
+  static_cast<void>(global_y_start);
+  static_cast<void>(global_z_start);
+  static_cast<void>(communicator);
+  set_error("this CUDA build does not include the cuFFTMp forcing backend");
+  return 1;
+#else
+  if (!context->forcing_enabled) {
+    set_error("cuFFTMp configuration requested while forcing is disabled");
+    return 1;
+  }
+  if (context->forcing_distributed_ready) {
+    set_error("cuFFTMp forcing is already configured");
+    return 1;
+  }
+  if (global_ny <= 0 || global_nz <= 0
+      || global_y_start < 0 || global_z_start < 0
+      || global_y_start + context->grid.ny > global_ny
+      || global_z_start + context->grid.nz > global_nz) {
+    set_error("invalid global Y-Z pencil bounds for cuFFTMp forcing");
+    return 1;
+  }
+  MPI_Comm source = MPI_Comm_f2c(static_cast<MPI_Fint>(communicator));
+  if (source == MPI_COMM_NULL
+      || MPI_Comm_dup(source, &context->forcing_comm) != MPI_SUCCESS
+      || MPI_Comm_rank(
+          context->forcing_comm, &context->forcing_rank) != MPI_SUCCESS) {
+    set_error("initialize MPI communicator for cuFFTMp forcing");
+    return 1;
+  }
+  context->global_ny = global_ny;
+  context->global_nz = global_nz;
+  context->global_y_start = global_y_start;
+  context->global_z_start = global_z_start;
+
+  if (!make_cufftmp_pencil_plan(
+          &context->forcing_plan,
+          &context->forcing_physical[0],
+          &context->forcing_spectral[0],
+          context->grid.nx, global_ny, global_nz,
+          global_y_start, context->grid.ny,
+          global_z_start, context->grid.nz,
+          &context->forcing_comm)) {
+    return 1;
+  }
+  for (int component = 1; component < 3; ++component) {
+    if (!check_cufft(
+            cufftXtMalloc(
+                context->forcing_plan,
+                &context->forcing_physical[component],
+                CUFFT_XT_FORMAT_DISTRIBUTED_INPUT),
+            "allocate cuFFTMp forcing physical descriptor")
+        || !check_cufft(
+            cufftXtMalloc(
+                context->forcing_plan,
+                &context->forcing_spectral[component],
+                CUFFT_XT_FORMAT_DISTRIBUTED_OUTPUT),
+            "allocate cuFFTMp forcing spectral descriptor")) {
+      return 1;
+    }
+  }
+  if (!check_cuda(
+          cudaMalloc(
+              reinterpret_cast<void**>(&context->forcing_phi),
+              context->physical_count * sizeof(cufftDoubleComplex)),
+          "allocate distributed forcing Helmholtz potential")
+      || !check_cuda(
+          cudaMalloc(
+              reinterpret_cast<void**>(&context->forcing_energy_d),
+              context->physical_count * sizeof(double)),
+          "allocate distributed forcing dilatational energy")
+      || !check_cuda(
+          cudaMalloc(
+              reinterpret_cast<void**>(&context->forcing_sum),
+              sizeof(double)),
+          "allocate distributed forcing reduction result")) {
+    return 1;
+  }
+
+  std::size_t sum_reduce_bytes = 0;
+  if (!check_cuda(
+          cub::DeviceReduce::Sum(
+              nullptr,
+              sum_reduce_bytes,
+              context->speed,
+              context->forcing_sum,
+              static_cast<int>(context->physical_count)),
+          "query distributed forcing reduction workspace")) {
+    return 1;
+  }
+  if (sum_reduce_bytes > context->reduce_storage_bytes) {
+    cudaFree(context->reduce_storage);
+    context->reduce_storage = nullptr;
+    context->reduce_storage_bytes = sum_reduce_bytes;
+    if (!check_cuda(
+            cudaMalloc(
+                &context->reduce_storage,
+                context->reduce_storage_bytes),
+            "resize distributed forcing reduction workspace")) {
+      return 1;
+    }
+  }
+  context->forcing_distributed_ready = true;
+  if (context->forcing_rank == 0) {
+    std::printf("# Petersen-Livescu forcing initialized\n");
+    std::printf("# forcing FFT backend: cuFFTMp custom Y-Z pencils\n");
+  }
+  return 0;
+#endif
+}
+
 NSE_CUDA_EXPORT int nse_cuda_upload(void* handle, const double* q) {
   last_error.clear();
   auto* context = static_cast<NseCudaContext*>(handle);
@@ -1666,6 +2541,94 @@ NSE_CUDA_EXPORT int nse_cuda_download(void* handle, double* q) {
     return 1;
   }
   return 0;
+}
+
+NSE_CUDA_EXPORT int nse_cuda_apply_local_periodic(void* handle) {
+  last_error.clear();
+  auto* context = static_cast<NseCudaContext*>(handle);
+  if (context == nullptr) {
+    set_error("invalid CUDA context during local periodic update");
+    return 1;
+  }
+  return launch_periodic(context) ? 0 : 1;
+}
+
+NSE_CUDA_EXPORT int nse_cuda_halo_count(
+    void* handle, int direction, std::size_t* count) {
+  last_error.clear();
+  auto* context = static_cast<NseCudaContext*>(handle);
+  if (context == nullptr || count == nullptr
+      || (direction != halo_direction_y && direction != halo_direction_z)) {
+    set_error("invalid CUDA halo-count request");
+    return 1;
+  }
+  *count = halo_value_count(context, direction);
+  return 0;
+}
+
+NSE_CUDA_EXPORT int nse_cuda_pack_halo(
+    void* handle, int direction, int side, double* host_buffer) {
+  last_error.clear();
+  auto* context = static_cast<NseCudaContext*>(handle);
+  if (host_buffer == nullptr
+      || !valid_halo_request(context, direction, side)) {
+    if (host_buffer == nullptr) set_error("CUDA halo pack buffer is null");
+    return 1;
+  }
+  const std::size_t count = halo_value_count(context, direction);
+  if (count > context->halo_buffer_count || context->halo_buffer == nullptr) {
+    set_error("CUDA halo staging buffer is too small");
+    return 1;
+  }
+  if (direction == halo_direction_y) {
+    pack_y_halo_kernel<<<block_count(count), 256>>>(
+        context->q, context->halo_buffer, context->grid, context->nvar,
+        side, count);
+  } else {
+    pack_z_halo_kernel<<<block_count(count), 256>>>(
+        context->q, context->halo_buffer, context->grid, context->nvar,
+        side, count);
+  }
+  if (!check_cuda(cudaGetLastError(), "pack CUDA MPI halo")
+      || !check_cuda(
+          cudaMemcpy(host_buffer, context->halo_buffer,
+                     count * sizeof(double), cudaMemcpyDeviceToHost),
+          "copy packed CUDA MPI halo to host")) {
+    return 1;
+  }
+  return 0;
+}
+
+NSE_CUDA_EXPORT int nse_cuda_unpack_halo(
+    void* handle, int direction, int side, const double* host_buffer) {
+  last_error.clear();
+  auto* context = static_cast<NseCudaContext*>(handle);
+  if (host_buffer == nullptr
+      || !valid_halo_request(context, direction, side)) {
+    if (host_buffer == nullptr) set_error("CUDA halo unpack buffer is null");
+    return 1;
+  }
+  const std::size_t count = halo_value_count(context, direction);
+  if (count > context->halo_buffer_count || context->halo_buffer == nullptr) {
+    set_error("CUDA halo staging buffer is too small");
+    return 1;
+  }
+  if (!check_cuda(
+          cudaMemcpy(context->halo_buffer, host_buffer,
+                     count * sizeof(double), cudaMemcpyHostToDevice),
+          "copy received MPI halo to CUDA device")) {
+    return 1;
+  }
+  if (direction == halo_direction_y) {
+    unpack_y_halo_kernel<<<block_count(count), 256>>>(
+        context->q, context->halo_buffer, context->grid, context->nvar,
+        side, count);
+  } else {
+    unpack_z_halo_kernel<<<block_count(count), 256>>>(
+        context->q, context->halo_buffer, context->grid, context->nvar,
+        side, count);
+  }
+  return check_cuda(cudaGetLastError(), "unpack CUDA MPI halo") ? 0 : 1;
 }
 
 NSE_CUDA_EXPORT int nse_cuda_compute_dt(void* handle, double* dt) {
@@ -1723,7 +2686,7 @@ NSE_CUDA_EXPORT int nse_cuda_compute_dt(void* handle, double* dt) {
   return 0;
 }
 
-NSE_CUDA_EXPORT int nse_cuda_advance_ssprk3(void* handle, double dt) {
+NSE_CUDA_EXPORT int nse_cuda_begin_ssprk3(void* handle, double dt) {
   last_error.clear();
   auto* context = static_cast<NseCudaContext*>(handle);
   if (context == nullptr) {
@@ -1734,20 +2697,41 @@ NSE_CUDA_EXPORT int nse_cuda_advance_ssprk3(void* handle, double dt) {
     set_error("SSPRK3 time step must be positive and finite");
     return 1;
   }
-  if (!check_cuda(
-          cudaMemcpy(
-              context->q0,
-              context->q,
-              context->state_bytes,
-              cudaMemcpyDeviceToDevice),
-          "copy Q to Q0")) {
+  return check_cuda(
+      cudaMemcpy(context->q0, context->q, context->state_bytes,
+                 cudaMemcpyDeviceToDevice),
+      "copy Q to Q0") ? 0 : 1;
+}
+
+NSE_CUDA_EXPORT int nse_cuda_advance_ssprk3_stage(
+    void* handle, double dt, int stage) {
+  last_error.clear();
+  auto* context = static_cast<NseCudaContext*>(handle);
+  if (context == nullptr || !std::isfinite(dt) || dt <= 0.0
+      || stage < 1 || stage > 3) {
+    set_error("invalid CUDA SSPRK3 stage request");
+    return 1;
+  }
+  if (!launch_rhs(context) || !launch_stage(context, dt, stage)) {
+    return 1;
+  }
+  return 0;
+}
+
+NSE_CUDA_EXPORT int nse_cuda_advance_ssprk3(void* handle, double dt) {
+  last_error.clear();
+  auto* context = static_cast<NseCudaContext*>(handle);
+  if (context == nullptr) {
+    set_error("invalid CUDA context");
+    return 1;
+  }
+  if (nse_cuda_begin_ssprk3(handle, dt) != 0) {
     return 1;
   }
 
   for (int stage = 1; stage <= 3; ++stage) {
     if (!launch_periodic(context)
-        || !launch_rhs(context)
-        || !launch_stage(context, dt, stage)) {
+        || nse_cuda_advance_ssprk3_stage(handle, dt, stage) != 0) {
       return 1;
     }
   }

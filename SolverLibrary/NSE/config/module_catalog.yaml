@@ -134,6 +134,14 @@ modules:
       - mod_model_config
       - mod_grid_fvm
 
+  mod_init_imported_turbulence:
+    path: src/init/mod_init_imported_turbulence.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+
   mod_init_hit_spectral_stub:
     path: src/init/mod_init_hit_spectral_stub.f90
     role: library
@@ -154,6 +162,18 @@ modules:
       - mpi
       - distributed_fft
 
+  mod_nse_cufftmp_fft:
+    path: src/gpu/mod_nse_cufftmp_fft.f90
+    role: library
+    requires:
+      - mod_precision
+      - module_mpi
+    features:
+      - mpi
+      - cuda
+      - distributed_fft
+      - cufftmp
+
   mod_nse_initial_conditions:
     path: src/init/mod_nse_initial_conditions.f90
     role: library
@@ -162,6 +182,7 @@ modules:
       - mod_common_config
       - mod_model_config
       - mod_init_taylor_green
+      - mod_init_imported_turbulence
 
   mod_nse_boundary:
     path: src/boundary/mod_boundary_periodic.f90
@@ -292,6 +313,18 @@ modules:
     features:
       - cuda
 
+  mod_nse_gpu_mpi:
+    path: src/gpu/mod_nse_gpu_mpi.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_nse_gpu
+      - module_mpi
+    features:
+      - cuda
+      - mpi
+      - multi_gpu
+
   main_nse:
     path: src/main/main_nse.f90
     role: executable
@@ -352,3 +385,22 @@ modules:
       - mod_openmp_runtime_stub
     features:
       - cuda
+
+  main_nse_mpi_cuda:
+    path: src/main/main_nse_mpi_cuda.f90
+    role: executable
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_grid_fvm
+      - mod_input_reader
+      - mod_nse_initial_conditions
+      - mod_nse_gpu
+      - mod_nse_gpu_mpi
+      - mod_slf_output
+      - module_mpi
+    features:
+      - cuda
+      - mpi
+      - multi_gpu

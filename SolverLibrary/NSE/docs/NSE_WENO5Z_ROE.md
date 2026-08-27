@@ -81,4 +81,5 @@ leaf registryを介して既存のKEEPおよびWENO5-Z/Roe実装を再利用し�
 - 現在はpositivity-preserving limiterを実装していません。極端な強衝撃波では、
   CFLを下げるだけでなく密度・圧力正値性を保証する制限法の追加が必要です。
 - 現在の時間積分は陽的SSPRK3です。
-- 単一GPU CUDA版は実装済みです。MPI+CUDA版は未実装です。
+- 単一GPU CUDA版とMPI＋CUDA版を実装済みです。MPI＋CUDA版は各SSPRK段で
+  y面・z面のhaloをhost staging方式で交換します。

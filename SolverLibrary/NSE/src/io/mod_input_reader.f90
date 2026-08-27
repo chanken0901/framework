@@ -146,16 +146,28 @@ contains
     real(dp) :: hit_pope_dissipation_exponent
     real(dp) :: hit_dealias_fraction, hit_isotropy_k_cutoff
     real(dp) :: hit_isotropy_tolerance
+    real(dp) :: imported_turbulence_x_start
+    real(dp) :: imported_turbulence_velocity_offset_x
+    real(dp) :: imported_turbulence_velocity_offset_y
+    real(dp) :: imported_turbulence_velocity_offset_z
+    real(dp) :: imported_turbulence_background_rho
+    real(dp) :: imported_turbulence_background_u
+    real(dp) :: imported_turbulence_background_v
+    real(dp) :: imported_turbulence_background_w
+    real(dp) :: imported_turbulence_background_p
     real(dp) :: forcing_k_cutoff, forcing_target_dissipation
     real(dp) :: forcing_dilatational_ratio, forcing_denominator_floor
     real(dp) :: forcing_max_coefficient
     real(dp) :: hybrid_sensor_onset, hybrid_sensor_full
     integer :: hit_seed, hit_isotropy_max_iterations
+    integer :: imported_turbulence_blend_cells
     integer :: forcing_report_interval
     character(len=32) :: convective_scheme, viscous_scheme, hit_spectrum
     character(len=32) :: hybrid_smooth_scheme, hybrid_shock_scheme
     character(len=32) :: hybrid_sensor
     character(len=32) :: hit_isotropy_mode
+    character(len=512) :: imported_turbulence_file
+    character(len=32) :: imported_turbulence_mode
     character(len=32) :: boundary_condition, time_integrator
     character(len=32) :: forcing_scheme, forcing_spectrum, forcing_fft_backend
     integer :: u, ios
@@ -172,7 +184,17 @@ contains
       hit_pope_large_scale_exponent, hit_pope_dissipation_exponent, &
       hit_dealias_fraction, hit_isotropy_mode, &
       hit_isotropy_k_cutoff, hit_isotropy_tolerance, &
-      hit_isotropy_max_iterations, forcing_scheme, &
+      hit_isotropy_max_iterations, imported_turbulence_file, &
+      imported_turbulence_mode, imported_turbulence_x_start, &
+      imported_turbulence_blend_cells, &
+      imported_turbulence_velocity_offset_x, &
+      imported_turbulence_velocity_offset_y, &
+      imported_turbulence_velocity_offset_z, &
+      imported_turbulence_background_rho, &
+      imported_turbulence_background_u, &
+      imported_turbulence_background_v, &
+      imported_turbulence_background_w, &
+      imported_turbulence_background_p, forcing_scheme, &
       forcing_spectrum, forcing_fft_backend, forcing_k_cutoff, &
       forcing_target_dissipation, forcing_dilatational_ratio, &
       forcing_denominator_floor, forcing_max_coefficient, &
@@ -215,6 +237,27 @@ contains
     hit_isotropy_k_cutoff = cfg%hit_isotropy_k_cutoff
     hit_isotropy_tolerance = cfg%hit_isotropy_tolerance
     hit_isotropy_max_iterations = cfg%hit_isotropy_max_iterations
+    imported_turbulence_file = cfg%imported_turbulence_file
+    imported_turbulence_mode = cfg%imported_turbulence_mode
+    imported_turbulence_x_start = cfg%imported_turbulence_x_start
+    imported_turbulence_blend_cells = &
+      cfg%imported_turbulence_blend_cells
+    imported_turbulence_velocity_offset_x = &
+      cfg%imported_turbulence_velocity_offset_x
+    imported_turbulence_velocity_offset_y = &
+      cfg%imported_turbulence_velocity_offset_y
+    imported_turbulence_velocity_offset_z = &
+      cfg%imported_turbulence_velocity_offset_z
+    imported_turbulence_background_rho = &
+      cfg%imported_turbulence_background_rho
+    imported_turbulence_background_u = &
+      cfg%imported_turbulence_background_u
+    imported_turbulence_background_v = &
+      cfg%imported_turbulence_background_v
+    imported_turbulence_background_w = &
+      cfg%imported_turbulence_background_w
+    imported_turbulence_background_p = &
+      cfg%imported_turbulence_background_p
     forcing_scheme = cfg%forcing_scheme
     forcing_spectrum = cfg%forcing_spectrum
     forcing_fft_backend = cfg%forcing_fft_backend
@@ -272,6 +315,27 @@ contains
     cfg%hit_isotropy_k_cutoff = hit_isotropy_k_cutoff
     cfg%hit_isotropy_tolerance = hit_isotropy_tolerance
     cfg%hit_isotropy_max_iterations = hit_isotropy_max_iterations
+    cfg%imported_turbulence_file = imported_turbulence_file
+    cfg%imported_turbulence_mode = imported_turbulence_mode
+    cfg%imported_turbulence_x_start = imported_turbulence_x_start
+    cfg%imported_turbulence_blend_cells = &
+      imported_turbulence_blend_cells
+    cfg%imported_turbulence_velocity_offset_x = &
+      imported_turbulence_velocity_offset_x
+    cfg%imported_turbulence_velocity_offset_y = &
+      imported_turbulence_velocity_offset_y
+    cfg%imported_turbulence_velocity_offset_z = &
+      imported_turbulence_velocity_offset_z
+    cfg%imported_turbulence_background_rho = &
+      imported_turbulence_background_rho
+    cfg%imported_turbulence_background_u = &
+      imported_turbulence_background_u
+    cfg%imported_turbulence_background_v = &
+      imported_turbulence_background_v
+    cfg%imported_turbulence_background_w = &
+      imported_turbulence_background_w
+    cfg%imported_turbulence_background_p = &
+      imported_turbulence_background_p
     cfg%forcing_scheme = forcing_scheme
     cfg%forcing_spectrum = forcing_spectrum
     cfg%forcing_fft_backend = forcing_fft_backend

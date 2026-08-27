@@ -187,6 +187,89 @@ class NseCaseInputTests(unittest.TestCase):
 
         self.assertIn('convective_scheme = "keep2"', text)
 
+    def test_renders_imported_turbulence_embed(self) -> None:
+        case = self.case()
+        case["flow"] = {
+            "type": "imported_turbulence",
+            "imported_turbulence": {
+                "file": "initial_data/turbulence.slf",
+                "mode": "embed",
+                "x_start": 2.0,
+                "blend_cells": 4,
+                "velocity_offset": [0.5, 0.0, 0.0],
+                "background": {
+                    "density": 1.0,
+                    "velocity": [0.5, 0.0, 0.0],
+                    "pressure": 0.75,
+                },
+            },
+        }
+
+        text = render_nse(case, self.manifest, "cpu_mpi")
+
+        self.assertIn('initial_condition = "imported_turbulence"', text)
+        self.assertIn(
+            'imported_turbulence_file = "initial_data/turbulence.slf"', text
+        )
+        self.assertIn('imported_turbulence_mode = "embed"', text)
+        self.assertIn("imported_turbulence_x_start = 2", text)
+        self.assertIn("imported_turbulence_blend_cells = 4", text)
+        self.assertIn("imported_turbulence_velocity_offset_x = 0.5", text)
+        self.assertIn("imported_turbulence_background_u = 0.5", text)
+        self.assertIn("imported_turbulence_background_p = 0.75", text)
+
+    def test_resolves_imported_turbulence_file_from_case_directory(self) -> None:
+        case = self.case()
+        case["flow"] = {
+            "type": "imported_turbulence",
+            "imported_turbulence": {
+                "file": "initial_data/turbulence.slf",
+                "blend_cells": 0,
+            },
+        }
+        runtime_root = Path.cwd() / "portable_runtime"
+        case_dir = runtime_root / "cases" / "case0001"
+
+        text = render_nse(
+            case,
+            self.manifest,
+            "cpu_mpi",
+            case_dir=case_dir,
+            runtime_root=runtime_root,
+        )
+
+        self.assertIn(
+            'imported_turbulence_file = '
+            '"cases/case0001/initial_data/turbulence.slf"',
+            text,
+        )
+
+    def test_rejects_tile_with_blending(self) -> None:
+        case = self.case()
+        case["flow"] = {
+            "type": "turbulence_tile",
+            "imported_turbulence": {
+                "file": "initial_data/turbulence.slf",
+                "blend_cells": 2,
+            },
+        }
+
+        with self.assertRaisesRegex(CaseInputError, "requires blend_cells: 0"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_invalid_imported_turbulence_velocity(self) -> None:
+        case = self.case()
+        case["flow"] = {
+            "type": "imported_turbulence",
+            "imported_turbulence": {
+                "file": "initial_data/turbulence.slf",
+                "velocity_offset": [0.5, 0.0],
+            },
+        }
+
+        with self.assertRaisesRegex(CaseInputError, "exactly three numbers"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
     def test_renders_weno5z_roe_selection_for_cpu(self) -> None:
         case = self.case()
         case["numerics"]["convective_scheme"] = "WENO5Z_ROE"
@@ -612,10 +695,29 @@ class NseCaseInputTests(unittest.TestCase):
 
         self.assertIn('convective_scheme = "weno5z_roe"', text)
 
+    def test_renders_nse_multi_gpu_input(self) -> None:
+        case = self.case(mpi_processes=2)
+        case["solver"].update(
+            {
+                "profile": "cuda_mpi",
+                "use_mpi": True,
+                "use_openmp": False,
+                "use_cuda": True,
+                "omp_threads": 1,
+            }
+        )
+
+        text = render_nse(case, self.manifest, "cuda_mpi")
+
+        self.assertIn('backend = "cuda_mpi"', text)
+        self.assertIn("use_mpi = .true.", text)
+        self.assertIn("use_openmp = .false.", text)
+        _validate_solver_selection(case, self.manifest, "cuda_mpi")
+
     def test_rejects_too_few_nse_mpi_processes(self) -> None:
-        with self.assertRaisesRegex(CaseInputError, "at least 4"):
+        with self.assertRaisesRegex(CaseInputError, "at least 2"):
             _validate_solver_selection(
-                self.case(mpi_processes=2), self.manifest, "cpu_mpi"
+                self.case(mpi_processes=1), self.manifest, "cpu_mpi"
             )
 
 

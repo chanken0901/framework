@@ -8,12 +8,20 @@ module mod_init_hit_spectral
   use module_mpi, only : my_rank, root, nprocs, ndiv_ny, ndiv_nz, &
     jjsta, jjend, kksta, kkend, mp_allmaxr8, mp_allminr8, mp_allsumr8, &
     MPI_COMM_WORLD, MPI_INTEGER, MPI_DOUBLE_PRECISION, MPI_SUM
+#ifdef NSE_INIT_CUFFTMP
+  use mod_nse_cufftmp_fft, only : decomp_info, decomp_2d_init, &
+    decomp_2d_finalize, alloc_x, alloc_z, xstart, xend, zstart, zend, &
+    decomp_2d_fft_init, decomp_2d_fft_finalize, decomp_2d_fft_3d, &
+    decomp_2d_fft_get_ph, mytype, PHYSICAL_IN_X, DECOMP_2D_FFT_FORWARD, &
+    DECOMP_2D_FFT_BACKWARD
+#else
   use decomp_2d, only : decomp_info, decomp_2d_init, decomp_2d_finalize, &
     alloc_x, alloc_z, xstart, xend, zstart, zend
   use decomp_2d_fft, only : decomp_2d_fft_init, decomp_2d_fft_finalize, &
     decomp_2d_fft_3d, decomp_2d_fft_get_ph
   use decomp_2d_constants, only : mytype, PHYSICAL_IN_X, &
     DECOMP_2D_FFT_FORWARD, DECOMP_2D_FFT_BACKWARD
+#endif
   implicit none
   private
 
@@ -45,7 +53,7 @@ contains
       error stop 'Spectral HIT initialization requires five conserved variables'
     end if
     if (storage_size(0.0_mytype) /= storage_size(0.0_dp)) then
-      error stop '2DECOMP&FFT precision must match mod_precision dp'
+      error stop 'Distributed FFT precision must match mod_precision dp'
     end if
     if (sim%lx <= 0.0_dp .or. sim%ly <= 0.0_dp .or. sim%lz <= 0.0_dp) then
       error stop 'Spectral HIT initialization requires positive domain lengths'
@@ -134,7 +142,12 @@ contains
     if (my_rank == root) then
       write(*,'(A)') '# Distributed spectral HIT initialization'
       write(*,'(A,A)') '# spectrum: ', trim(nse%hit_spectrum)
+#ifdef NSE_INIT_CUFFTMP
+      write(*,'(A,I0,A,I0)') '# cuFFTMp process grid: ', ndiv_ny, ' x ', ndiv_nz
+      write(*,'(A)') '# HIT FFT backend: cuFFTMp custom Y-Z pencils'
+#else
       write(*,'(A,I0,A,I0)') '# 2DECOMP process grid: ', ndiv_ny, ' x ', ndiv_nz
+#endif
       write(*,'(A)') '# Fourier coefficients: direct transverse-mode construction'
       write(*,'(A,A)') '# low-wavenumber isotropy: ', &
         trim(nse%hit_isotropy_mode)

@@ -1,7 +1,7 @@
 # NSEソルバー総合仕様書
 
-更新日: 2026-08-19  
-仕様区分: 現行実装準拠（as implemented）  
+更新日: 2026-08-25
+仕様区分: 現行実装準拠（as implemented）
 対象: `FrameWork/SolverLibrary/NSE` および `ScriptLibrary/RunEnvironment`
 
 ## 1. 目的と適用範囲
@@ -10,7 +10,7 @@
 支配方程式、無次元化、数値解法、初期条件、境界条件、Forcing、並列化、
 入出力および既知の制約を一つにまとめた総合仕様書である。
 
-本書では理想的な設計ではなく、2026-08-19時点のローカルソースが実際に行う
+本書では理想的な設計ではなく、2026-08-25時点のローカルソースが実際に行う
 計算を仕様とする。既存文書と実装が一致しない箇所は「現行実装上の注意事項」へ
 明記する。
 
@@ -26,12 +26,12 @@
 | 対流流束 | KEEP2、KEEP6、WENO5-Z/Roe、KEEP/WENOハイブリッド |
 | 粘性項 | 無効、または一定輸送係数の6次精度中心差分 |
 | 時間積分 | 3段3次SSPRK（SSPRK3） |
-| 初期条件 | Taylor–Green渦、スペクトルHIT |
+| 初期条件 | Taylor–Green渦、スペクトルHIT、保存済み乱流場のx方向配置 |
 | 外力 | なし、またはPetersen–Livescu線形Forcing |
 | CPU並列 | MPIによるy-z分割＋OpenMP |
-| GPU | 単一NVIDIA GPU、CUDA、float64 |
+| GPU | 単一NVIDIA GPU、またはMPI＋複数NVIDIA GPU、CUDA、float64 |
 | 出力 | rank別SLF保存変数、JSONメタデータ |
-| 再スタート | 未実装 |
+| 再スタート | 時刻・stepを継続する再スタートは未実装。保存済み乱流場の初期条件読込みは対応 |
 
 ## 3. 支配方程式
 
@@ -479,8 +479,37 @@ mean(p) = rho0/gamma
 |---|---|
 | CPU MPI/OpenMP | 2DECOMP&FFT + FFTW3 |
 | 単一GPU | cuFFT |
+| MPI + CUDA | cuFFTMp（`cuda_mpi_cufftmp`） |
 
 生成環境では、`flow.type: hit`を検出すると対応profileを自動選択する。
+
+### 9.4 保存済み乱流場
+
+`flow.type: imported_turbulence`では、付属ツールでghostを除去して単一ファイルへ
+集約した保存量SLFを読み込む。`embed`は長いx領域の一部へ乱流ブロックを置き、
+左右端を指定セル数のraised-cosineで背景保存量と混合する。`tile`は元のxセル列を
+周期反復する。読み込んだ速度へ一定の`velocity_offset`を加える場合は、圧力を保って
+運動量と全エネルギーを再構築する。
+
+CPU版は全x範囲を各rankが保持する既存分割を利用し、自rankのy-z範囲だけをSLFから
+直接読む。このため初期データ作成時と本計算時のMPI並列数は独立である。
+CUDA版はCPU上で同じ可搬SLFから各rankの初期場を構築した後、完成した保存変数場を
+そのrankのGPUへ転送する。したがってCPU MPI、単一GPU、MPI＋CUDAのどの出力からでも、
+CPU MPI、単一GPU、MPI＋CUDAのいずれへ読み込める。元計算のバックエンドやMPI
+プロセス数を読込み先へ引き継がない。
+
+| 元計算 | 読込み先 | データ受渡し |
+|---|---|---|
+| CPU MPI | CPU MPI | rank別出力→可搬SLF→読込み先MPI分割で局所読込み |
+| CPU MPI | 単一GPU | rank別出力→可搬SLF→CPU初期化→GPU転送 |
+| 単一GPU | CPU MPI | CUDA単一rank出力→可搬SLF→CPU MPI局所読込み |
+| 単一GPU | 単一GPU | CUDA単一rank出力→可搬SLF→CPU初期化→GPU転送 |
+| CPU MPI／単一GPU／MPI＋CUDA | MPI＋CUDA | 可搬SLF→読込み先MPI分割で局所読込み→各GPUへ転送 |
+
+格子補間は行わず、`dx,dy,dz`、`ny,nz`、y-z領域の一致を要求する。`tile`ではさらに
+対象`nx`が元データ`nx`の整数倍でなければならない。全セルについて有限値、密度、
+圧力を検査してから計算を開始する。変換と入力の詳細は
+[`NSE_IMPORTED_TURBULENCE.md`](NSE_IMPORTED_TURBULENCE.md)に定義する。
 
 ## 10. Petersen–Livescu Forcing
 
@@ -516,7 +545,7 @@ f = sqrt(rho)*(c_s*w_s + c_d*w_d)
 |---|---|
 | CPU MPI/OpenMP | 2DECOMP&FFT + FFTW3 |
 | 単一GPU | cuFFT |
-| MPI + CUDA | 契約テストのみ。実計算は未実装 |
+| MPI + CUDA | cuFFTMp（`cuda_mpi_cufftmp`） |
 
 ## 11. 並列化と実行profile
 
@@ -528,8 +557,9 @@ CPU版はx方向を各rankが全域保持し、y-z平面を二次元MPI分割す
 local domain = full x × local y block × local z block
 ```
 
-MPIプロセス格子は因数対のうち和が小さい組合せを選ぶ。現行のy-z分割は
-4 MPIプロセス以上を要求し、`run_case.py`も4未満を拒否する。
+MPIプロセス格子は因数対のうち和が小さい組合せを選ぶ。2または3 rankでは
+1×P、4 rank以上では可能な限り正方形に近いy-z分割を選ぶ。MPI実行は2 rank以上を
+要求し、`run_case.py`も1 rankを拒否する。
 
 OpenMPはセルループ、流束計算、SSPRK更新などへ適用される。MPI rank数と
 rankあたりOpenMPスレッド数は実行時に変更できる。
@@ -543,13 +573,26 @@ rankあたりOpenMPスレッド数は実行時に変更できる。
 - 出力時のみ保存変数をCPUへ戻す
 - float64固定
 
-### 11.3 profile
+### 11.3 MPI＋CUDAマルチGPU
+
+- x全域×局所y×局所zを1 MPI rankのGPU 1台へ保持
+- SSPRK3の各段でy面、続いてz面をhost staging方式で交換
+- y交換後にz交換することで面だけでなく辺・角ghostも完成
+- CFL時間刻みは全rankの最小値へ同期
+- GPU番号はノード内rankから自動選択。1 GPUだけがrankへ公開された場合はdevice 0を使用
+- 各局所y/zブロックは`nghost`セル以上
+- CUDA-aware MPIは不要
+- `cuda_mpi_cufftmp`でcuFFTMpによる分散HIT初期化とFFT forcingを実装
+
+### 11.4 profile
 
 | profile | 用途 | 主な能力 |
 |---|---|---|
 | `cpu_mpi` | 通常CPU計算 | MPI/OpenMP、Taylor–Green |
 | `cpu_mpi_2decomp_fftw` | スペクトルCPU計算 | HIT、Petersen–Livescu Forcing |
 | `cuda_single` | 単一GPU | CUDA、cuFFT HIT/Forcing |
+| `cuda_mpi` | 複数GPU | MPI＋CUDA、Taylor–Green、保存済み乱流場 |
+| `cuda_mpi_cufftmp` | 複数GPU分散FFT | MPI＋CUDA、cuFFTMp HIT/Forcing |
 
 NSEのCPU/MPI生成環境には互換profileを同梱し、`case.yaml`の要求機能を満たす
 最小profileを `run_case.py` が選択する。`solver.profile`を明示した場合は固定指定となり、
@@ -569,7 +612,13 @@ NSEのCPU/MPI生成環境には互換profileを同梱し、`case.yaml`の要求�
 | `physics.nse.mach_number` | 非HIT初期速度振幅。方程式係数ではない |
 | `physics.nse.reynolds_number` | 音響スケーリングReynolds数 |
 | `physics.nse.prandtl_number` | Prandtl数 |
-| `flow.type` | `taylor_green` または `hit` |
+| `flow.type` | `taylor_green`, `hit`, `imported_turbulence` |
+| `flow.imported_turbulence.file` | ghostなしの可搬NSE SLF |
+| `flow.imported_turbulence.mode` | `embed`または`tile` |
+| `flow.imported_turbulence.x_start` | 元乱流セル列を開始するxセル境界座標 |
+| `flow.imported_turbulence.blend_cells` | `embed`両端の混合セル数 |
+| `flow.imported_turbulence.velocity_offset` | 読込み速度へ加える一定速度3成分 |
+| `flow.imported_turbulence.background` | `embed`外側の密度、速度、圧力 |
 | `flow.hit.turbulent_mach_number` | HIT目標乱流Mach数 `M_t` |
 | `flow.hit.turbulent_reynolds_number` | HIT目標 `Re_lambda` |
 | `flow.hit.random_seed` | MPI分割数に依存しない乱数seed |
@@ -599,10 +648,10 @@ NSEのCPU/MPI生成環境には互換profileを同梱し、`case.yaml`の要求�
 | `numerics.viscous_scheme` | `none` または `central6` |
 | `numerics.boundary_condition` | `periodic`のみ |
 | `numerics.time_integrator` | `ssprk3`のみ |
-| `solver.mpi_processes` | CPU版は4以上 |
+| `solver.mpi_processes` | MPI版は2以上。`cuda_mpi`では通常GPU総数と同じ |
 | `solver.use_openmp` | case単位のOpenMP使用可否 |
 | `solver.omp_threads` | rankあたりスレッド数 |
-| `solver.cuda_device` | 単一GPU番号 |
+| `solver.cuda_device` | 単一GPU番号、または各ノードのGPU番号割当ての開始値 |
 | `output.directory` | 出力先。caseディレクトリからの相対指定を推奨 |
 | `output.write_initial` | step 0の保存可否 |
 | `output.write_meta` | メタデータ指定。CPU版の注意は15.3節参照 |
@@ -747,7 +796,7 @@ Reynolds応力、等方性誤差、積分スケール、散逸率、Taylor長、
 - 計算精度はfloat64固定で、`output.precision`は実質的にメタデータである。
 - CPU版は現状 `output.write_meta`にかかわらず `meta.json`を書き出す。
 - 最終stepは無条件保存されない。
-- 再スタート読込みは未実装。
+- 時刻とstepを継続する再スタート読込みは未実装。保存済み乱流をstep 0の初期条件として読む機能とは区別する。
 - Linuxで出力先が未作成の場合は、実行前にディレクトリを作成するのが安全である。
 
 ### 15.4 数値・物理モデル上の制約
@@ -758,7 +807,8 @@ Reynolds応力、等方性誤差、積分スケール、散逸率、Taylor長、
 - 化学反応、多成分、LES/RANS、重力、一般物体力は未実装。
 - positivity-preserving limiterは未実装。
 - `small_rho`、`small_p`は評価保護であり、保存状態の修復ではない。
-- 単一GPUのみ。MPI+CUDA時間発展は未実装。
+- CUDA版は単一GPUとMPI＋CUDAマルチGPUに対応する。MPI＋CUDAのhalo通信は
+  host staging方式であり、分散HIT初期化とFFT forcingにはLinux上のcuFFTMpが必要である。
 - CPU版は最低4 MPIプロセスを要求し、CPU逐次profileはない。
 
 ## 16. 実装ファイル対応表

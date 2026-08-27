@@ -24,6 +24,13 @@ option_catalogs: []
 #   parallel.use_mpi: false
 #   parallel.use_openmp: false
 #   parallel.use_cuda: true
+#
+# MPI + CUDA multi-GPU (one MPI rank per GPU):
+#   model: nse
+#   case: nse_case
+#   parallel.use_mpi: true
+#   parallel.use_openmp: false
+#   parallel.use_cuda: true
 select:
   source: local_framework
   destination: windows_research_runs
