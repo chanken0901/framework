@@ -46,6 +46,8 @@ SUMMARY_FLAT_KEYS = {
     "solver.profile",
     "solver.mpi_processes",
 }
+INDEX_REPLACE_TIMEOUT_SECONDS = 2.0
+INDEX_REPLACE_RETRY_SECONDS = 0.1
 
 
 class GlobalCaseIndexError(RuntimeError):
@@ -171,6 +173,8 @@ def _write_index(
     path: Path,
     rows: list[dict[str, str]],
     existing_columns: list[str] | None = None,
+    *,
+    replace_timeout_seconds: float = INDEX_REPLACE_TIMEOUT_SECONDS,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     columns = _columns_for(existing_columns or [], rows)
@@ -181,7 +185,20 @@ def _write_index(
             writer.writeheader()
             for row in rows:
                 writer.writerow({column: row.get(column, "") for column in columns})
-        temporary.replace(path)
+        deadline = time.monotonic() + max(0.0, replace_timeout_seconds)
+        while True:
+            try:
+                temporary.replace(path)
+                break
+            except PermissionError as exc:
+                if time.monotonic() >= deadline:
+                    raise GlobalCaseIndexError(
+                        "cannot update the shared case index because Windows "
+                        f"is preventing replacement of {path}. Close Excel, "
+                        "an editor, or another program that has case_index.csv "
+                        "open; the index will be synchronized on the next run"
+                    ) from exc
+                time.sleep(INDEX_REPLACE_RETRY_SECONDS)
     finally:
         if temporary.exists():
             temporary.unlink()

@@ -73,6 +73,25 @@ function(nse_configure_mpi target_name)
       )
     endif()
 
+    if(NOT MPIEXEC_EXECUTABLE)
+      find_program(
+        MPIEXEC_EXECUTABLE
+        NAMES mpiexec.exe mpiexec
+        HINTS ENV MSMPI_BIN "C:/Program Files/Microsoft MPI/Bin"
+        DOC "MPI launcher used by NSE tests"
+      )
+    endif()
+    if(NOT MPIEXEC_EXECUTABLE)
+      message(FATAL_ERROR
+        "Microsoft MPI runtime launcher was not found. Install MS-MPI or set "
+        "MPIEXEC_EXECUTABLE to mpiexec.exe."
+      )
+    endif()
+    if(NOT MPIEXEC_NUMPROC_FLAG)
+      set(MPIEXEC_NUMPROC_FLAG "-n" CACHE STRING
+        "MPI launcher flag for the process count" FORCE)
+    endif()
+
     target_include_directories(
       ${target_name}
       INTERFACE
@@ -105,6 +124,7 @@ function(nse_configure_mpi target_name)
     message(STATUS "Microsoft MPI include: ${MSMPI_FORTRAN_INCLUDE_DIR}")
     message(STATUS "Microsoft MPI x64 include: ${MSMPI_X64_INCLUDE_DIR}")
     message(STATUS "Microsoft MPI Fortran library: ${MSMPI_FORTRAN_LIBRARY}")
+    message(STATUS "Microsoft MPI launcher: ${MPIEXEC_EXECUTABLE}")
   else()
     find_package(MPI REQUIRED COMPONENTS Fortran)
     target_link_libraries(${target_name} INTERFACE MPI::MPI_Fortran)

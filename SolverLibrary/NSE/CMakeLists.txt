@@ -64,11 +64,11 @@ set(
 )
 set_property(CACHE NSE_VISCOUS_SCHEME PROPERTY STRINGS none central6)
 set(
-  NSE_BOUNDARY_SCHEME "periodic"
+  NSE_BOUNDARY_SCHEME "runtime"
   CACHE STRING
   "Boundary-condition backend compiled into the NSE solver"
 )
-set_property(CACHE NSE_BOUNDARY_SCHEME PROPERTY STRINGS periodic)
+set_property(CACHE NSE_BOUNDARY_SCHEME PROPERTY STRINGS runtime periodic)
 set(
   NSE_INIT_FFT_BACKEND "none"
   CACHE STRING
@@ -227,12 +227,14 @@ else()
   )
 endif()
 
-if(NSE_BOUNDARY_SCHEME STREQUAL "periodic")
+if(NSE_BOUNDARY_SCHEME STREQUAL "runtime")
+  set(NSE_BOUNDARY_SOURCE src/boundary/mod_boundary_runtime.f90)
+elseif(NSE_BOUNDARY_SCHEME STREQUAL "periodic")
   set(NSE_BOUNDARY_SOURCE src/boundary/mod_boundary_periodic.f90)
 else()
   message(FATAL_ERROR
     "Unsupported NSE_BOUNDARY_SCHEME='${NSE_BOUNDARY_SCHEME}'. "
-    "Available backends: periodic"
+    "Available backends: runtime, periodic"
   )
 endif()
 
@@ -402,17 +404,19 @@ set(
   ${NSE_OPENMP_RUNTIME_SOURCE}
   src/init/mod_init_taylor_green.f90
   src/init/mod_init_imported_turbulence.f90
+  src/init/mod_init_shock_turbulence.f90
+  src/init/mod_init_shock_tube_turbulence.f90
   src/init/mod_hit_isotropy_math.f90
   ${NSE_INIT_FFT_SUPPORT_SOURCE}
   ${NSE_INIT_FFT_SOURCE}
   src/init/mod_nse_initial_conditions.f90
   src/io/mod_slf_output.f90
+  ${NSE_BOUNDARY_SOURCE}
 )
 if(NSE_GPU_BACKEND STREQUAL "cuda")
   list(APPEND NSE_DEFAULT_CORE_SOURCES ${NSE_GPU_FORTRAN_SOURCE})
 else()
   list(APPEND NSE_DEFAULT_CORE_SOURCES
-    ${NSE_BOUNDARY_SOURCE}
     ${NSE_CONVECTIVE_SOURCES}
     ${NSE_VISCOUS_SOURCE}
     ${NSE_FORCING_SOURCE}
@@ -818,6 +822,106 @@ if(BUILD_TESTING AND NSE_USE_MPI AND NSE_GPU_BACKEND STREQUAL "none")
       PASS_REGULAR_EXPRESSION
         "periodic boundary face/edge/corner test passed"
   )
+  if(NSE_BOUNDARY_SCHEME STREQUAL "runtime")
+    add_executable(
+      nse_test_boundary_non_reflecting
+      tests/test_boundary_non_reflecting.f90
+    )
+    set_target_properties(
+      nse_test_boundary_non_reflecting
+      PROPERTIES
+        Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/boundary_non_reflecting_test"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+    )
+    target_link_libraries(nse_test_boundary_non_reflecting PRIVATE NSE::core)
+    nse_apply_fortran_options(nse_test_boundary_non_reflecting)
+    add_test(
+      NAME nse_boundary_non_reflecting
+      COMMAND mpiexec -n 4 $<TARGET_FILE:nse_test_boundary_non_reflecting>
+    )
+    set_tests_properties(
+      nse_boundary_non_reflecting
+      PROPERTIES
+        PASS_REGULAR_EXPRESSION "non-reflecting mixed boundary tests passed"
+    )
+    add_executable(
+      nse_test_boundary_reflective
+      tests/test_boundary_reflective.f90
+    )
+    set_target_properties(
+      nse_test_boundary_reflective
+      PROPERTIES
+        Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/boundary_reflective_test"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+    )
+    target_link_libraries(nse_test_boundary_reflective PRIVATE NSE::core)
+    nse_apply_fortran_options(nse_test_boundary_reflective)
+    add_test(
+      NAME nse_boundary_reflective
+      COMMAND mpiexec -n 4 $<TARGET_FILE:nse_test_boundary_reflective>
+    )
+    set_tests_properties(
+      nse_boundary_reflective
+      PROPERTIES
+        PASS_REGULAR_EXPRESSION
+          "reflective boundary face/edge/corner test passed"
+    )
+    add_executable(
+      nse_test_boundary_dirichlet
+      tests/test_boundary_dirichlet.f90
+    )
+    set_target_properties(
+      nse_test_boundary_dirichlet
+      PROPERTIES
+        Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/boundary_dirichlet_test"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+    )
+    target_link_libraries(nse_test_boundary_dirichlet PRIVATE NSE::core)
+    nse_apply_fortran_options(nse_test_boundary_dirichlet)
+    add_test(
+      NAME nse_boundary_dirichlet
+      COMMAND mpiexec -n 4 $<TARGET_FILE:nse_test_boundary_dirichlet>
+    )
+    set_tests_properties(
+      nse_boundary_dirichlet
+      PROPERTIES
+        PASS_REGULAR_EXPRESSION
+          "Dirichlet boundary face/edge/corner test passed"
+    )
+    add_test(
+      NAME nse_non_reflecting_smoke
+      COMMAND mpiexec -n 4 $<TARGET_FILE:nse_solver>
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_non_reflecting_small.dat"
+    )
+    set_tests_properties(
+      nse_non_reflecting_smoke
+      PROPERTIES
+        PASS_REGULAR_EXPRESSION "NSE calculation completed successfully:"
+        FAIL_REGULAR_EXPRESSION "floating-point exceptions are signalling"
+    )
+    add_test(
+      NAME nse_reflective_smoke
+      COMMAND mpiexec -n 4 $<TARGET_FILE:nse_solver>
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_reflective_small.dat"
+    )
+    set_tests_properties(
+      nse_reflective_smoke
+      PROPERTIES
+        PASS_REGULAR_EXPRESSION "NSE calculation completed successfully:"
+        FAIL_REGULAR_EXPRESSION "floating-point exceptions are signalling"
+    )
+    add_test(
+      NAME nse_dirichlet_smoke
+      COMMAND mpiexec -n 4 $<TARGET_FILE:nse_solver>
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_dirichlet_small.dat"
+    )
+    set_tests_properties(
+      nse_dirichlet_smoke
+      PROPERTIES
+        PASS_REGULAR_EXPRESSION "NSE calculation completed successfully:"
+        FAIL_REGULAR_EXPRESSION "floating-point exceptions are signalling"
+    )
+  endif()
   add_test(
     NAME nse_mpi_normal_completion
     COMMAND mpiexec -n 4 $<TARGET_FILE:nse_solver>
@@ -878,6 +982,72 @@ if(BUILD_TESTING AND NSE_USE_MPI AND
   )
 endif()
 if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda" AND NOT NSE_USE_MPI)
+  add_executable(
+    nse_test_cuda_boundary_dirichlet
+    tests/test_cuda_boundary_dirichlet.f90
+  )
+  set_target_properties(
+    nse_test_cuda_boundary_dirichlet
+    PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+  )
+  target_link_libraries(nse_test_cuda_boundary_dirichlet PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_cuda_boundary_dirichlet)
+  add_test(
+    NAME nse_cuda_boundary_dirichlet_compare
+    COMMAND $<TARGET_FILE:nse_test_cuda_boundary_dirichlet>
+  )
+  set_tests_properties(
+    nse_cuda_boundary_dirichlet_compare
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION "CUDA Dirichlet boundary comparison passed"
+      FAIL_REGULAR_EXPRESSION "CUDA backend failure;floating-point exceptions are signalling"
+  )
+  add_executable(
+    nse_test_cuda_boundary_reflective
+    tests/test_cuda_boundary_reflective.f90
+  )
+  set_target_properties(
+    nse_test_cuda_boundary_reflective
+    PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+  )
+  target_link_libraries(nse_test_cuda_boundary_reflective PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_cuda_boundary_reflective)
+  add_test(
+    NAME nse_cuda_boundary_reflective_compare
+    COMMAND $<TARGET_FILE:nse_test_cuda_boundary_reflective>
+  )
+  set_tests_properties(
+    nse_cuda_boundary_reflective_compare
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION "CUDA reflective boundary comparison passed"
+      FAIL_REGULAR_EXPRESSION "CUDA backend failure;floating-point exceptions are signalling"
+  )
+  add_executable(
+    nse_test_cuda_boundary_non_reflecting
+    tests/test_cuda_boundary_non_reflecting.f90
+  )
+  set_target_properties(
+    nse_test_cuda_boundary_non_reflecting
+    PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+  )
+  target_link_libraries(nse_test_cuda_boundary_non_reflecting PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_cuda_boundary_non_reflecting)
+  add_test(
+    NAME nse_cuda_boundary_non_reflecting_compare
+    COMMAND $<TARGET_FILE:nse_test_cuda_boundary_non_reflecting>
+  )
+  set_tests_properties(
+    nse_cuda_boundary_non_reflecting_compare
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION "CUDA non-reflecting boundary comparison passed"
+      FAIL_REGULAR_EXPRESSION "CUDA backend failure;floating-point exceptions are signalling"
+  )
   add_executable(nse_test_cuda_keep tests/test_cuda_keep.f90)
   set_target_properties(
     nse_test_cuda_keep
@@ -972,6 +1142,39 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda" AND NOT NSE_USE_MPI)
     PROPERTIES PASS_REGULAR_EXPRESSION "# step time dt"
   )
   add_test(
+    NAME nse_cuda_non_reflecting_smoke
+    COMMAND $<TARGET_FILE:nse_solver>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_non_reflecting_small.dat"
+  )
+  set_tests_properties(
+    nse_cuda_non_reflecting_smoke
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION "NSE calculation completed successfully:"
+      FAIL_REGULAR_EXPRESSION "CUDA backend failure;floating-point exceptions are signalling"
+  )
+  add_test(
+    NAME nse_cuda_reflective_smoke
+    COMMAND $<TARGET_FILE:nse_solver>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_reflective_small.dat"
+  )
+  set_tests_properties(
+    nse_cuda_reflective_smoke
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION "NSE calculation completed successfully:"
+      FAIL_REGULAR_EXPRESSION "CUDA backend failure;floating-point exceptions are signalling"
+  )
+  add_test(
+    NAME nse_cuda_dirichlet_smoke
+    COMMAND $<TARGET_FILE:nse_solver>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_dirichlet_small.dat"
+  )
+  set_tests_properties(
+    nse_cuda_dirichlet_smoke
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION "NSE calculation completed successfully:"
+      FAIL_REGULAR_EXPRESSION "CUDA backend failure;floating-point exceptions are signalling"
+  )
+  add_test(
     NAME nse_cuda_weno5z_roe_smoke
     COMMAND $<TARGET_FILE:nse_solver>
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_cuda_weno5z_roe_small.dat"
@@ -1049,6 +1252,51 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda" AND NSE_USE_MPI AND
   )
   set_tests_properties(
     nse_mpi_cuda_tgv_smoke
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION
+        "NSE MPI\\+CUDA calculation completed successfully:"
+      FAIL_REGULAR_EXPRESSION
+        "CUDA backend failure;floating-point exceptions are signalling"
+  )
+  add_test(
+    NAME nse_mpi_cuda_non_reflecting_smoke
+    COMMAND "${MPIEXEC_EXECUTABLE}" ${MPIEXEC_NUMPROC_FLAG}
+      ${NSE_MULTI_GPU_TEST_PROCESSES} ${MPIEXEC_PREFLAGS}
+      $<TARGET_FILE:nse_solver> ${MPIEXEC_POSTFLAGS}
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_non_reflecting_all_faces_small.dat"
+  )
+  set_tests_properties(
+    nse_mpi_cuda_non_reflecting_smoke
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION
+        "NSE MPI\\+CUDA calculation completed successfully:"
+      FAIL_REGULAR_EXPRESSION
+        "CUDA backend failure;floating-point exceptions are signalling"
+  )
+  add_test(
+    NAME nse_mpi_cuda_reflective_smoke
+    COMMAND "${MPIEXEC_EXECUTABLE}" ${MPIEXEC_NUMPROC_FLAG}
+      ${NSE_MULTI_GPU_TEST_PROCESSES} ${MPIEXEC_PREFLAGS}
+      $<TARGET_FILE:nse_solver> ${MPIEXEC_POSTFLAGS}
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_reflective_small.dat"
+  )
+  set_tests_properties(
+    nse_mpi_cuda_reflective_smoke
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION
+        "NSE MPI\\+CUDA calculation completed successfully:"
+      FAIL_REGULAR_EXPRESSION
+        "CUDA backend failure;floating-point exceptions are signalling"
+  )
+  add_test(
+    NAME nse_mpi_cuda_dirichlet_smoke
+    COMMAND "${MPIEXEC_EXECUTABLE}" ${MPIEXEC_NUMPROC_FLAG}
+      ${NSE_MULTI_GPU_TEST_PROCESSES} ${MPIEXEC_PREFLAGS}
+      $<TARGET_FILE:nse_solver> ${MPIEXEC_POSTFLAGS}
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_tgv_dirichlet_small.dat"
+  )
+  set_tests_properties(
+    nse_mpi_cuda_dirichlet_smoke
     PROPERTIES
       PASS_REGULAR_EXPRESSION
         "NSE MPI\\+CUDA calculation completed successfully:"

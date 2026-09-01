@@ -4,7 +4,8 @@ module mod_nse_gpu
   use, intrinsic :: iso_fortran_env, only : error_unit
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
-  use mod_model_config, only : nse_config
+  use mod_model_config, only : nse_config, nse_boundary_face_count
+  use mod_nse_boundary, only : validate_boundary_scheme
   use mod_nse_forcing_common, only : forcing_is_enabled, &
     validate_forcing_parameters
   implicit none
@@ -15,6 +16,10 @@ module mod_nse_gpu
   integer(c_int), parameter :: cuda_convective_weno5z_roe = 3_c_int
   integer(c_int), parameter :: cuda_convective_hybrid = 4_c_int
   integer(c_int), parameter :: cuda_sensor_ducros_pressure = 1_c_int
+  integer(c_int), parameter :: cuda_boundary_periodic = 0_c_int
+  integer(c_int), parameter :: cuda_boundary_non_reflecting = 1_c_int
+  integer(c_int), parameter :: cuda_boundary_reflective = 2_c_int
+  integer(c_int), parameter :: cuda_boundary_dirichlet = 3_c_int
   integer, parameter, public :: nse_gpu_halo_y = 1
   integer, parameter, public :: nse_gpu_halo_z = 2
   integer, parameter, public :: nse_gpu_halo_low = -1
@@ -34,6 +39,7 @@ module mod_nse_gpu
   public :: nse_gpu_advance_ssprk3
   public :: nse_gpu_begin_ssprk3
   public :: nse_gpu_advance_ssprk3_stage
+  public :: nse_gpu_apply_local_boundary
   public :: nse_gpu_apply_local_periodic
   public :: nse_gpu_halo_count
   public :: nse_gpu_pack_halo
@@ -52,6 +58,9 @@ module mod_nse_gpu
 
     function c_nse_cuda_create(handle, nx, ny, nz, nghost, nvar, device, &
         distributed_y, distributed_z, &
+        global_ny, global_nz, global_y_start, global_z_start, &
+        boundary_type, boundary_reference, boundary_relaxation_strength, &
+        boundary_length_scale, &
         convective_scheme, hybrid_smooth_scheme, hybrid_shock_scheme, &
         hybrid_sensor, viscous_enabled, forcing_enabled, forcing_spectrum, &
         forcing_report_interval, gamma, cfl, small_rho, small_p, reynolds, &
@@ -63,6 +72,12 @@ module mod_nse_gpu
       type(c_ptr), intent(out) :: handle
       integer(c_int), value :: nx, ny, nz, nghost, nvar, device
       integer(c_int), value :: distributed_y, distributed_z
+      integer(c_int), value :: global_ny, global_nz
+      integer(c_int), value :: global_y_start, global_z_start
+      integer(c_int), intent(in) :: boundary_type(6)
+      real(c_double), intent(in) :: boundary_reference(5,6)
+      real(c_double), value :: boundary_relaxation_strength
+      real(c_double), value :: boundary_length_scale
       integer(c_int), value :: convective_scheme
       integer(c_int), value :: hybrid_smooth_scheme, hybrid_shock_scheme
       integer(c_int), value :: hybrid_sensor, viscous_enabled
@@ -105,12 +120,12 @@ module mod_nse_gpu
       integer(c_int) :: status
     end function c_nse_cuda_download
 
-    function c_nse_cuda_apply_local_periodic(handle) &
-        bind(C, name="nse_cuda_apply_local_periodic") result(status)
+    function c_nse_cuda_apply_local_boundary(handle) &
+        bind(C, name="nse_cuda_apply_local_boundary") result(status)
       import :: c_ptr, c_int
       type(c_ptr), value :: handle
       integer(c_int) :: status
-    end function c_nse_cuda_apply_local_periodic
+    end function c_nse_cuda_apply_local_boundary
 
     function c_nse_cuda_halo_count(handle, direction, count) &
         bind(C, name="nse_cuda_halo_count") result(status)
@@ -235,9 +250,7 @@ contains
         error stop "CUDA central6 viscosity requires prandtl > 0"
       end if
     end if
-    if (trim(adjustl(nse%boundary_condition)) /= "periodic") then
-      error stop "CUDA backend currently supports periodic boundaries"
-    end if
+    call validate_boundary_scheme(sim, nse)
     if (trim(adjustl(nse%time_integrator)) /= "ssprk3") then
       error stop "CUDA backend currently supports time_integrator=ssprk3"
     end if
@@ -259,17 +272,21 @@ contains
   end subroutine nse_gpu_select_device
 
   subroutine nse_gpu_initialize(context, sim, nse, local_ny, local_nz, &
-      distributed_y, distributed_z, device)
+      distributed_y, distributed_z, device, global_y_start, global_z_start)
     type(nse_gpu_context), intent(inout) :: context
     type(simulation_config), intent(in) :: sim
     type(nse_config), intent(in) :: nse
     integer, intent(in), optional :: local_ny, local_nz, device
+    integer, intent(in), optional :: global_y_start, global_z_start
     logical, intent(in), optional :: distributed_y, distributed_z
     integer(c_int) :: status, viscous_enabled, convective_scheme
     integer(c_int) :: forcing_enabled, forcing_spectrum
     integer(c_int) :: hybrid_smooth_scheme, hybrid_shock_scheme, hybrid_sensor
     integer(c_int) :: cuda_distributed_y, cuda_distributed_z
+    integer(c_int) :: boundary_type(nse_boundary_face_count)
+    real(c_double) :: boundary_reference(5,nse_boundary_face_count)
     integer :: cuda_ny, cuda_nz, cuda_device
+    integer :: cuda_global_y_start, cuda_global_z_start, face
 
     call validate_nse_gpu_configuration(sim, nse)
     if (kind(1.0_dp) /= c_double) then
@@ -282,11 +299,20 @@ contains
     cuda_ny = sim%ny
     cuda_nz = sim%nz
     cuda_device = sim%cuda_device
+    cuda_global_y_start = 0
+    cuda_global_z_start = 0
     if (present(local_ny)) cuda_ny = local_ny
     if (present(local_nz)) cuda_nz = local_nz
     if (present(device)) cuda_device = device
+    if (present(global_y_start)) cuda_global_y_start = global_y_start
+    if (present(global_z_start)) cuda_global_z_start = global_z_start
     if (cuda_ny <= 0 .or. cuda_nz <= 0) then
       error stop "local CUDA domain dimensions must be positive"
+    end if
+    if (cuda_global_y_start < 0 .or. cuda_global_z_start < 0 .or. &
+        cuda_global_y_start+cuda_ny > sim%ny .or. &
+        cuda_global_z_start+cuda_nz > sim%nz) then
+      error stop "local CUDA domain lies outside the global Y-Z domain"
     end if
     cuda_distributed_y = 0_c_int
     cuda_distributed_z = 0_c_int
@@ -296,6 +322,26 @@ contains
     if (present(distributed_z)) then
       if (distributed_z) cuda_distributed_z = 1_c_int
     end if
+
+    boundary_reference = 0.0_c_double
+    do face = 1, nse_boundary_face_count
+      select case (trim(adjustl(nse%boundary_face_type(face))))
+      case ('periodic')
+        boundary_type(face) = cuda_boundary_periodic
+      case ('non_reflecting')
+        boundary_type(face) = cuda_boundary_non_reflecting
+      case ('reflective')
+        boundary_type(face) = cuda_boundary_reflective
+      case ('dirichlet')
+        boundary_type(face) = cuda_boundary_dirichlet
+      case default
+        error stop "unsupported CUDA boundary face type"
+      end select
+      boundary_reference(1,face) = nse%boundary_reference_rho(face)
+      boundary_reference(2:4,face) = &
+        nse%boundary_reference_velocity(:,face)
+      boundary_reference(5,face) = nse%boundary_reference_p(face)
+    end do
 
     viscous_enabled = 0_c_int
     if (trim(adjustl(nse%viscous_scheme)) == "central6") then
@@ -323,6 +369,10 @@ contains
       int(cuda_ny, c_int), int(cuda_nz, c_int), int(sim%nghost, c_int), &
       int(nse%nv, c_int), int(cuda_device, c_int), &
       cuda_distributed_y, cuda_distributed_z, &
+      int(sim%ny,c_int), int(sim%nz,c_int), &
+      int(cuda_global_y_start,c_int), int(cuda_global_z_start,c_int), &
+      boundary_type, boundary_reference, nse%boundary_relaxation_strength, &
+      nse%boundary_length_scale, &
       convective_scheme, hybrid_smooth_scheme, hybrid_shock_scheme, &
       hybrid_sensor, viscous_enabled, forcing_enabled, forcing_spectrum, &
       int(nse%forcing_report_interval, c_int), &
@@ -415,13 +465,21 @@ contains
     call require_success(status, "download NSE state")
   end subroutine nse_gpu_download
 
-  subroutine nse_gpu_apply_local_periodic(context)
+  subroutine nse_gpu_apply_local_boundary(context)
     type(nse_gpu_context), intent(in) :: context
     integer(c_int) :: status
 
     call require_context(context)
-    status = c_nse_cuda_apply_local_periodic(context%handle)
-    call require_success(status, "apply local CUDA periodic boundaries")
+    status = c_nse_cuda_apply_local_boundary(context%handle)
+    call require_success(status, "apply local CUDA boundaries")
+  end subroutine nse_gpu_apply_local_boundary
+
+  subroutine nse_gpu_apply_local_periodic(context)
+    type(nse_gpu_context), intent(in) :: context
+
+    ! Backward-compatible API name. The runtime kernel now applies the
+    ! configured periodic/non-reflecting boundary on each physical face.
+    call nse_gpu_apply_local_boundary(context)
   end subroutine nse_gpu_apply_local_periodic
 
   integer function nse_gpu_halo_count(context, direction) result(count)

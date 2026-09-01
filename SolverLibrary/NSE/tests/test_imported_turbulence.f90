@@ -3,9 +3,12 @@ program test_imported_turbulence
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config, init_simulation_config, &
     update_derived_config
-  use mod_model_config, only : nse_config, init_nse_config
+  use mod_model_config, only : nse_config, init_nse_config, &
+    nse_face_x_min, nse_face_x_max
   use mod_init_imported_turbulence, only : &
     initialize_imported_turbulence, imported_turbulence_weight
+  use mod_init_shock_turbulence, only : initialize_shock_turbulence
+  use mod_nse_initial_conditions, only : initialize_nse_state
   implicit none
 
   character(len=*), parameter :: source_file = &
@@ -77,6 +80,118 @@ program test_imported_turbulence
     3.0_dp, nse%gamma, expected)
   call assert_vector_close(q(1,2,2,:), expected, &
     'decomposed y-z source selection')
+
+  nse%imported_turbulence_mode = 'embed'
+  nse%imported_turbulence_x_start = 4.0_dp
+  nse%imported_turbulence_velocity_offset_x = 0.0_dp
+  nse%imported_turbulence_background_rho = 1.0_dp
+  nse%imported_turbulence_background_u = 0.0_dp
+  nse%imported_turbulence_background_v = 0.0_dp
+  nse%imported_turbulence_background_w = 0.0_dp
+  nse%imported_turbulence_background_p = 1.0_dp/nse%gamma
+  nse%planar_shock_position = 2.0_dp
+  nse%planar_shock_direction = 'positive_x'
+  nse%planar_shock_upstream_rho = 1.0_dp
+  nse%planar_shock_upstream_u = 0.0_dp
+  nse%planar_shock_upstream_v = 0.0_dp
+  nse%planar_shock_upstream_w = 0.0_dp
+  nse%planar_shock_upstream_p = 1.0_dp/nse%gamma
+  nse%planar_shock_downstream_rho = 2.0_dp
+  nse%planar_shock_downstream_u = 0.75_dp
+  nse%planar_shock_downstream_v = 0.0_dp
+  nse%planar_shock_downstream_w = 0.0_dp
+  nse%planar_shock_downstream_p = 1.5_dp
+  nse%boundary_face_type = 'periodic'
+  nse%boundary_face_type(nse_face_x_min) = 'dirichlet'
+  nse%boundary_face_type(nse_face_x_max) = 'non_reflecting'
+  nse%boundary_condition = 'mixed'
+  nse%boundary_reference_rho(nse_face_x_min) = 2.0_dp
+  nse%boundary_reference_velocity(:,nse_face_x_min) = &
+    [0.75_dp,0.0_dp,0.0_dp]
+  nse%boundary_reference_p(nse_face_x_min) = 1.5_dp
+  q = -999.0_dp
+  call initialize_shock_turbulence(q, sim, nse, 2, 2, 2, 2)
+  call primitive_to_conserved(2.0_dp, 0.75_dp, 0.0_dp, 0.0_dp, &
+    1.5_dp, nse%gamma, expected)
+  call assert_vector_close(q(1,2,2,:), expected, &
+    'shock downstream region')
+  call assert_vector_close(q(2,2,2,:), expected, &
+    'shock downstream last cell')
+  call primitive_to_conserved(1.0_dp, 0.0_dp, 0.0_dp, 0.0_dp, &
+    1.0_dp/nse%gamma, nse%gamma, expected)
+  call assert_vector_close(q(3,2,2,:), expected, &
+    'shock upstream background gap')
+  call primitive_to_conserved(2.0_dp, 1.0_dp, 0.2_dp, 0.4_dp, &
+    3.0_dp, nse%gamma, expected)
+  call assert_vector_close(q(5,2,2,:), expected, &
+    'turbulence remains ahead of shock')
+
+  nse%imported_turbulence_x_start = 0.0_dp
+  nse%planar_shock_position = 6.0_dp
+  nse%planar_shock_direction = 'negative_x'
+  nse%planar_shock_downstream_u = -0.75_dp
+  nse%boundary_face_type(nse_face_x_min) = 'non_reflecting'
+  nse%boundary_face_type(nse_face_x_max) = 'dirichlet'
+  nse%boundary_reference_rho(nse_face_x_max) = 2.0_dp
+  nse%boundary_reference_velocity(:,nse_face_x_max) = &
+    [-0.75_dp,0.0_dp,0.0_dp]
+  nse%boundary_reference_p(nse_face_x_max) = 1.5_dp
+  q = -999.0_dp
+  call initialize_shock_turbulence(q, sim, nse, 2, 2, 2, 2)
+  call primitive_to_conserved(2.0_dp, -0.75_dp, 0.0_dp, 0.0_dp, &
+    1.5_dp, nse%gamma, expected)
+  call assert_vector_close(q(7,2,2,:), expected, &
+    'negative-x shock downstream first cell')
+  call assert_vector_close(q(8,2,2,:), expected, &
+    'negative-x shock downstream region')
+  call primitive_to_conserved(1.0_dp, 0.0_dp, 0.0_dp, 0.0_dp, &
+    1.0_dp/nse%gamma, nse%gamma, expected)
+  call assert_vector_close(q(5,2,2,:), expected, &
+    'negative-x shock upstream background gap')
+  call primitive_to_conserved(2.0_dp, 4.0_dp, 0.2_dp, 0.4_dp, &
+    3.0_dp, nse%gamma, expected)
+  call assert_vector_close(q(4,2,2,:), expected, &
+    'turbulence remains ahead of negative-x shock')
+
+  nse%imported_turbulence_x_start = 4.0_dp
+  nse%imported_turbulence_background_rho = 1.0_dp
+  nse%imported_turbulence_background_u = 0.0_dp
+  nse%imported_turbulence_background_v = 0.0_dp
+  nse%imported_turbulence_background_w = 0.0_dp
+  nse%imported_turbulence_background_p = 1.0_dp/nse%gamma
+  nse%shock_tube_diaphragm_position = 2.0_dp
+  nse%shock_tube_driver_rho = 1.0_dp
+  nse%shock_tube_driver_u = 0.0_dp
+  nse%shock_tube_driver_v = 0.0_dp
+  nse%shock_tube_driver_w = 0.0_dp
+  nse%shock_tube_driver_p = 5.0_dp/nse%gamma
+  nse%shock_tube_driven_rho = 1.0_dp
+  nse%shock_tube_driven_u = 0.0_dp
+  nse%shock_tube_driven_v = 0.0_dp
+  nse%shock_tube_driven_w = 0.0_dp
+  nse%shock_tube_driven_p = 1.0_dp/nse%gamma
+  nse%boundary_face_type(nse_face_x_min) = 'reflective'
+  nse%boundary_face_type(nse_face_x_max) = 'non_reflecting'
+  nse%boundary_reference_rho(nse_face_x_max) = 1.0_dp
+  nse%boundary_reference_velocity(:,nse_face_x_max) = 0.0_dp
+  nse%boundary_reference_p(nse_face_x_max) = 1.0_dp/nse%gamma
+  sim%initial_condition = 'shock_tube_turbulence_interaction'
+  q = -999.0_dp
+  call initialize_nse_state(q, sim, nse, 2, 2, 2, 2)
+  call primitive_to_conserved(1.0_dp, 0.0_dp, 0.0_dp, 0.0_dp, &
+    5.0_dp/nse%gamma, nse%gamma, expected)
+  call assert_vector_close(q(1,2,2,:), expected, &
+    'shock-tube driver first cell')
+  call assert_vector_close(q(2,2,2,:), expected, &
+    'shock-tube driver last cell')
+  call primitive_to_conserved(1.0_dp, 0.0_dp, 0.0_dp, 0.0_dp, &
+    1.0_dp/nse%gamma, nse%gamma, expected)
+  call assert_vector_close(q(3,2,2,:), expected, &
+    'shock-tube driven background gap')
+  call primitive_to_conserved(2.0_dp, 1.0_dp, 0.2_dp, 0.4_dp, &
+    3.0_dp, nse%gamma, expected)
+  call assert_vector_close(q(5,2,2,:), expected, &
+    'shock-tube turbulence remains in driven region')
 
   call assert_true(imported_turbulence_weight(1, 8, 2) > 0.0_dp, &
     'blend edge weight is positive')

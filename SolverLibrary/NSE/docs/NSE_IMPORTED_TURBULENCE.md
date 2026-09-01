@@ -276,8 +276,9 @@ flow:
 セル境界と一致しなければ実行を停止する。
 
 `file`の相対パスは`case.yaml`があるケースディレクトリを基準に解決される。
-入力生成時に実行環境ルートからの相対パスへ変換するため、上の例では
-`cases/caseNNNN/initial_data/turbulence.slf`がFortran namelistへ渡される。
+ソルバーも同じケースディレクトリを作業ディレクトリとして実行されるため、上の例では
+`initial_data/turbulence.slf`がFortran namelistへ渡される。ケースディレクトリ外の
+ファイルを指定した場合は、実行場所に依存しない絶対パスへ変換される。
 
 `blend_cells`は乱流ブロックの左右それぞれに設ける混合セル数である。混合係数
 `w`にはraised-cosineを使用し、保存変数を次式で混合する。
@@ -326,11 +327,34 @@ x周期境界をまたぐセル列も元データの周期性と一致する。`
 
 SLFは保存量を保持しているため、元計算と読込み先では同じ`gamma`と無次元化を使う。
 
-## 7. 周期境界に関する注意
+## 7. 境界条件
 
-現行NSEソルバーの物理境界条件はx、y、z全方向周期境界である。`embed`は長い周期箱の
-内部に乱流を初期配置する用途に対応する。入口から乱流を継続的に供給して出口へ流す
-用途ではなく、その場合は流入・流出境界条件を別途実装する必要がある。
+CPU/MPI/OpenMP版では、`embed`とx方向両端の特性無反射境界を組み合わせられる。
+背景状態と無反射境界の基準状態は同じ値にするのが基本である。
+
+```yaml
+boundary:
+  faces:
+    x_min: {type: non_reflecting, reference_state: background}
+    x_max: {type: non_reflecting, reference_state: background}
+    y_min: {type: periodic}
+    y_max: {type: periodic}
+    z_min: {type: periodic}
+    z_max: {type: periodic}
+  reference_states:
+    background:
+      density: 1.0
+      velocity: [0.5, 0.0, 0.0]
+      pressure: 0.7142857142857143
+  non_reflecting:
+    formulation: characteristic_relaxation
+    relaxation_strength: 0.1
+    length_scale: auto
+```
+
+これは初期配置した乱流塊を平均流で領域外へ通過させる用途であり、時間ごとに新しい
+乱流を入口から供給する合成乱流流入条件ではない。上のx無反射・y-z周期設定は
+CPU/MPI/OpenMP、単一GPU CUDA、MPI＋CUDAの全profileで使用できる。
 
 ## 8. 主なエラーメッセージ
 
@@ -342,3 +366,15 @@ SLFは保存量を保持しているため、元計算と読込み先では同�
 | `x_start must lie on a target cell boundary` | `x_min + n*dx`となる値を指定する。 |
 | `tile mode requires target nx ...` | 対象`nx`を元データ`nx`の整数倍にする。 |
 | `density/pressure is below small_*` | 元データ、gamma、無次元化を確認する。 |
+
+## 9. 保存乱流へ平面衝撃波を入射する場合
+
+`flow.type: shock_turbulence_interaction`を選ぶと、`embed`配置した乱流の外側に
+平面衝撃波を初期化できる。進行方向上流側のx面には衝撃波背後状態のDirichlet境界を
+設定する。初期データを作ったCPU/CUDA方式やMPIプロセス数と、干渉計算側の方式・
+プロセス数は一致させる必要がない。入力例、Rankine–Hugoniot関係、配置制約は
+[`NSE_SHOCK_TURBULENCE_INTERACTION.md`](NSE_SHOCK_TURBULENCE_INTERACTION.md)にまとめる。
+
+有限長の高圧室から衝撃波と膨張波を発生させる場合は
+`flow.type: shock_tube_turbulence_interaction`を選ぶ。配置と境界条件は
+[`NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md`](NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md)にまとめる。

@@ -142,6 +142,15 @@ modules:
       - mod_common_config
       - mod_model_config
 
+  mod_init_shock_turbulence:
+    path: src/init/mod_init_shock_turbulence.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_init_imported_turbulence
+
   mod_init_hit_spectral_stub:
     path: src/init/mod_init_hit_spectral_stub.f90
     role: library
@@ -183,9 +192,20 @@ modules:
       - mod_model_config
       - mod_init_taylor_green
       - mod_init_imported_turbulence
+      - mod_init_shock_turbulence
+      - mod_init_shock_tube_turbulence
+
+  mod_init_shock_tube_turbulence:
+    path: src/init/mod_init_shock_tube_turbulence.f90
+    role: library
+    requires:
+      - mod_precision
+      - mod_common_config
+      - mod_model_config
+      - mod_init_imported_turbulence
 
   mod_nse_boundary:
-    path: src/boundary/mod_boundary_periodic.f90
+    path: src/boundary/mod_boundary_runtime.f90
     role: library
     requires:
       - mod_precision
@@ -309,6 +329,7 @@ modules:
       - mod_precision
       - mod_common_config
       - mod_model_config
+      - mod_nse_boundary
       - mod_nse_forcing_common
     features:
       - cuda
@@ -318,6 +339,7 @@ modules:
     role: library
     requires:
       - mod_precision
+      - mod_model_config
       - mod_nse_gpu
       - module_mpi
     features:

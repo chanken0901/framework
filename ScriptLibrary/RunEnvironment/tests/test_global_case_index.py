@@ -6,12 +6,15 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from global_case_index import (  # noqa: E402
+    GlobalCaseIndexError,
+    _write_index,
     rebuild_case_index,
     sync_case_document,
 )
@@ -37,6 +40,20 @@ def _case(case_id: str, model: str, profile: str, nx: int) -> dict:
 
 
 class GlobalCaseIndexTests(unittest.TestCase):
+    def test_locked_windows_index_reports_actionable_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            index = Path(temporary) / "case_index.csv"
+            with patch.object(
+                Path,
+                "replace",
+                side_effect=PermissionError(5, "Access is denied"),
+            ):
+                with self.assertRaisesRegex(
+                    GlobalCaseIndexError,
+                    "Close Excel",
+                ):
+                    _write_index(index, [], replace_timeout_seconds=0.0)
+
     def test_sync_lists_multiple_cases_and_updates_conditions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

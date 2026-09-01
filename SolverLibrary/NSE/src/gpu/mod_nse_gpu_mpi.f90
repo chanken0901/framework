@@ -1,10 +1,12 @@
 module mod_nse_gpu_mpi
   use mod_precision, only : dp
-  use mod_nse_gpu, only : nse_gpu_context, nse_gpu_apply_local_periodic, &
+  use mod_model_config, only : nse_config, nse_face_y_min, nse_face_z_min
+  use mod_nse_gpu, only : nse_gpu_context, nse_gpu_apply_local_boundary, &
     nse_gpu_halo_count, nse_gpu_pack_halo, nse_gpu_unpack_halo, &
     nse_gpu_halo_y, nse_gpu_halo_z, nse_gpu_halo_low, nse_gpu_halo_high
   use module_mpi, only : ndiv_ny, ndiv_nz, j_myrank, k_myrank, itable, &
-    mp_sendrecv_r8, MPI_COMM_WORLD, MPI_DOUBLE_PRECISION, MPI_STATUS_SIZE
+    mp_sendrecv_r8, MPI_COMM_WORLD, MPI_DOUBLE_PRECISION, MPI_STATUS_SIZE, &
+    MPI_PROC_NULL
   implicit none
   private
 
@@ -17,6 +19,8 @@ module mod_nse_gpu_mpi
     private
     integer :: y_count = 0
     integer :: z_count = 0
+    logical :: periodic_y = .true.
+    logical :: periodic_z = .true.
     real(dp), allocatable :: send_low(:)
     real(dp), allocatable :: send_high(:)
     real(dp), allocatable :: recv_low(:)
@@ -29,9 +33,10 @@ module mod_nse_gpu_mpi
 
 contains
 
-  subroutine nse_gpu_mpi_halo_initialize(halo, context)
+  subroutine nse_gpu_mpi_halo_initialize(halo, context, nse)
     type(nse_gpu_mpi_halo), intent(inout) :: halo
     type(nse_gpu_context), intent(in) :: context
+    type(nse_config), intent(in) :: nse
     integer :: max_count
 
     if (allocated(halo%send_low)) then
@@ -39,6 +44,10 @@ contains
     end if
     halo%y_count = 0
     halo%z_count = 0
+    halo%periodic_y = &
+      trim(adjustl(nse%boundary_face_type(nse_face_y_min))) == 'periodic'
+    halo%periodic_z = &
+      trim(adjustl(nse%boundary_face_type(nse_face_z_min))) == 'periodic'
     if (ndiv_ny > 1) halo%y_count = nse_gpu_halo_count(context, nse_gpu_halo_y)
     if (ndiv_nz > 1) halo%z_count = nse_gpu_halo_count(context, nse_gpu_halo_z)
     max_count = max(halo%y_count, halo%z_count)
@@ -57,9 +66,10 @@ contains
       error stop 'NSE MPI+CUDA halo workspace is not initialized'
     end if
 
-    ! X and every non-decomposed direction are periodic locally.  Y is
-    ! exchanged before Z so the Z slabs carry valid X-Y edges and Y-Z corners.
-    call nse_gpu_apply_local_periodic(context)
+    ! Physical periodic/non-reflecting/reflective faces and every
+    ! non-decomposed direction are completed on the GPU. Y is exchanged before
+    ! Z so the Z slabs carry valid X-Y edges and Y-Z corners.
+    call nse_gpu_apply_local_boundary(context)
     if (ndiv_ny > 1) call exchange_y(halo, context)
     if (ndiv_nz > 1) call exchange_z(halo, context)
   end subroutine nse_gpu_mpi_exchange
@@ -70,8 +80,13 @@ contains
     integer :: rank_low, rank_high, ierr
     integer :: status(MPI_STATUS_SIZE)
 
-    rank_low = itable(modulo(j_myrank-1, ndiv_ny), k_myrank)
-    rank_high = itable(modulo(j_myrank+1, ndiv_ny), k_myrank)
+    if (halo%periodic_y) then
+      rank_low = itable(modulo(j_myrank-1, ndiv_ny), k_myrank)
+      rank_high = itable(modulo(j_myrank+1, ndiv_ny), k_myrank)
+    else
+      rank_low = itable(j_myrank-1, k_myrank)
+      rank_high = itable(j_myrank+1, k_myrank)
+    end if
     call nse_gpu_pack_halo(context, nse_gpu_halo_y, nse_gpu_halo_low, &
       halo%send_low(1:halo%y_count))
     call nse_gpu_pack_halo(context, nse_gpu_halo_y, nse_gpu_halo_high, &
@@ -86,10 +101,14 @@ contains
       MPI_DOUBLE_PRECISION, rank_low, tag_y_high, MPI_COMM_WORLD, status, ierr)
     if (ierr /= 0) error stop 'MPI+CUDA Y-high/Y-low halo exchange failed'
 
-    call nse_gpu_unpack_halo(context, nse_gpu_halo_y, nse_gpu_halo_high, &
-      halo%recv_high(1:halo%y_count))
-    call nse_gpu_unpack_halo(context, nse_gpu_halo_y, nse_gpu_halo_low, &
-      halo%recv_low(1:halo%y_count))
+    if (rank_high /= MPI_PROC_NULL) then
+      call nse_gpu_unpack_halo(context, nse_gpu_halo_y, nse_gpu_halo_high, &
+        halo%recv_high(1:halo%y_count))
+    end if
+    if (rank_low /= MPI_PROC_NULL) then
+      call nse_gpu_unpack_halo(context, nse_gpu_halo_y, nse_gpu_halo_low, &
+        halo%recv_low(1:halo%y_count))
+    end if
   end subroutine exchange_y
 
   subroutine exchange_z(halo, context)
@@ -98,8 +117,13 @@ contains
     integer :: rank_low, rank_high, ierr
     integer :: status(MPI_STATUS_SIZE)
 
-    rank_low = itable(j_myrank, modulo(k_myrank-1, ndiv_nz))
-    rank_high = itable(j_myrank, modulo(k_myrank+1, ndiv_nz))
+    if (halo%periodic_z) then
+      rank_low = itable(j_myrank, modulo(k_myrank-1, ndiv_nz))
+      rank_high = itable(j_myrank, modulo(k_myrank+1, ndiv_nz))
+    else
+      rank_low = itable(j_myrank, k_myrank-1)
+      rank_high = itable(j_myrank, k_myrank+1)
+    end if
     call nse_gpu_pack_halo(context, nse_gpu_halo_z, nse_gpu_halo_low, &
       halo%send_low(1:halo%z_count))
     call nse_gpu_pack_halo(context, nse_gpu_halo_z, nse_gpu_halo_high, &
@@ -114,10 +138,14 @@ contains
       MPI_DOUBLE_PRECISION, rank_low, tag_z_high, MPI_COMM_WORLD, status, ierr)
     if (ierr /= 0) error stop 'MPI+CUDA Z-high/Z-low halo exchange failed'
 
-    call nse_gpu_unpack_halo(context, nse_gpu_halo_z, nse_gpu_halo_high, &
-      halo%recv_high(1:halo%z_count))
-    call nse_gpu_unpack_halo(context, nse_gpu_halo_z, nse_gpu_halo_low, &
-      halo%recv_low(1:halo%z_count))
+    if (rank_high /= MPI_PROC_NULL) then
+      call nse_gpu_unpack_halo(context, nse_gpu_halo_z, nse_gpu_halo_high, &
+        halo%recv_high(1:halo%z_count))
+    end if
+    if (rank_low /= MPI_PROC_NULL) then
+      call nse_gpu_unpack_halo(context, nse_gpu_halo_z, nse_gpu_halo_low, &
+        halo%recv_low(1:halo%z_count))
+    end if
   end subroutine exchange_z
 
   subroutine nse_gpu_mpi_halo_finalize(halo)
@@ -129,6 +157,8 @@ contains
     if (allocated(halo%recv_high)) deallocate(halo%recv_high)
     halo%y_count = 0
     halo%z_count = 0
+    halo%periodic_y = .true.
+    halo%periodic_z = .true.
   end subroutine nse_gpu_mpi_halo_finalize
 
 end module mod_nse_gpu_mpi

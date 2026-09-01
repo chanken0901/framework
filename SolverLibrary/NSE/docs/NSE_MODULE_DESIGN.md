@@ -2,6 +2,8 @@
 
 実装済みのKEEP/WENOハイブリッド流束と、ハイブリッド／非ハイブリッドの
 入力設定は[`NSE_HYBRID_FLUX.md`](NSE_HYBRID_FLUX.md)に定義する。
+面別周期／無反射／鏡像境界の仕様は
+[`NSE_BOUNDARY_CONDITIONS.md`](NSE_BOUNDARY_CONDITIONS.md)に定義する。
 
 ## 目的
 
@@ -45,7 +47,10 @@ mainは計算手順だけを制御し、流束式、初期条件式、境界処�
 | Taylor–Green | `src/init/mod_init_taylor_green.f90` | `initialize_taylor_green` |
 | 分散FFT HIT | `src/init/mod_init_hit_spectral_2decomp.f90` | `initialize_hit_spectral` |
 | 保存乱流場 | `src/init/mod_init_imported_turbulence.f90` | 可搬SLFの`embed`/`tile`配置 |
-| 周期境界 | `src/boundary/mod_boundary_periodic.f90` | `apply_nse_boundary`ほか |
+| 平面衝撃波–乱流 | `src/init/mod_init_shock_turbulence.f90` | 形成済み衝撃波とDirichletドライバーの配置 |
+| 有限高圧室–乱流 | `src/init/mod_init_shock_tube_turbulence.f90` | 隔膜、高圧室、低圧域、局所乱流の配置 |
+| CPU面別境界 | `src/boundary/mod_boundary_runtime.f90` | 周期／特性無反射／鏡像／Dirichletの実行時dispatch |
+| CUDA面別境界 | `src/gpu/mod_nse_gpu_cuda.f90`、`nse_cuda_bridge.cu` | GPU上の周期／特性無反射／鏡像／Dirichlet ghost処理 |
 | 対流項ディスパッチ | `src/numerics/convective/mod_convective_dispatch.f90` | 単一方式とハイブリッドの実行時選択 |
 | KEEP流束 | `src/numerics/convective/mod_convective_keep.f90` | 2次・6次精度KEEP |
 | WENO-Z再構築 | `src/numerics/reconstruction/mod_reconstruction_weno5z.f90` | 左右5次精度再構築 |
@@ -99,7 +104,8 @@ viscous_dt_limit
 
 ### 境界条件
 
-Fortranモジュール名は`mod_nse_boundary`とし、次を公開する。
+現行の周期境界backendと、将来の面別runtime dispatcherは、上位層に対して
+Fortranモジュール名`mod_nse_boundary`と次のAPIを維持する。
 
 ```fortran
 apply_nse_boundary
@@ -107,6 +113,11 @@ validate_boundary_scheme
 boundary_required_ghost_cells
 boundary_scheme_name
 ```
+
+面別境界の実装後、`apply_nse_boundary`は6面の設定を実行時に選択し、一回の呼出しで
+MPI内部halo、物理面、辺、角を完成させる。`boundary_scheme_name`は個々の面種別ではなく
+コンパイル済みdispatcher backend名`runtime`を返す。`validate_boundary_scheme`は
+6面の組合せ、周期面の対、基準状態、実行profileとの互換性を検証する。
 
 ## 対流スキームを追加する手順
 
@@ -136,20 +147,36 @@ KEEP/WENOハイブリッドではDucros-pressureセンサーを独立させ、�
 
 ## 境界条件を追加する手順
 
-1. `src/boundary/mod_boundary_<name>.f90`を追加する。
-2. `mod_nse_boundary`の公開APIをすべて実装する。
-3. 物理境界とMPI内部境界を区別し、ゴーストセルを一度のAPI呼び出しで完成させる。
-4. CMake、マニフェスト、モジュールカタログへ候補を登録する。
-5. 保存量、反射条件、MPI分割位置に関する単体・並列テストを追加する。
+面ごとの組合せを可能にするため、境界条件ごとに同名の`mod_nse_boundary`を交換する
+従来方式から、1つのdispatcherへ複数の一次元面演算子を登録する方式へ移行する。
+
+1. `src/boundary/operators/mod_boundary_<name>.f90`へ、一つの法線方向と面向きを受け取る
+   境界演算子を追加する。
+2. `mod_nse_boundary`のdispatcherへ入力名、検証、CPU呼出し先を登録する。
+3. 物理境界とMPI内部境界を区別し、ghostセルを一度のAPI呼出しで完成させる。
+4. x→y→zの演算子合成順を守り、混合境界の辺・角を完成させる。
+5. CUDA対応では同じ演算子のdevice実装を追加し、CPUへ暗黙fallbackしない。
+6. CMake、マニフェスト、モジュールカタログの境界backendを`runtime`へ更新する。
+7. 一様場、保存量、反射率、辺・角、MPI分割位置、CPU/CUDA一致テストを追加する。
+
+個別方式を追加するたびに新しい`mod_nse_boundary`を作ってコンパイル時に一つだけ選ぶ
+設計へ戻してはならない。面別設定の正規入力と無反射／鏡像境界の数値契約は
+`NSE_BOUNDARY_CONDITIONS.md`に従う。
 
 ## 入力とビルドの選択
 
-入力`/nse/`では次を指定する。
+生成後のFortran入力`/nse/`では、対流・粘性方式に加えて6面の境界種別と
+無反射面の具体的な基準状態を指定する。
 
 ```fortran
 convective_scheme = 'weno5z_roe'
 viscous_scheme = 'central6'
-boundary_condition = 'periodic'
+boundary_x_min = 'non_reflecting'
+boundary_x_max = 'non_reflecting'
+boundary_y_min = 'periodic'
+boundary_y_max = 'periodic'
+boundary_z_min = 'periodic'
+boundary_z_max = 'periodic'
 time_integrator = 'ssprk3'
 ```
 
@@ -164,14 +191,31 @@ CMakeでは対応するバックエンドを選択する。
 cmake -S . -B build `
   -DNSE_CONVECTIVE_BACKEND=runtime `
   -DNSE_VISCOUS_SCHEME=central6 `
-  -DNSE_BOUNDARY_SCHEME=periodic
+  -DNSE_BOUNDARY_SCHEME=runtime
 ```
 
 入力とコンパイル済みバックエンドが一致しない場合、実行開始時に停止する。
 
+case YAMLの`boundary.faces`と`reference_states`を
+`case_input.py`が検証し、名前付き基準状態を各面の具体的な密度、速度、圧力へ解決して
+Fortran入力へ渡す。Fortran側は面ごとの種別・密度・速度・圧力配列として保持し、YAMLの名前解決を
+重複実装しない。ビルド時の境界backendは次へ統一する。
+
+```powershell
+cmake -S . -B build `
+  -DNSE_CONVECTIVE_BACKEND=runtime `
+  -DNSE_VISCOUS_SCHEME=central6 `
+  -DNSE_BOUNDARY_SCHEME=runtime
+```
+
+移行期間は旧`boundary_condition = 'periodic'`を6面周期へ展開する。面別指定と旧指定の
+同時使用は入力エラーとし、暗黙の優先順位を設けない。CPUおよびCUDA profileはともに
+`runtime` backendを使い、実行時に6面の設定を解決する。
+
 ## 現段階の制約
 
-- 旧MPIハロー交換との互換性により、周期境界は`nghost = 3`、`nv = 5`を要求する。
+- 旧MPIハロー交換との互換性により、面別境界は`nghost = 3`、`nv = 5`を要求する。
+- 面別周期／無反射／鏡像／Dirichlet境界はCPU/MPI/OpenMP、単一GPU CUDA、MPI＋CUDA版で利用できる。
 - `viscous_scheme = 'central6'`は一定粘性係数、Stokesの仮定、Fourier熱伝導を用いる。`reynolds_number`と`prandtl_number`は粘性・熱伝導項へ反映される。
 - `viscous_scheme = 'none'`を選ぶと、同じ実行プロファイルで非粘性計算を行える。
 - `central6`は3層のghostセルを必要とし、CPU/MPI/OpenMP版、単一GPU CUDA版、MPI＋CUDA版で利用できる。
@@ -179,6 +223,8 @@ cmake -S . -B build `
 - `default`は互換性のためTaylor–Greenへ対応付けている。
 - `hit_spectral`は2DECOMP&FFT版を選んだMPIビルドで利用できる。
 - `imported_turbulence`は通常CPU版、2DECOMP&FFT版、単一GPU版、MPI＋CUDA版で利用できる。入力SLFの作成方法は`NSE_IMPORTED_TURBULENCE.md`に従う。
+- `shock_turbulence_interaction`は`imported_turbulence`を再利用し、`mod_init_shock_turbulence`が平面衝撃波の配置とDirichlet駆動面の整合性を検査する。
+- `shock_tube_turbulence_interaction`は同じ可搬SLF読込みを再利用し、`mod_init_shock_tube_turbulence`が有限高圧室、鏡像閉端、低圧無反射端の整合性を検査する。
 - WENO5-Z/RoeはCPU版、単一GPU CUDA版、MPI＋CUDA版で利用できる。positivity-preserving limiterは未実装である。
 - MPI＋CUDA時間発展のhalo通信はCUDA-aware MPIを要求しないhost staging方式である。`cuda_mpi_cufftmp`では、同じY-Z分割をcuFFTMpへ渡して分散HIT初期化とFFT forcingを実行する。
 - SSPRK3とCFL時間刻みのみを実装している。

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import copy
+import io
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
@@ -15,7 +18,9 @@ from run_case import (  # noqa: E402
     _case_parallel_settings,
     _prepare_input,
     _select_case_profile,
+    _sync_global_case_index,
 )
+from global_case_index import GlobalCaseIndexError  # noqa: E402
 from yaml_support import load_yaml  # noqa: E402
 
 
@@ -120,6 +125,24 @@ class RunCaseProfileSelectionTests(unittest.TestCase):
 
 
 class RunCasePrepareTests(unittest.TestCase):
+    def test_locked_global_index_does_not_block_case_preparation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            errors = io.StringIO()
+            with patch(
+                "run_case.sync_environment_case",
+                side_effect=GlobalCaseIndexError("case_index.csv is locked"),
+            ), redirect_stderr(errors):
+                index = _sync_global_case_index(
+                    root,
+                    {"case_index_path": "../case_index.csv"},
+                    dry_run=False,
+                )
+
+            self.assertEqual(index, (root / "../case_index.csv").resolve())
+            self.assertIn("[WARNING]", errors.getvalue())
+            self.assertIn("Continuing", errors.getvalue())
+
     def test_prepare_uses_lock_model_and_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

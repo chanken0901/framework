@@ -26,10 +26,12 @@ module mod_init_imported_turbulence
 
 contains
 
-  subroutine initialize_imported_turbulence(q, sim, nse, js, je, ks, ke)
+  subroutine initialize_imported_turbulence(q, sim, nse, js, je, ks, ke, &
+      embedded_first_i, embedded_last_i)
     type(simulation_config), intent(in) :: sim
     type(nse_config), intent(in) :: nse
     integer, intent(in) :: js, je, ks, ke
+    integer, intent(out), optional :: embedded_first_i, embedded_last_i
     real(dp), intent(inout) :: q(1-sim%nghost:, &
       js-sim%nghost:, ks-sim%nghost:, :)
 
@@ -100,6 +102,8 @@ contains
         trim(mode)
       error stop 'unsupported imported turbulence mode'
     end select
+    if (present(embedded_first_i)) embedded_first_i = first_i
+    if (present(embedded_last_i)) embedded_last_i = last_i
 
     background_rho = nse%imported_turbulence_background_rho
     if (background_rho <= 0.0_dp) background_rho = nse%rho0

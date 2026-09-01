@@ -72,6 +72,44 @@ NSE_KEYS = (
     "hybrid_sensor_full",
     "viscous_scheme",
     "boundary_condition",
+    "boundary_x_min",
+    "boundary_x_max",
+    "boundary_y_min",
+    "boundary_y_max",
+    "boundary_z_min",
+    "boundary_z_max",
+    "boundary_x_min_reference_rho",
+    "boundary_x_min_reference_u",
+    "boundary_x_min_reference_v",
+    "boundary_x_min_reference_w",
+    "boundary_x_min_reference_p",
+    "boundary_x_max_reference_rho",
+    "boundary_x_max_reference_u",
+    "boundary_x_max_reference_v",
+    "boundary_x_max_reference_w",
+    "boundary_x_max_reference_p",
+    "boundary_y_min_reference_rho",
+    "boundary_y_min_reference_u",
+    "boundary_y_min_reference_v",
+    "boundary_y_min_reference_w",
+    "boundary_y_min_reference_p",
+    "boundary_y_max_reference_rho",
+    "boundary_y_max_reference_u",
+    "boundary_y_max_reference_v",
+    "boundary_y_max_reference_w",
+    "boundary_y_max_reference_p",
+    "boundary_z_min_reference_rho",
+    "boundary_z_min_reference_u",
+    "boundary_z_min_reference_v",
+    "boundary_z_min_reference_w",
+    "boundary_z_min_reference_p",
+    "boundary_z_max_reference_rho",
+    "boundary_z_max_reference_u",
+    "boundary_z_max_reference_v",
+    "boundary_z_max_reference_w",
+    "boundary_z_max_reference_p",
+    "boundary_relaxation_strength",
+    "boundary_length_scale",
     "time_integrator",
     "hit_spectrum",
     "hit_seed",
@@ -104,6 +142,30 @@ NSE_KEYS = (
     "imported_turbulence_background_v",
     "imported_turbulence_background_w",
     "imported_turbulence_background_p",
+    "planar_shock_position",
+    "planar_shock_direction",
+    "planar_shock_mach",
+    "planar_shock_upstream_rho",
+    "planar_shock_upstream_u",
+    "planar_shock_upstream_v",
+    "planar_shock_upstream_w",
+    "planar_shock_upstream_p",
+    "planar_shock_downstream_rho",
+    "planar_shock_downstream_u",
+    "planar_shock_downstream_v",
+    "planar_shock_downstream_w",
+    "planar_shock_downstream_p",
+    "shock_tube_diaphragm_position",
+    "shock_tube_driver_rho",
+    "shock_tube_driver_u",
+    "shock_tube_driver_v",
+    "shock_tube_driver_w",
+    "shock_tube_driver_p",
+    "shock_tube_driven_rho",
+    "shock_tube_driven_u",
+    "shock_tube_driven_v",
+    "shock_tube_driven_w",
+    "shock_tube_driven_p",
     "forcing_scheme",
     "forcing_spectrum",
     "forcing_fft_backend",
@@ -120,6 +182,15 @@ NSE_ALIASES = {
     "reynolds_number": "reynolds",
     "prandtl_number": "prandtl",
 }
+
+NSE_BOUNDARY_FACES = (
+    "x_min",
+    "x_max",
+    "y_min",
+    "y_max",
+    "z_min",
+    "z_max",
+)
 
 NSE_HIT_SPECTRUM_SCHEMAS: dict[str, dict[str, Any]] = {
     "johnsen": {
@@ -526,11 +597,259 @@ def _resolve_nse_hit(case: dict[str, Any]) -> dict[str, Any]:
     return values
 
 
+def _nse_primitive_state(
+    raw: Any, label: str
+) -> tuple[float, tuple[float, float, float], float]:
+    state = _mapping(raw, label)
+    allowed = {"density", "velocity", "pressure"}
+    unknown = sorted(set(state) - allowed)
+    if unknown:
+        raise CaseInputError(f"unknown {label} key(s): " + ", ".join(unknown))
+    missing = sorted(allowed - set(state))
+    if missing:
+        raise CaseInputError(f"{label} is missing: " + ", ".join(missing))
+    return (
+        _positive_float(state["density"], f"{label}.density"),
+        _vector3(state["velocity"], f"{label}.velocity"),
+        _positive_float(state["pressure"], f"{label}.pressure"),
+    )
+
+
+def _resolve_nse_planar_shock(
+    case: dict[str, Any],
+) -> tuple[
+    dict[str, Any],
+    dict[str, tuple[float, tuple[float, float, float], float]],
+]:
+    flow_type = _canonical_selector(str(nested(case, "flow.type", "")))
+    aliases = {
+        "shock_turbulence_interaction",
+        "planar_shock_turbulence",
+        "shock_turbulence",
+    }
+    if flow_type not in aliases:
+        return {}, {}
+
+    shock = _mapping(
+        nested(case, "flow.planar_shock", {}), "flow.planar_shock"
+    )
+    allowed = {
+        "position",
+        "propagation_direction",
+        "upstream",
+        "mach_number",
+        "downstream",
+    }
+    unknown = sorted(set(shock) - allowed)
+    if unknown:
+        raise CaseInputError(
+            "unknown flow.planar_shock key(s): " + ", ".join(unknown)
+        )
+
+    position = _finite_float(
+        shock.get("position"), "flow.planar_shock.position"
+    )
+    x_min = _finite_float(_required(case, "grid.x_min"), "grid.x_min")
+    x_max = _finite_float(_required(case, "grid.x_max"), "grid.x_max")
+    nx = _required(case, "grid.nx")
+    if not isinstance(nx, int) or isinstance(nx, bool) or nx <= 0:
+        raise CaseInputError("grid.nx must be a positive integer")
+    if not x_min < position < x_max:
+        raise CaseInputError(
+            "flow.planar_shock.position must lie strictly inside the x domain"
+        )
+    dx = (x_max - x_min) / nx
+    face_index = round((position - x_min) / dx)
+    aligned_position = x_min + face_index * dx
+    if not math.isclose(position, aligned_position, rel_tol=1.0e-10, abs_tol=1.0e-12):
+        raise CaseInputError(
+            "flow.planar_shock.position must lie on a target x-cell boundary"
+        )
+
+    direction = _canonical_selector(
+        str(shock.get("propagation_direction", "positive_x"))
+    )
+    direction = {
+        "positive": "positive_x",
+        "plus_x": "positive_x",
+        "x_plus": "positive_x",
+        "negative": "negative_x",
+        "minus_x": "negative_x",
+        "x_minus": "negative_x",
+    }.get(direction, direction)
+    if direction not in {"positive_x", "negative_x"}:
+        raise CaseInputError(
+            "flow.planar_shock.propagation_direction must be POSITIVE_X "
+            "or NEGATIVE_X"
+        )
+
+    upstream = _nse_primitive_state(
+        shock.get("upstream", {}), "flow.planar_shock.upstream"
+    )
+    mach_value = shock.get("mach_number")
+    downstream_value = shock.get("downstream")
+    has_mach = mach_value is not None and mach_value != ""
+    has_downstream = downstream_value is not None and downstream_value != ""
+    if has_mach == has_downstream:
+        raise CaseInputError(
+            "flow.planar_shock must specify exactly one of mach_number or downstream"
+        )
+
+    gamma = _positive_float(
+        nested(case, "physics.nse.gamma", 1.4), "physics.nse.gamma"
+    )
+    if gamma <= 1.0:
+        raise CaseInputError("physics.nse.gamma must be greater than 1")
+    shock_mach = -1.0
+    if has_downstream:
+        downstream = _nse_primitive_state(
+            shock["downstream"], "flow.planar_shock.downstream"
+        )
+    else:
+        shock_mach = _positive_float(
+            shock["mach_number"], "flow.planar_shock.mach_number"
+        )
+        if shock_mach <= 1.0:
+            raise CaseInputError(
+                "flow.planar_shock.mach_number must be greater than 1"
+            )
+        rho1, velocity1, pressure1 = upstream
+        mach2 = shock_mach * shock_mach
+        density_ratio = (
+            (gamma + 1.0) * mach2
+            / ((gamma - 1.0) * mach2 + 2.0)
+        )
+        pressure_ratio = 1.0 + (
+            2.0 * gamma / (gamma + 1.0) * (mach2 - 1.0)
+        )
+        sound1 = math.sqrt(gamma * pressure1 / rho1)
+        sign = 1.0 if direction == "positive_x" else -1.0
+        velocity2 = list(velocity1)
+        velocity2[0] += (
+            sign * shock_mach * sound1 * (1.0 - 1.0 / density_ratio)
+        )
+        downstream = (
+            rho1 * density_ratio,
+            (velocity2[0], velocity2[1], velocity2[2]),
+            pressure1 * pressure_ratio,
+        )
+
+    rho1, velocity1, pressure1 = upstream
+    rho2, velocity2, pressure2 = downstream
+    values = {
+        "planar_shock_position": aligned_position,
+        "planar_shock_direction": direction,
+        "planar_shock_mach": shock_mach,
+        "planar_shock_upstream_rho": rho1,
+        "planar_shock_upstream_u": velocity1[0],
+        "planar_shock_upstream_v": velocity1[1],
+        "planar_shock_upstream_w": velocity1[2],
+        "planar_shock_upstream_p": pressure1,
+        "planar_shock_downstream_rho": rho2,
+        "planar_shock_downstream_u": velocity2[0],
+        "planar_shock_downstream_v": velocity2[1],
+        "planar_shock_downstream_w": velocity2[2],
+        "planar_shock_downstream_p": pressure2,
+    }
+    states = {
+        "planar_shock.upstream": upstream,
+        "planar_shock.downstream": downstream,
+    }
+    return values, states
+
+
+def _resolve_nse_shock_tube(
+    case: dict[str, Any],
+) -> tuple[
+    dict[str, Any],
+    dict[str, tuple[float, tuple[float, float, float], float]],
+]:
+    flow_type = _canonical_selector(str(nested(case, "flow.type", "")))
+    aliases = {
+        "shock_tube_turbulence_interaction",
+        "shock_tube_turbulence",
+        "finite_driver_shock_turbulence",
+    }
+    if flow_type not in aliases:
+        return {}, {}
+
+    tube = _mapping(nested(case, "flow.shock_tube", {}), "flow.shock_tube")
+    allowed = {"diaphragm_position", "driver", "driven"}
+    unknown = sorted(set(tube) - allowed)
+    if unknown:
+        raise CaseInputError(
+            "unknown flow.shock_tube key(s): " + ", ".join(unknown)
+        )
+
+    position = _finite_float(
+        tube.get("diaphragm_position"), "flow.shock_tube.diaphragm_position"
+    )
+    x_min = _finite_float(_required(case, "grid.x_min"), "grid.x_min")
+    x_max = _finite_float(_required(case, "grid.x_max"), "grid.x_max")
+    nx = _required(case, "grid.nx")
+    if not isinstance(nx, int) or isinstance(nx, bool) or nx <= 0:
+        raise CaseInputError("grid.nx must be a positive integer")
+    if not x_min < position < x_max:
+        raise CaseInputError(
+            "flow.shock_tube.diaphragm_position must lie strictly inside "
+            "the x domain"
+        )
+    dx = (x_max - x_min) / nx
+    face_index = round((position - x_min) / dx)
+    aligned_position = x_min + face_index * dx
+    if not math.isclose(position, aligned_position, rel_tol=1.0e-10, abs_tol=1.0e-12):
+        raise CaseInputError(
+            "flow.shock_tube.diaphragm_position must lie on a target "
+            "x-cell boundary"
+        )
+
+    driver = _nse_primitive_state(
+        tube.get("driver", {}), "flow.shock_tube.driver"
+    )
+    driven = _nse_primitive_state(
+        tube.get("driven", {}), "flow.shock_tube.driven"
+    )
+    if driver[2] <= driven[2]:
+        raise CaseInputError(
+            "flow.shock_tube.driver.pressure must be greater than "
+            "flow.shock_tube.driven.pressure"
+        )
+    if not math.isclose(driver[1][0], 0.0, rel_tol=0.0, abs_tol=1.0e-14):
+        raise CaseInputError(
+            "flow.shock_tube.driver.velocity x component must be zero at "
+            "the reflective closed end"
+        )
+
+    rho4, velocity4, pressure4 = driver
+    rho1, velocity1, pressure1 = driven
+    values = {
+        "shock_tube_diaphragm_position": aligned_position,
+        "shock_tube_driver_rho": rho4,
+        "shock_tube_driver_u": velocity4[0],
+        "shock_tube_driver_v": velocity4[1],
+        "shock_tube_driver_w": velocity4[2],
+        "shock_tube_driver_p": pressure4,
+        "shock_tube_driven_rho": rho1,
+        "shock_tube_driven_u": velocity1[0],
+        "shock_tube_driven_v": velocity1[1],
+        "shock_tube_driven_w": velocity1[2],
+        "shock_tube_driven_p": pressure1,
+    }
+    states = {
+        "shock_tube.driver": driver,
+        "shock_tube.driven": driven,
+    }
+    return values, states
+
+
 def _resolve_nse_imported_turbulence(
     case: dict[str, Any],
     *,
     case_dir: Path | None = None,
     runtime_root: Path | None = None,
+    shock_states: dict[
+        str, tuple[float, tuple[float, float, float], float]
+    ] | None = None,
 ) -> dict[str, Any]:
     flow_type = _canonical_selector(str(nested(case, "flow.type", "")))
     aliases = {
@@ -538,6 +857,12 @@ def _resolve_nse_imported_turbulence(
         "turbulence_import",
         "turbulence_embed",
         "turbulence_tile",
+        "shock_turbulence_interaction",
+        "planar_shock_turbulence",
+        "shock_turbulence",
+        "shock_tube_turbulence_interaction",
+        "shock_tube_turbulence",
+        "finite_driver_shock_turbulence",
     }
     if flow_type not in aliases:
         return {}
@@ -564,6 +889,17 @@ def _resolve_nse_imported_turbulence(
     if not isinstance(source_file, str) or not source_file.strip():
         raise CaseInputError("flow.imported_turbulence.file is required")
 
+    planar_shock_interaction = flow_type in {
+        "shock_turbulence_interaction",
+        "planar_shock_turbulence",
+        "shock_turbulence",
+    }
+    shock_tube_interaction = flow_type in {
+        "shock_tube_turbulence_interaction",
+        "shock_tube_turbulence",
+        "finite_driver_shock_turbulence",
+    }
+    shock_interaction = planar_shock_interaction or shock_tube_interaction
     implied_mode = "tile" if flow_type == "turbulence_tile" else "embed"
     mode = _canonical_selector(str(imported.get("mode", implied_mode)))
     if mode not in {"embed", "tile"}:
@@ -584,9 +920,35 @@ def _resolve_nse_imported_turbulence(
         raise CaseInputError(
             "flow.imported_turbulence tile mode requires blend_cells: 0"
         )
+    if shock_interaction and mode != "embed":
+        raise CaseInputError(
+            "shock-turbulence interaction requires imported_turbulence.mode=EMBED"
+        )
+
+    background_reference = None
+    background_label = ""
+    if planar_shock_interaction:
+        background_reference = (shock_states or {}).get("planar_shock.upstream")
+        background_label = "flow.planar_shock.upstream"
+        if background_reference is None:
+            raise CaseInputError(
+                "shock-turbulence interaction requires flow.planar_shock"
+            )
+    elif shock_tube_interaction:
+        background_reference = (shock_states or {}).get("shock_tube.driven")
+        background_label = "flow.shock_tube.driven"
+        if background_reference is None:
+            raise CaseInputError(
+                "shock-tube turbulence interaction requires flow.shock_tube"
+            )
 
     velocity_offset = _vector3(
-        imported.get("velocity_offset", [0.0, 0.0, 0.0]),
+        imported.get(
+            "velocity_offset",
+            background_reference[1]
+            if background_reference is not None
+            else [0.0, 0.0, 0.0],
+        ),
         "flow.imported_turbulence.velocity_offset",
     )
     background = _mapping(
@@ -610,34 +972,68 @@ def _resolve_nse_imported_turbulence(
         nested(case, "physics.nse.rho0", 1.0), "physics.nse.rho0"
     )
     background_rho = _positive_float(
-        background.get("density", rho0),
+        background.get(
+            "density",
+            background_reference[0] if background_reference is not None else rho0,
+        ),
         "flow.imported_turbulence.background.density",
     )
     background_pressure = _positive_float(
-        background.get("pressure", 1.0 / gamma),
+        background.get(
+            "pressure",
+            background_reference[2]
+            if background_reference is not None
+            else 1.0 / gamma,
+        ),
         "flow.imported_turbulence.background.pressure",
     )
     background_velocity = _vector3(
-        background.get("velocity", [0.0, 0.0, 0.0]),
+        background.get(
+            "velocity",
+            background_reference[1]
+            if background_reference is not None
+            else [0.0, 0.0, 0.0],
+        ),
         "flow.imported_turbulence.background.velocity",
     )
     x_start = _finite_float(
         imported.get("x_start", nested(case, "grid.x_min", 0.0)),
         "flow.imported_turbulence.x_start",
     )
+    if background_reference is not None:
+        actual = (background_rho, background_velocity, background_pressure)
+        flattened_actual = (actual[0], *actual[1], actual[2])
+        flattened_reference = (
+            background_reference[0],
+            *background_reference[1],
+            background_reference[2],
+        )
+        if any(
+            not math.isclose(a, b, rel_tol=1.0e-12, abs_tol=1.0e-14)
+            for a, b in zip(flattened_actual, flattened_reference)
+        ):
+            raise CaseInputError(
+                "flow.imported_turbulence.background must equal "
+                f"{background_label}"
+            )
 
     source_file = source_file.strip()
-    if case_dir is not None and runtime_root is not None:
+    if case_dir is not None:
+        # BuildSolver launches the executable with case_dir as its working
+        # directory.  Keep files contained in the case portable by writing a
+        # case-relative path; using runtime_root here would duplicate
+        # ``cases/<case_id>`` when the Fortran runtime opens the file.
+        resolved_case_dir = case_dir.resolve()
         source_path = Path(source_file)
         if not source_path.is_absolute():
-            source_path = (case_dir / source_path).resolve()
-            try:
-                source_file = source_path.relative_to(
-                    runtime_root.resolve()
-                ).as_posix()
-            except ValueError:
-                source_file = source_path.as_posix()
+            source_path = (resolved_case_dir / source_path).resolve()
         else:
+            source_path = source_path.resolve()
+        try:
+            source_file = source_path.relative_to(resolved_case_dir).as_posix()
+        except ValueError:
+            # An explicitly external data file cannot be represented by a
+            # portable path inside the case, so retain its absolute location.
             source_file = source_path.as_posix()
 
     return {
@@ -654,6 +1050,313 @@ def _resolve_nse_imported_turbulence(
         "imported_turbulence_background_w": background_velocity[2],
         "imported_turbulence_background_p": background_pressure,
     }
+
+
+def _resolve_nse_boundary(
+    case: dict[str, Any],
+    *,
+    shock_states: dict[
+        str, tuple[float, tuple[float, float, float], float]
+    ] | None = None,
+) -> dict[str, Any]:
+    numerics = _mapping(nested(case, "numerics", {}), "numerics")
+    physics_nse = _mapping(nested(case, "physics.nse", {}), "physics.nse")
+    legacy_numerics = numerics.get("boundary_condition")
+    legacy_physics = physics_nse.get("boundary_condition")
+    boundary = case.get("boundary")
+
+    if boundary is None:
+        legacy = legacy_numerics
+        if legacy in {None, ""}:
+            legacy = legacy_physics
+        if legacy in {None, ""}:
+            legacy = "periodic"
+        normalized = _canonical_selector(str(legacy))
+        if normalized != "periodic":
+            raise CaseInputError(
+                "legacy numerics.boundary_condition supports only PERIODIC; "
+                "use the top-level boundary section for face-specific boundaries"
+            )
+        return {"boundary_condition": "periodic"}
+
+    if legacy_numerics not in {None, ""} or legacy_physics not in {None, ""}:
+        raise CaseInputError(
+            "boundary and legacy numerics.boundary_condition/"
+            "physics.nse.boundary_condition cannot be specified together"
+        )
+
+    boundary_map = _mapping(boundary, "boundary")
+    allowed_boundary = {"faces", "reference_states", "non_reflecting"}
+    unknown_boundary = sorted(set(boundary_map) - allowed_boundary)
+    if unknown_boundary:
+        raise CaseInputError(
+            "unknown boundary key(s): " + ", ".join(unknown_boundary)
+        )
+
+    faces = _mapping(boundary_map.get("faces", {}), "boundary.faces")
+    missing_faces = [face for face in NSE_BOUNDARY_FACES if face not in faces]
+    unknown_faces = sorted(set(faces) - set(NSE_BOUNDARY_FACES))
+    if missing_faces:
+        raise CaseInputError(
+            "boundary.faces must explicitly define all six physical faces; missing: "
+            + ", ".join(missing_faces)
+        )
+    if unknown_faces:
+        raise CaseInputError(
+            "unknown boundary.faces key(s): " + ", ".join(unknown_faces)
+        )
+
+    reference_states = _mapping(
+        boundary_map.get("reference_states", {}),
+        "boundary.reference_states",
+    )
+    non_reflecting = _mapping(
+        boundary_map.get("non_reflecting", {}),
+        "boundary.non_reflecting",
+    )
+    allowed_non_reflecting = {
+        "formulation",
+        "relaxation_strength",
+        "length_scale",
+    }
+    unknown_non_reflecting = sorted(
+        set(non_reflecting) - allowed_non_reflecting
+    )
+    if unknown_non_reflecting:
+        raise CaseInputError(
+            "unknown boundary.non_reflecting key(s): "
+            + ", ".join(unknown_non_reflecting)
+        )
+    formulation = _canonical_selector(
+        str(non_reflecting.get("formulation", "characteristic_relaxation"))
+    )
+    if formulation != "characteristic_relaxation":
+        raise CaseInputError(
+            "boundary.non_reflecting.formulation must be "
+            "CHARACTERISTIC_RELAXATION"
+        )
+    relaxation = _positive_float(
+        non_reflecting.get("relaxation_strength", 0.1),
+        "boundary.non_reflecting.relaxation_strength",
+        allow_zero=True,
+    )
+    length_value = non_reflecting.get("length_scale", "auto")
+    if isinstance(length_value, str):
+        if _canonical_selector(length_value) != "auto":
+            raise CaseInputError(
+                "boundary.non_reflecting.length_scale must be AUTO or positive"
+            )
+        length_scale = -1.0
+    else:
+        length_scale = _positive_float(
+            length_value, "boundary.non_reflecting.length_scale"
+        )
+
+    resolved_reference_states: dict[
+        str, tuple[float, tuple[float, float, float], float]
+    ] = {}
+    for reference_name, raw_reference in reference_states.items():
+        if not isinstance(reference_name, str) or not reference_name.strip():
+            raise CaseInputError(
+                "boundary.reference_states names must be non-empty strings"
+            )
+        reference_name = reference_name.strip()
+        reference = _mapping(
+            raw_reference,
+            f"boundary.reference_states.{reference_name}",
+        )
+        if set(reference) == {"source"}:
+            source = str(reference["source"]).strip().lower()
+            if source not in (shock_states or {}):
+                raise CaseInputError(
+                    f"boundary.reference_states.{reference_name}.source="
+                    f"{source!r} is not available"
+                )
+            resolved_reference_states[reference_name] = (shock_states or {})[
+                source
+            ]
+            continue
+        allowed_reference = {"density", "velocity", "pressure"}
+        unknown_reference = sorted(set(reference) - allowed_reference)
+        if unknown_reference:
+            raise CaseInputError(
+                f"unknown boundary.reference_states.{reference_name} key(s): "
+                + ", ".join(unknown_reference)
+            )
+        missing_reference = sorted(allowed_reference - set(reference))
+        if missing_reference:
+            raise CaseInputError(
+                f"boundary.reference_states.{reference_name} is missing: "
+                + ", ".join(missing_reference)
+            )
+        density = _positive_float(
+            reference["density"],
+            f"boundary.reference_states.{reference_name}.density",
+        )
+        velocity = _vector3(
+            reference["velocity"],
+            f"boundary.reference_states.{reference_name}.velocity",
+        )
+        pressure = _positive_float(
+            reference["pressure"],
+            f"boundary.reference_states.{reference_name}.pressure",
+        )
+        resolved_reference_states[reference_name] = (
+            density,
+            velocity,
+            pressure,
+        )
+
+    values: dict[str, Any] = {
+        "boundary_relaxation_strength": relaxation,
+        "boundary_length_scale": length_scale,
+    }
+    face_types: dict[str, str] = {}
+    for face in NSE_BOUNDARY_FACES:
+        face_config = _mapping(faces[face], f"boundary.faces.{face}")
+        allowed_face = {"type", "reference_state"}
+        unknown_face = sorted(set(face_config) - allowed_face)
+        if unknown_face:
+            raise CaseInputError(
+                f"unknown boundary.faces.{face} key(s): "
+                + ", ".join(unknown_face)
+            )
+        if "type" not in face_config:
+            raise CaseInputError(f"boundary.faces.{face}.type is required")
+        face_type = _canonical_selector(str(face_config["type"]))
+        if face_type not in {
+            "periodic",
+            "non_reflecting",
+            "reflective",
+            "dirichlet",
+        }:
+            raise CaseInputError(
+                f"boundary.faces.{face}.type must be PERIODIC, "
+                "NON_REFLECTING, REFLECTIVE, or DIRICHLET"
+            )
+        face_types[face] = face_type
+        values[f"boundary_{face}"] = face_type
+
+        reference_name = face_config.get("reference_state")
+        if face_type not in {"non_reflecting", "dirichlet"}:
+            if reference_name not in {None, ""}:
+                raise CaseInputError(
+                    f"boundary.faces.{face}.reference_state is only valid for "
+                    "NON_REFLECTING or DIRICHLET"
+                )
+            continue
+        if not isinstance(reference_name, str) or not reference_name.strip():
+            raise CaseInputError(
+                f"boundary.faces.{face}.reference_state is required for "
+                "NON_REFLECTING or DIRICHLET"
+            )
+        reference_name = reference_name.strip()
+        if reference_name not in resolved_reference_states:
+            raise CaseInputError(
+                f"boundary.faces.{face}.reference_state={reference_name!r} "
+                "is not defined in boundary.reference_states"
+            )
+        density, velocity, pressure = resolved_reference_states[reference_name]
+        values[f"boundary_{face}_reference_rho"] = density
+        values[f"boundary_{face}_reference_u"] = velocity[0]
+        values[f"boundary_{face}_reference_v"] = velocity[1]
+        values[f"boundary_{face}_reference_w"] = velocity[2]
+        values[f"boundary_{face}_reference_p"] = pressure
+
+    for lower, upper, direction in (
+        ("x_min", "x_max", "x"),
+        ("y_min", "y_max", "y"),
+        ("z_min", "z_max", "z"),
+    ):
+        if (face_types[lower] == "periodic") != (
+            face_types[upper] == "periodic"
+        ):
+            raise CaseInputError(
+                f"periodic {direction} boundaries must be specified on both "
+                f"{lower} and {upper}"
+            )
+
+    return values
+
+
+def _validate_nse_shock_driver(
+    shock_values: dict[str, Any], boundary_values: dict[str, Any]
+) -> None:
+    """Require the inflow reservoir to reproduce the post-shock state exactly."""
+    if not shock_values:
+        return
+
+    direction = shock_values["planar_shock_direction"]
+    driver_face = "x_min" if direction == "positive_x" else "x_max"
+    if boundary_values.get(f"boundary_{driver_face}") != "dirichlet":
+        raise CaseInputError(
+            "shock-turbulence interaction requires boundary.faces."
+            f"{driver_face}.type=DIRICHLET on the post-shock driver face"
+        )
+
+    component_pairs = (
+        ("rho", "rho"),
+        ("u", "u"),
+        ("v", "v"),
+        ("w", "w"),
+        ("p", "p"),
+    )
+    for boundary_component, shock_component in component_pairs:
+        actual = boundary_values.get(
+            f"boundary_{driver_face}_reference_{boundary_component}"
+        )
+        expected = shock_values[f"planar_shock_downstream_{shock_component}"]
+        if actual is None or not math.isclose(
+            float(actual), float(expected), rel_tol=1.0e-12, abs_tol=1.0e-14
+        ):
+            raise CaseInputError(
+                "shock-turbulence interaction requires the Dirichlet driver "
+                "reference state to equal flow.planar_shock.downstream; use "
+                "boundary.reference_states.<name>.source: "
+                "planar_shock.downstream"
+            )
+
+
+def _validate_nse_shock_tube_configuration(
+    tube_values: dict[str, Any],
+    imported_values: dict[str, Any],
+    boundary_values: dict[str, Any],
+) -> None:
+    if not tube_values:
+        return
+
+    diaphragm = float(tube_values["shock_tube_diaphragm_position"])
+    turbulence_start = float(imported_values["imported_turbulence_x_start"])
+    if diaphragm > turbulence_start and not math.isclose(
+        diaphragm, turbulence_start, rel_tol=1.0e-12, abs_tol=1.0e-14
+    ):
+        raise CaseInputError(
+            "flow.shock_tube.diaphragm_position must not lie inside or "
+            "downstream of the imported turbulence block"
+        )
+
+    if boundary_values.get("boundary_x_min") != "reflective":
+        raise CaseInputError(
+            "shock-tube turbulence interaction requires "
+            "boundary.faces.x_min.type=REFLECTIVE for the closed driver end"
+        )
+    if boundary_values.get("boundary_x_max") != "non_reflecting":
+        raise CaseInputError(
+            "shock-tube turbulence interaction requires "
+            "boundary.faces.x_max.type=NON_REFLECTING"
+        )
+
+    for component in ("rho", "u", "v", "w", "p"):
+        actual = boundary_values.get(f"boundary_x_max_reference_{component}")
+        expected = tube_values[f"shock_tube_driven_{component}"]
+        if actual is None or not math.isclose(
+            float(actual), float(expected), rel_tol=1.0e-12, abs_tol=1.0e-14
+        ):
+            raise CaseInputError(
+                "shock-tube turbulence interaction requires the x_max "
+                "non-reflecting reference state to equal flow.shock_tube.driven; "
+                "use boundary.reference_states.<name>.source: shock_tube.driven"
+            )
 
 
 def _resolve_nse_forcing(case: dict[str, Any]) -> dict[str, Any]:
@@ -872,6 +1575,12 @@ def _common_values(
             "turbulence_import": "imported_turbulence",
             "turbulence_embed": "imported_turbulence",
             "turbulence_tile": "imported_turbulence",
+            "planar_shock_turbulence": "shock_turbulence_interaction",
+            "shock_turbulence": "shock_turbulence_interaction",
+            "shock_tube_turbulence": "shock_tube_turbulence_interaction",
+            "finite_driver_shock_turbulence": (
+                "shock_tube_turbulence_interaction"
+            ),
         }.get(initial_condition, initial_condition)
 
     values = [
@@ -978,10 +1687,27 @@ def render_nse(
         nse["cfl"] = nested(case, "time.cfl")
     hit_values = _resolve_nse_hit(case)
     nse.update(hit_values)
+    shock_values, shock_states = _resolve_nse_planar_shock(case)
+    nse.update(shock_values)
+    tube_values, tube_states = _resolve_nse_shock_tube(case)
+    nse.update(tube_values)
+    flow_states = dict(shock_states)
+    flow_states.update(tube_states)
     imported_turbulence_values = _resolve_nse_imported_turbulence(
-        case, case_dir=case_dir, runtime_root=runtime_root
+        case,
+        case_dir=case_dir,
+        runtime_root=runtime_root,
+        shock_states=flow_states,
     )
     nse.update(imported_turbulence_values)
+    boundary_values = _resolve_nse_boundary(case, shock_states=flow_states)
+    _validate_nse_shock_driver(shock_values, boundary_values)
+    _validate_nse_shock_tube_configuration(
+        tube_values, imported_turbulence_values, boundary_values
+    )
+    if case.get("boundary") is not None:
+        nse.pop("boundary_condition", None)
+    nse.update(boundary_values)
     forcing_values = _resolve_nse_forcing(case)
     for target, value in forcing_values.items():
         if target not in nse or nse[target] in {None, ""}:
@@ -997,6 +1723,7 @@ def render_nse(
         "hit_spectrum",
         "hit_isotropy_mode",
         "imported_turbulence_mode",
+        "planar_shock_direction",
         "forcing_scheme",
         "forcing_spectrum",
         "forcing_fft_backend",
@@ -1028,6 +1755,15 @@ def render_nse(
     forcing_scheme = str(nse.get("forcing_scheme", "none"))
     requested_forcing_backend = str(nse.get("forcing_fft_backend", "auto"))
     if forcing_scheme != "none":
+        face_types = [
+            str(nse.get(f"boundary_{face}", nse.get("boundary_condition", "periodic")))
+            for face in NSE_BOUNDARY_FACES
+        ]
+        if any(face_type != "periodic" for face_type in face_types):
+            raise CaseInputError(
+                "Petersen-Livescu forcing requires periodic boundaries on all "
+                "six physical faces"
+            )
         if forcing_backend == "none":
             raise CaseInputError(
                 f"forcing.type={forcing_scheme!r} requires a forcing FFT backend; "

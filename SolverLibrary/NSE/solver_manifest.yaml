@@ -59,6 +59,8 @@ components:
     files:
       - src/init/mod_init_taylor_green.f90
       - src/init/mod_init_imported_turbulence.f90
+      - src/init/mod_init_shock_turbulence.f90
+      - src/init/mod_init_shock_tube_turbulence.f90
       - src/init/mod_hit_isotropy_math.f90
       - src/init/mod_nse_initial_conditions.f90
 
@@ -87,6 +89,11 @@ components:
     cmake_role: library
     files:
       - src/boundary/mod_boundary_periodic.f90
+
+  boundary_runtime:
+    cmake_role: library
+    files:
+      - src/boundary/mod_boundary_runtime.f90
 
   convective_runtime:
     cmake_role: library
@@ -151,6 +158,8 @@ components:
       - docs/NSE_HYBRID_FLUX.md
       - docs/NSE_TURBULENCE_STATISTICS.md
       - docs/NSE_IMPORTED_TURBULENCE.md
+      - docs/NSE_SHOCK_TURBULENCE_INTERACTION.md
+      - docs/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md
 
   cuda_backend:
     cmake_role: library
@@ -184,11 +193,18 @@ components:
     files:
       - tests/test_imported_turbulence.f90
       - tests/test_cuda_keep.f90
+      - tests/test_cuda_boundary_non_reflecting.f90
+      - tests/test_cuda_boundary_reflective.f90
+      - tests/test_cuda_boundary_dirichlet.f90
       - tests/test_cuda_keep_compare.f90
       - tests/test_cuda_viscous_compare.f90
       - tests/input_tgv_cuda_small.dat
       - tests/input_tgv_cuda_weno5z_roe_small.dat
       - tests/input_tgv_hybrid_small.dat
+      - tests/input_tgv_non_reflecting_small.dat
+      - tests/input_tgv_non_reflecting_all_faces_small.dat
+      - tests/input_tgv_reflective_small.dat
+      - tests/input_tgv_dirichlet_small.dat
       - tests/input_tgv_cuda_forcing_small.dat
       - tests/input_hit_cuda_small.dat
       - tests/test_forcing_coefficients.f90
@@ -212,6 +228,12 @@ components:
       - tests/input_tgv_weno5z_roe_small.dat
       - tests/test_viscous_central6.f90
       - tests/test_boundary_periodic.f90
+      - tests/test_boundary_non_reflecting.f90
+      - tests/test_boundary_reflective.f90
+      - tests/test_boundary_dirichlet.f90
+      - tests/input_tgv_non_reflecting_small.dat
+      - tests/input_tgv_reflective_small.dat
+      - tests/input_tgv_dirichlet_small.dat
       - tests/input_tgv_viscous_small.dat
       - tests/input_tgv_forcing_small.dat
       - tests/input_hit_forcing_small.dat
@@ -230,7 +252,7 @@ profiles:
       - openmp_runtime
       - initial_conditions
       - initial_hit_stub
-      - boundary_periodic
+      - boundary_runtime
       - convective_runtime
       - viscous_central6
       - forcing_none
@@ -250,7 +272,7 @@ profiles:
       NSE_GPU_BACKEND: none
       NSE_CONVECTIVE_BACKEND: runtime
       NSE_VISCOUS_SCHEME: central6
-      NSE_BOUNDARY_SCHEME: periodic
+      NSE_BOUNDARY_SCHEME: runtime
       NSE_INIT_FFT_BACKEND: none
       NSE_FORCING_FFT_BACKEND: none
 
@@ -266,7 +288,7 @@ profiles:
       - openmp_runtime
       - initial_conditions
       - initial_hit_2decomp_fftw
-      - boundary_periodic
+      - boundary_runtime
       - convective_runtime
       - viscous_central6
       - forcing_2decomp_fftw
@@ -286,7 +308,7 @@ profiles:
       NSE_GPU_BACKEND: none
       NSE_CONVECTIVE_BACKEND: runtime
       NSE_VISCOUS_SCHEME: central6
-      NSE_BOUNDARY_SCHEME: periodic
+      NSE_BOUNDARY_SCHEME: runtime
       NSE_INIT_FFT_BACKEND: 2decomp_fftw
       NSE_FORCING_FFT_BACKEND: 2decomp_fftw
 
@@ -302,6 +324,7 @@ profiles:
       - serial_runtime
       - initial_conditions
       - initial_hit_cufft
+      - boundary_runtime
       - cuda_backend
       - forcing_cufftmp_contract
       - runtime_tools
@@ -318,7 +341,7 @@ profiles:
       NSE_GPU_BACKEND: cuda
       NSE_CONVECTIVE_BACKEND: keep_family
       NSE_VISCOUS_SCHEME: central6
-      NSE_BOUNDARY_SCHEME: periodic
+      NSE_BOUNDARY_SCHEME: runtime
       NSE_INIT_FFT_BACKEND: cufft
       NSE_FORCING_FFT_BACKEND: cufft
 
@@ -333,6 +356,7 @@ profiles:
       - serial_runtime
       - initial_conditions
       - initial_hit_stub
+      - boundary_runtime
       - cuda_backend
       - cuda_mpi_halo
       - runtime_tools
@@ -347,7 +371,7 @@ profiles:
       NSE_GPU_BACKEND: cuda
       NSE_CONVECTIVE_BACKEND: keep_family
       NSE_VISCOUS_SCHEME: central6
-      NSE_BOUNDARY_SCHEME: periodic
+      NSE_BOUNDARY_SCHEME: runtime
       NSE_INIT_FFT_BACKEND: none
       NSE_FORCING_FFT_BACKEND: none
 
@@ -364,6 +388,7 @@ profiles:
       - serial_runtime
       - initial_conditions
       - initial_hit_cufftmp
+      - boundary_runtime
       - cuda_backend
       - cuda_mpi_halo
       - forcing_cufftmp_contract
@@ -379,6 +404,6 @@ profiles:
       NSE_GPU_BACKEND: cuda
       NSE_CONVECTIVE_BACKEND: keep_family
       NSE_VISCOUS_SCHEME: central6
-      NSE_BOUNDARY_SCHEME: periodic
+      NSE_BOUNDARY_SCHEME: runtime
       NSE_INIT_FFT_BACKEND: cufftmp
       NSE_FORCING_FFT_BACKEND: cufftmp

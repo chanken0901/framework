@@ -7,6 +7,19 @@ module mod_model_config
   public :: init_gpe_config, init_nse_config
   public :: print_gpe_config, print_nse_config
   public :: resolve_nse_flow_parameters
+  public :: nse_boundary_face_count
+  public :: nse_face_x_min, nse_face_x_max, nse_face_y_min
+  public :: nse_face_y_max, nse_face_z_min, nse_face_z_max
+
+  integer, parameter :: nse_boundary_face_count = 6
+  integer, parameter :: nse_face_x_min = 1
+  integer, parameter :: nse_face_x_max = 2
+  integer, parameter :: nse_face_y_min = 3
+  integer, parameter :: nse_face_y_max = 4
+  integer, parameter :: nse_face_z_min = 5
+  integer, parameter :: nse_face_z_max = 6
+  character(len=5), parameter :: nse_boundary_face_name(6) = [ &
+    character(len=5) :: 'x_min', 'x_max', 'y_min', 'y_max', 'z_min', 'z_max']
 
   type :: nse_config
     integer :: nv = 5
@@ -26,6 +39,12 @@ module mod_model_config
     real(dp) :: hybrid_sensor_full = 0.10_dp
     character(len=32) :: viscous_scheme = 'none'
     character(len=32) :: boundary_condition = 'periodic'
+    character(len=32) :: boundary_face_type(nse_boundary_face_count) = 'periodic'
+    real(dp) :: boundary_reference_rho(nse_boundary_face_count) = -1.0_dp
+    real(dp) :: boundary_reference_velocity(3,nse_boundary_face_count) = 0.0_dp
+    real(dp) :: boundary_reference_p(nse_boundary_face_count) = -1.0_dp
+    real(dp) :: boundary_relaxation_strength = 0.1_dp
+    real(dp) :: boundary_length_scale = -1.0_dp
     character(len=32) :: time_integrator = 'ssprk3'
     character(len=32) :: hit_spectrum = 'johnsen'
     integer :: hit_seed = 13579
@@ -61,6 +80,30 @@ module mod_model_config
     real(dp) :: imported_turbulence_background_v = 0.0_dp
     real(dp) :: imported_turbulence_background_w = 0.0_dp
     real(dp) :: imported_turbulence_background_p = -1.0_dp
+    real(dp) :: planar_shock_position = -1.0e300_dp
+    character(len=32) :: planar_shock_direction = 'positive_x'
+    real(dp) :: planar_shock_mach = -1.0_dp
+    real(dp) :: planar_shock_upstream_rho = -1.0_dp
+    real(dp) :: planar_shock_upstream_u = 0.0_dp
+    real(dp) :: planar_shock_upstream_v = 0.0_dp
+    real(dp) :: planar_shock_upstream_w = 0.0_dp
+    real(dp) :: planar_shock_upstream_p = -1.0_dp
+    real(dp) :: planar_shock_downstream_rho = -1.0_dp
+    real(dp) :: planar_shock_downstream_u = 0.0_dp
+    real(dp) :: planar_shock_downstream_v = 0.0_dp
+    real(dp) :: planar_shock_downstream_w = 0.0_dp
+    real(dp) :: planar_shock_downstream_p = -1.0_dp
+    real(dp) :: shock_tube_diaphragm_position = -1.0e300_dp
+    real(dp) :: shock_tube_driver_rho = -1.0_dp
+    real(dp) :: shock_tube_driver_u = 0.0_dp
+    real(dp) :: shock_tube_driver_v = 0.0_dp
+    real(dp) :: shock_tube_driver_w = 0.0_dp
+    real(dp) :: shock_tube_driver_p = -1.0_dp
+    real(dp) :: shock_tube_driven_rho = -1.0_dp
+    real(dp) :: shock_tube_driven_u = 0.0_dp
+    real(dp) :: shock_tube_driven_v = 0.0_dp
+    real(dp) :: shock_tube_driven_w = 0.0_dp
+    real(dp) :: shock_tube_driven_p = -1.0_dp
     character(len=32) :: forcing_scheme = 'none'
     character(len=32) :: forcing_spectrum = 'low_wavenumber'
     character(len=32) :: forcing_fft_backend = 'auto'
@@ -169,7 +212,7 @@ contains
   subroutine print_nse_config(cfg, unit)
     type(nse_config), intent(in) :: cfg
     integer, intent(in), optional :: unit
-    integer :: u
+    integer :: u, face
     u = 6
     if (present(unit)) u = unit
     write(u,'(A)') '--- nse_config ---'
@@ -192,6 +235,21 @@ contains
       cfg%hybrid_sensor_full
     write(u,'(A,A)') 'viscous_scheme    = ', trim(cfg%viscous_scheme)
     write(u,'(A,A)') 'boundary_condition = ', trim(cfg%boundary_condition)
+    do face = 1, nse_boundary_face_count
+      write(u,'(A,A,A,A)') 'boundary_', &
+        trim(nse_boundary_face_name(face)), ' = ', &
+        trim(cfg%boundary_face_type(face))
+      if (trim(adjustl(cfg%boundary_face_type(face))) == 'non_reflecting') then
+        write(u,'(A,5ES16.8)') '  reference rho,u,v,w,p = ', &
+          cfg%boundary_reference_rho(face), &
+          cfg%boundary_reference_velocity(:,face), &
+          cfg%boundary_reference_p(face)
+      end if
+    end do
+    write(u,'(A,ES16.8)') 'boundary_relaxation_strength = ', &
+      cfg%boundary_relaxation_strength
+    write(u,'(A,ES16.8)') 'boundary_length_scale = ', &
+      cfg%boundary_length_scale
     write(u,'(A,A)') 'time_integrator   = ', trim(cfg%time_integrator)
     write(u,'(A,A)') 'hit_spectrum      = ', trim(cfg%hit_spectrum)
     write(u,'(A,I10)') 'hit_seed          = ', cfg%hit_seed
@@ -250,6 +308,33 @@ contains
         cfg%imported_turbulence_background_v, &
         cfg%imported_turbulence_background_w, &
         cfg%imported_turbulence_background_p
+    end if
+    if (cfg%planar_shock_position > -1.0e250_dp) then
+      write(u,'(A,ES16.8)') 'planar_shock_position = ', &
+        cfg%planar_shock_position
+      write(u,'(A,A)') 'planar_shock_direction = ', &
+        trim(cfg%planar_shock_direction)
+      write(u,'(A,ES16.8)') 'planar_shock_mach = ', cfg%planar_shock_mach
+      write(u,'(A,5ES16.8)') 'planar_shock_upstream = ', &
+        cfg%planar_shock_upstream_rho, cfg%planar_shock_upstream_u, &
+        cfg%planar_shock_upstream_v, cfg%planar_shock_upstream_w, &
+        cfg%planar_shock_upstream_p
+      write(u,'(A,5ES16.8)') 'planar_shock_downstream = ', &
+        cfg%planar_shock_downstream_rho, cfg%planar_shock_downstream_u, &
+        cfg%planar_shock_downstream_v, cfg%planar_shock_downstream_w, &
+        cfg%planar_shock_downstream_p
+    end if
+    if (cfg%shock_tube_diaphragm_position > -1.0e250_dp) then
+      write(u,'(A,ES16.8)') 'shock_tube_diaphragm_position = ', &
+        cfg%shock_tube_diaphragm_position
+      write(u,'(A,5ES16.8)') 'shock_tube_driver = ', &
+        cfg%shock_tube_driver_rho, cfg%shock_tube_driver_u, &
+        cfg%shock_tube_driver_v, cfg%shock_tube_driver_w, &
+        cfg%shock_tube_driver_p
+      write(u,'(A,5ES16.8)') 'shock_tube_driven = ', &
+        cfg%shock_tube_driven_rho, cfg%shock_tube_driven_u, &
+        cfg%shock_tube_driven_v, cfg%shock_tube_driven_w, &
+        cfg%shock_tube_driven_p
     end if
     write(u,'(A,A)') 'forcing_scheme    = ', trim(cfg%forcing_scheme)
     write(u,'(A,A)') 'forcing_spectrum  = ', trim(cfg%forcing_spectrum)

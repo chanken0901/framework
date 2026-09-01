@@ -86,7 +86,20 @@ def _sync_global_case_index(
     if dry_run:
         print(f"[DRY-RUN] Would update global case index: {index_path}")
         return index_path
-    sync_environment_case(root, lock, index_path)
+    try:
+        sync_environment_case(root, lock, index_path)
+    except (GlobalCaseIndexError, OSError) as exc:
+        # The shared CSV is a rebuildable catalogue, not a solver input.  In
+        # particular, Windows applications such as Excel may temporarily lock
+        # the destination and reject the atomic replace.  Do not prevent input
+        # generation or a simulation for an auxiliary-index failure.
+        print(f"[WARNING] Could not update global case index: {exc}", file=sys.stderr)
+        print(
+            "[WARNING] Continuing without updating case_index.csv; "
+            "it will be synchronized from case.yaml on the next run.",
+            file=sys.stderr,
+        )
+        return index_path
     print(f"[OK] Updated global case index: {index_path}")
     return index_path
 

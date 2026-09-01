@@ -297,8 +297,9 @@ def _model_machine_variables(
             raise ModelBuildError(
                 f"unsupported NSE GPU backend {gpu_backend!r}; use none or cuda"
             )
-        if gpu_backend == "cuda" and use_mpi:
-            raise ModelBuildError("NSE cuda profile is single-GPU and cannot enable MPI")
+        # NSE supports both cuda_single and MPI+CUDA profiles.  The profile's
+        # execution metadata and selected main program determine whether MPI
+        # is enabled; GPU_BACKEND=cuda by itself does not imply single GPU.
         cmake_variables.update(
             {
                 "NSE_CORE_SOURCES": library_sources,

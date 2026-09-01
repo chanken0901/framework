@@ -7,14 +7,14 @@
 
 - 対流項: `keep2`、`keep6`、特性空間`weno5z_roe`、またはKEEP/WENO `hybrid`
 - 粘性項: 6次精度中心差分 `central6`、または `none`
-- 境界条件: 三方向周期境界
+- 境界条件: 6面別の周期境界、特性無反射境界、鏡像境界、またはDirichlet固定状態境界
 - 時間積分: SSPRK3
 - 精度: float64
 - `cuda_single`: GPU 1台、MPI/OpenMPなし
 - `cuda_mpi`: MPI 1 rankにつきGPU 1台、OpenMPなし
 
 `central6`は一定粘性係数のNewton流体、Stokesの仮定、Fourier熱伝導を
-CUDAカーネルで計算します。対流方式、粘性方式、周期境界、SSPRK3は
+CUDAカーネルで計算します。対流方式、粘性方式、面別境界、SSPRK3は
 単一GPU版とマルチGPU版で共通です。
 
 ## GPU化される処理
@@ -28,7 +28,7 @@ CUDAカーネルで計算します。対流方式、粘性方式、周期境界�
 - 粘性計算用の基本変数 `u, v, w, T`
 - CFL評価用の局所最大波速度
 
-各時間ステップでは、周期ghost更新、CFL・粘性時間刻み評価、選択した対流流束、
+各時間ステップでは、周期／無反射／鏡像／Dirichlet ghost更新、CFL・粘性時間刻み評価、選択した対流流束、
 三方向の流束発散、粘性・熱伝導項、SSPRK3の3段階更新をCUDAカーネルで
 実行します。SLF出力時だけ`Q`をCPUへ戻します。
 
@@ -42,9 +42,9 @@ GPU版は面流束配列を保存せず、各セルで必要な左右6面の流�
 
 SSPRK3の各段で、次の順序でghostセルを完成させます。
 
-1. x方向と非分割方向の周期ghostをCUDAカーネルで更新
-2. y面をGPUからhost staging bufferへpackし、隣接rankとMPI交換してGPUへunpack
-3. z面を同様に交換。先に更新したy ghostも送ることで辺・角ghostを完成
+1. CUDAカーネルでx面、非分割方向、分割方向の物理端に必要な周期／無反射／鏡像／Dirichlet ghostを更新
+2. y面をGPUからhost staging bufferへpackし、内部隣接rankまたは周期反対端rankとMPI交換してGPUへunpack
+3. z面を同様に交換。無反射／鏡像物理端では通信せずGPU生成値を保持し、辺・角ghostを完成
 4. 局所RHSとSSPRK3段更新をGPUで実行
 
 CFL時間刻みは各GPUの局所値を計算した後、`MPI_Allreduce(MIN)`で全rankを
@@ -58,7 +58,12 @@ MPI shared-memory communicatorから得たノード内rank番号です。Slurm�
 device 0を自動選択します。1台のGPUを複数rankで共有するデバッグ時だけ、
 `NSE_CUDA_DEVICE_POLICY=fixed`を設定できます。
 
-`cuda_mpi`はTaylor–Green初期条件と`imported_turbulence`を利用します。
+`cuda_mpi`はTaylor–Green初期条件、`imported_turbulence`、
+`shock_turbulence_interaction`、`shock_tube_turbulence_interaction`を利用します。
+初期条件はCPUで共通実装から生成した後、各GPUへ転送されるため、有限高圧室ケースも
+CPU版と同じ配置になります。入力は
+[`NSE_SHOCK_TURBULENCE_INTERACTION.md`](NSE_SHOCK_TURBULENCE_INTERACTION.md)および
+[`NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md`](NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md)を参照してください。
 分散HIT初期化またはPetersen–Livescu forcingが必要なLinux計算機では、
 `cuda_mpi_cufftmp`を選択します。このプロファイルは既存のY-Z領域分割を
 `cufftMpMakePlanDecomposition`へ直接渡します。必要環境とビルド方法は
@@ -151,6 +156,37 @@ numerics:
 ```
 
 CPU版とCUDA版のどちらも`keep`単独の指定は使用できません。
+
+特定方向だけを無反射にする場合もCPU版と同じ`boundary`設定を使います。例えば
+x両端を無反射、y-z両端を周期にする設定は次のとおりです。
+
+```yaml
+boundary:
+  faces:
+    x_min: {type: non_reflecting, reference_state: far_field}
+    x_max: {type: non_reflecting, reference_state: far_field}
+    y_min: {type: periodic}
+    y_max: {type: periodic}
+    z_min: {type: periodic}
+    z_max: {type: periodic}
+  reference_states:
+    far_field:
+      density: 1.0
+      velocity: [0.5, 0.0, 0.0]
+      pressure: 0.7142857142857143
+  non_reflecting:
+    formulation: characteristic_relaxation
+    relaxation_strength: 0.1
+    length_scale: auto
+```
+
+周期面は同じ方向の両端を対で指定します。Petersen–Livescu FFT forcingは物理上の
+前提から全6面周期を要求するため、無反射面または鏡像面との併用は入力生成時に拒否されます。
+
+鏡像境界もCPU版と同じ`type: reflective`で指定します。密度、接線運動量、全エネルギーは
+対応する内点からそのまま鏡映し、面法線方向の運動量だけ符号を反転します。これは
+自由滑り・断熱条件であり、no-slip壁ではありません。MPI＋CUDAの物理端では通信せず、
+GPU上で鏡像ghostを作ります。
 
 ## ライブラリ上で直接ビルドする場合
 
@@ -247,3 +283,7 @@ python .\tools\postprocess_case.py
 8. 従来の`cpu_mpi` profileが引き続きビルドできること
 9. `cuda_mpi`のWindows MPI＋CUDAビルドと2 rank／4 rank smoke test
 10. 2×2 y-z分割の全物理セル2,560値が単一GPU結果と完全一致すること
+11. 全6面無反射およびx無反射・y-z周期で、辺・角を含むCPU/CUDA ghost値が許容誤差内で一致すること
+12. 単一GPUと2 rank MPI＋CUDAで無反射境界を含む時間発展が正常終了すること
+13. 全6面鏡像で、面・辺・角のCPU/CUDA ghost値が許容誤差内で一致すること
+14. 単一GPUと2 rank MPI＋CUDAで鏡像境界を含む時間発展が正常終了すること

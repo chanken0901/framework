@@ -5,6 +5,9 @@ module mod_nse_initial_conditions
   use mod_init_taylor_green, only : initialize_taylor_green
   use mod_init_hit_spectral, only : initialize_hit_spectral
   use mod_init_imported_turbulence, only : initialize_imported_turbulence
+  use mod_init_shock_turbulence, only : initialize_shock_turbulence
+  use mod_init_shock_tube_turbulence, only : &
+    initialize_shock_tube_turbulence
   implicit none
   private
 
@@ -27,6 +30,10 @@ contains
       call initialize_hit_spectral(q, sim, nse, js, je, ks, ke)
     case ('imported_turbulence')
       call initialize_imported_turbulence(q, sim, nse, js, je, ks, ke)
+    case ('shock_turbulence_interaction')
+      call initialize_shock_turbulence(q, sim, nse, js, je, ks, ke)
+    case ('shock_tube_turbulence_interaction')
+      call initialize_shock_tube_turbulence(q, sim, nse, js, je, ks, ke)
     case default
       write(*,'(A,A)') 'ERROR: unsupported NSE initial condition: ', initial_condition
       error stop

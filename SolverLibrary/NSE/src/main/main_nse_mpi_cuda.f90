@@ -85,13 +85,14 @@ program main_nse_mpi_cuda
 
   call nse_gpu_initialize(gpu, sim, nse, local_ny=je-js+1, &
     local_nz=ke-ks+1, distributed_y=ndiv_ny>1, &
-    distributed_z=ndiv_nz>1, device=selected_device)
+    distributed_z=ndiv_nz>1, device=selected_device, &
+    global_y_start=js-1, global_z_start=ks-1)
   if (forcing_is_enabled(nse)) then
     call nse_gpu_configure_cufftmp(gpu, sim%ny, sim%nz, js-1, ks-1, &
       MPI_COMM_WORLD)
   end if
   call nse_gpu_upload(gpu, q)
-  call nse_gpu_mpi_halo_initialize(halo, gpu)
+  call nse_gpu_mpi_halo_initialize(halo, gpu, nse)
   call nse_gpu_mpi_exchange(halo, gpu)
 
   if (sim%write_meta) then

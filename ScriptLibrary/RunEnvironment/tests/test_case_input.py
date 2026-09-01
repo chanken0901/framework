@@ -11,6 +11,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from case_input import (  # noqa: E402
     CaseInputError,
+    NSE_BOUNDARY_FACES,
     _validate_solver_selection,
     derive_nse_hit_transport,
     render_nse,
@@ -166,6 +167,130 @@ class NseCaseInputTests(unittest.TestCase):
             "output": {},
         }
 
+    @staticmethod
+    def x_non_reflecting_boundary() -> dict:
+        return {
+            "faces": {
+                "x_min": {
+                    "type": "non_reflecting",
+                    "reference_state": "far_field",
+                },
+                "x_max": {
+                    "type": "non_reflecting",
+                    "reference_state": "far_field",
+                },
+                "y_min": {"type": "periodic"},
+                "y_max": {"type": "periodic"},
+                "z_min": {"type": "periodic"},
+                "z_max": {"type": "periodic"},
+            },
+            "reference_states": {
+                "far_field": {
+                    "density": 1.0,
+                    "velocity": [0.5, 0.0, 0.0],
+                    "pressure": 1.0 / 1.4,
+                }
+            },
+            "non_reflecting": {
+                "formulation": "characteristic_relaxation",
+                "relaxation_strength": 0.1,
+                "length_scale": "auto",
+            },
+        }
+
+    def shock_turbulence_case(self) -> dict:
+        case = self.case()
+        case["numerics"].pop("boundary_condition")
+        dx = (case["grid"]["x_max"] - case["grid"]["x_min"]) / case[
+            "grid"
+        ]["nx"]
+        case["flow"] = {
+            "type": "shock_turbulence_interaction",
+            "imported_turbulence": {
+                "file": "initial_data/turbulence.slf",
+                "mode": "embed",
+                "x_start": case["grid"]["x_min"] + 4 * dx,
+                "blend_cells": 0,
+            },
+            "planar_shock": {
+                "position": case["grid"]["x_min"] + 2 * dx,
+                "propagation_direction": "positive_x",
+                "mach_number": 1.5,
+                "upstream": {
+                    "density": 1.0,
+                    "velocity": [0.0, 0.0, 0.0],
+                    "pressure": 1.0 / 1.4,
+                },
+            },
+        }
+        case["boundary"] = {
+            "faces": {
+                "x_min": {
+                    "type": "dirichlet",
+                    "reference_state": "shock_post",
+                },
+                "x_max": {
+                    "type": "non_reflecting",
+                    "reference_state": "shock_pre",
+                },
+                "y_min": {"type": "periodic"},
+                "y_max": {"type": "periodic"},
+                "z_min": {"type": "periodic"},
+                "z_max": {"type": "periodic"},
+            },
+            "reference_states": {
+                "shock_pre": {"source": "planar_shock.upstream"},
+                "shock_post": {"source": "planar_shock.downstream"},
+            },
+        }
+        return case
+
+    def shock_tube_turbulence_case(self) -> dict:
+        case = self.case()
+        case["numerics"].pop("boundary_condition")
+        dx = (case["grid"]["x_max"] - case["grid"]["x_min"]) / case[
+            "grid"
+        ]["nx"]
+        case["flow"] = {
+            "type": "shock_tube_turbulence_interaction",
+            "imported_turbulence": {
+                "file": "initial_data/turbulence.slf",
+                "mode": "embed",
+                "x_start": case["grid"]["x_min"] + 4 * dx,
+                "blend_cells": 0,
+            },
+            "shock_tube": {
+                "diaphragm_position": case["grid"]["x_min"] + 2 * dx,
+                "driver": {
+                    "density": 1.0,
+                    "velocity": [0.0, 0.0, 0.0],
+                    "pressure": 5.0 / 1.4,
+                },
+                "driven": {
+                    "density": 1.0,
+                    "velocity": [0.0, 0.0, 0.0],
+                    "pressure": 1.0 / 1.4,
+                },
+            },
+        }
+        case["boundary"] = {
+            "faces": {
+                "x_min": {"type": "reflective"},
+                "x_max": {
+                    "type": "non_reflecting",
+                    "reference_state": "driven",
+                },
+                "y_min": {"type": "periodic"},
+                "y_max": {"type": "periodic"},
+                "z_min": {"type": "periodic"},
+                "z_max": {"type": "periodic"},
+            },
+            "reference_states": {
+                "driven": {"source": "shock_tube.driven"},
+            },
+        }
+        return case
+
     def test_renders_current_modular_nse_input(self) -> None:
         text = render_nse(self.case(), self.manifest, "cpu_mpi")
 
@@ -178,6 +303,318 @@ class NseCaseInputTests(unittest.TestCase):
         self.assertIn('viscous_scheme = "none"', text)
         self.assertIn('boundary_condition = "periodic"', text)
         self.assertIn('time_integrator = "ssprk3"', text)
+
+    def test_renders_x_non_reflecting_yz_periodic_boundaries(self) -> None:
+        case = self.case()
+        case["numerics"].pop("boundary_condition")
+        case["boundary"] = self.x_non_reflecting_boundary()
+
+        text = render_nse(case, self.manifest, "cpu_mpi")
+
+        self.assertNotIn("boundary_condition =", text)
+        self.assertIn('boundary_x_min = "non_reflecting"', text)
+        self.assertIn('boundary_x_max = "non_reflecting"', text)
+        self.assertIn('boundary_y_min = "periodic"', text)
+        self.assertIn('boundary_z_max = "periodic"', text)
+        self.assertIn("boundary_x_min_reference_rho = 1", text)
+        self.assertIn("boundary_x_min_reference_u = 0.5", text)
+        self.assertIn("boundary_relaxation_strength = 0.10000000000000001", text)
+        self.assertIn("boundary_length_scale = -1", text)
+
+    def test_rejects_unpaired_periodic_boundary(self) -> None:
+        case = self.case()
+        case["numerics"].pop("boundary_condition")
+        case["boundary"] = self.x_non_reflecting_boundary()
+        case["boundary"]["faces"]["y_max"] = {
+            "type": "non_reflecting",
+            "reference_state": "far_field",
+        }
+
+        with self.assertRaisesRegex(CaseInputError, "periodic y boundaries"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_invalid_unreferenced_boundary_state(self) -> None:
+        case = self.case()
+        case["numerics"].pop("boundary_condition")
+        boundary = self.x_non_reflecting_boundary()
+        boundary["reference_states"]["unused"] = {
+            "density": -1.0,
+            "velocity": [0.0, 0.0, 0.0],
+            "pressure": 1.0,
+        }
+        case["boundary"] = boundary
+
+        with self.assertRaisesRegex(CaseInputError, "unused.density"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_new_and_legacy_boundary_settings_together(self) -> None:
+        case = self.case()
+        case["boundary"] = self.x_non_reflecting_boundary()
+
+        with self.assertRaisesRegex(CaseInputError, "cannot be specified together"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_renders_non_reflecting_boundary_for_cuda(self) -> None:
+        case = self.case(mpi_processes=1)
+        case["numerics"].pop("boundary_condition")
+        case["boundary"] = self.x_non_reflecting_boundary()
+        case["solver"].update(
+            {
+                "profile": "cuda_single",
+                "use_mpi": False,
+                "use_openmp": False,
+                "use_cuda": True,
+                "omp_threads": 1,
+            }
+        )
+
+        text = render_nse(case, self.manifest, "cuda_single")
+
+        self.assertIn('boundary_x_min = "non_reflecting"', text)
+        self.assertIn('boundary_x_max = "non_reflecting"', text)
+        self.assertIn('boundary_y_min = "periodic"', text)
+
+    def test_accepts_new_all_periodic_boundary_for_cuda(self) -> None:
+        case = self.case(mpi_processes=1)
+        case["numerics"].pop("boundary_condition")
+        boundary = self.x_non_reflecting_boundary()
+        boundary["faces"] = {
+            face: {"type": "periodic"} for face in NSE_BOUNDARY_FACES
+        }
+        boundary["reference_states"] = {}
+        case["boundary"] = boundary
+        case["solver"].update(
+            {
+                "profile": "cuda_single",
+                "use_mpi": False,
+                "use_openmp": False,
+                "use_cuda": True,
+                "omp_threads": 1,
+            }
+        )
+
+        text = render_nse(case, self.manifest, "cuda_single")
+
+        self.assertIn('boundary_x_min = "periodic"', text)
+        self.assertIn('boundary_z_max = "periodic"', text)
+        self.assertNotIn("boundary_condition =", text)
+
+    def test_renders_reflective_boundary_for_cpu_and_cuda(self) -> None:
+        for profile, use_mpi, use_openmp, use_cuda in (
+            ("cpu_mpi", True, True, False),
+            ("cuda_single", False, False, True),
+        ):
+            with self.subTest(profile=profile):
+                case = self.case(mpi_processes=4 if use_mpi else 1)
+                case["numerics"].pop("boundary_condition")
+                case["boundary"] = {
+                    "faces": {
+                        face: {"type": "reflective"}
+                        for face in NSE_BOUNDARY_FACES
+                    },
+                    "reference_states": {},
+                }
+                case["solver"].update(
+                    {
+                        "profile": profile,
+                        "use_mpi": use_mpi,
+                        "use_openmp": use_openmp,
+                        "use_cuda": use_cuda,
+                        "omp_threads": 2 if use_openmp else 1,
+                    }
+                )
+
+                text = render_nse(case, self.manifest, profile)
+
+                self.assertIn('boundary_x_min = "reflective"', text)
+                self.assertIn('boundary_x_max = "reflective"', text)
+                self.assertIn('boundary_y_min = "reflective"', text)
+                self.assertIn('boundary_y_max = "reflective"', text)
+                self.assertIn('boundary_z_min = "reflective"', text)
+                self.assertIn('boundary_z_max = "reflective"', text)
+                self.assertNotIn("boundary_condition =", text)
+                self.assertNotIn("boundary_x_min_reference_rho", text)
+
+    def test_rejects_reference_state_on_reflective_face(self) -> None:
+        case = self.case()
+        case["numerics"].pop("boundary_condition")
+        case["boundary"] = self.x_non_reflecting_boundary()
+        case["boundary"]["faces"]["x_min"]["type"] = "reflective"
+
+        with self.assertRaisesRegex(
+            CaseInputError, "reference_state is only valid"
+        ):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_renders_shock_turbulence_and_dirichlet_driver(self) -> None:
+        text = render_nse(
+            self.shock_turbulence_case(), self.manifest, "cpu_mpi"
+        )
+
+        self.assertIn(
+            'initial_condition = "shock_turbulence_interaction"', text
+        )
+        self.assertIn('planar_shock_direction = "positive_x"', text)
+        self.assertIn("planar_shock_mach = 1.5", text)
+        self.assertIn(
+            "planar_shock_downstream_rho = 1.8620689655172413", text
+        )
+        self.assertIn(
+            "planar_shock_downstream_u = 0.69444444444444442", text
+        )
+        self.assertIn('boundary_x_min = "dirichlet"', text)
+        self.assertIn(
+            "boundary_x_min_reference_rho = 1.8620689655172413", text
+        )
+        self.assertIn("boundary_x_min_reference_u = 0.69444444444444442", text)
+        self.assertIn('boundary_x_max = "non_reflecting"', text)
+        self.assertIn("boundary_x_max_reference_rho = 1", text)
+        self.assertIn("imported_turbulence_background_rho = 1", text)
+
+    def test_renders_explicit_shock_downstream_state(self) -> None:
+        case = self.shock_turbulence_case()
+        shock = case["flow"]["planar_shock"]
+        shock.pop("mach_number")
+        shock["downstream"] = {
+            "density": 2.0,
+            "velocity": [0.8, 0.0, 0.0],
+            "pressure": 2.0,
+        }
+
+        text = render_nse(case, self.manifest, "cpu_mpi")
+
+        self.assertIn("planar_shock_mach = -1", text)
+        self.assertIn("planar_shock_downstream_rho = 2", text)
+        self.assertIn("boundary_x_min_reference_u = 0.80000000000000004", text)
+
+    def test_renders_negative_x_shock_with_x_max_driver(self) -> None:
+        case = self.shock_turbulence_case()
+        case["flow"]["planar_shock"]["propagation_direction"] = "negative_x"
+        case["flow"]["planar_shock"]["position"] = case["grid"]["x_min"] + 6 * (
+            (case["grid"]["x_max"] - case["grid"]["x_min"])
+            / case["grid"]["nx"]
+        )
+        case["flow"]["imported_turbulence"]["x_start"] = case["grid"]["x_min"]
+        case["boundary"]["faces"]["x_min"] = {
+            "type": "non_reflecting",
+            "reference_state": "shock_pre",
+        }
+        case["boundary"]["faces"]["x_max"] = {
+            "type": "dirichlet",
+            "reference_state": "shock_post",
+        }
+
+        text = render_nse(case, self.manifest, "cpu_mpi")
+
+        self.assertIn('planar_shock_direction = "negative_x"', text)
+        self.assertIn('boundary_x_max = "dirichlet"', text)
+        self.assertIn("planar_shock_downstream_u = -0.69444444444444442", text)
+        self.assertIn("boundary_x_max_reference_u = -0.69444444444444442", text)
+
+    def test_rejects_non_shock_mach_number(self) -> None:
+        case = self.shock_turbulence_case()
+        case["flow"]["planar_shock"]["mach_number"] = 1.0
+
+        with self.assertRaisesRegex(CaseInputError, "must be greater than 1"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_shock_background_different_from_upstream(self) -> None:
+        case = self.shock_turbulence_case()
+        case["flow"]["imported_turbulence"]["background"] = {
+            "density": 2.0,
+            "velocity": [0.0, 0.0, 0.0],
+            "pressure": 1.0,
+        }
+
+        with self.assertRaisesRegex(CaseInputError, "must equal"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_shock_without_dirichlet_driver(self) -> None:
+        case = self.shock_turbulence_case()
+        case["boundary"]["faces"]["x_min"] = {
+            "type": "non_reflecting",
+            "reference_state": "shock_post",
+        }
+
+        with self.assertRaisesRegex(CaseInputError, "requires.*DIRICHLET"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_shock_driver_state_mismatch(self) -> None:
+        case = self.shock_turbulence_case()
+        case["boundary"]["reference_states"]["shock_post"] = {
+            "density": 1.1,
+            "velocity": [0.0, 0.0, 0.0],
+            "pressure": 1.0,
+        }
+
+        with self.assertRaisesRegex(CaseInputError, "reference state to equal"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_renders_reflective_shock_tube_turbulence_case(self) -> None:
+        text = render_nse(
+            self.shock_tube_turbulence_case(), self.manifest, "cpu_mpi"
+        )
+
+        self.assertIn(
+            'initial_condition = "shock_tube_turbulence_interaction"', text
+        )
+        self.assertIn(
+            "shock_tube_diaphragm_position = 1.5707963267948966", text
+        )
+        self.assertIn("shock_tube_driver_p = 3.5714285714285716", text)
+        self.assertIn("shock_tube_driven_p = 0.7142857142857143", text)
+        self.assertIn('boundary_x_min = "reflective"', text)
+        self.assertIn('boundary_x_max = "non_reflecting"', text)
+        self.assertIn("boundary_x_max_reference_rho = 1", text)
+        self.assertIn("imported_turbulence_background_rho = 1", text)
+
+    def test_rejects_shock_tube_driver_pressure_not_above_driven(self) -> None:
+        case = self.shock_tube_turbulence_case()
+        case["flow"]["shock_tube"]["driver"]["pressure"] = 0.5
+
+        with self.assertRaisesRegex(CaseInputError, "pressure must be greater"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_shock_tube_driver_normal_velocity(self) -> None:
+        case = self.shock_tube_turbulence_case()
+        case["flow"]["shock_tube"]["driver"]["velocity"] = [0.1, 0.0, 0.0]
+
+        with self.assertRaisesRegex(CaseInputError, "x component must be zero"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_shock_tube_without_reflective_closed_end(self) -> None:
+        case = self.shock_tube_turbulence_case()
+        case["boundary"]["faces"]["x_min"] = {
+            "type": "non_reflecting",
+            "reference_state": "driven",
+        }
+
+        with self.assertRaisesRegex(CaseInputError, "x_min.type=REFLECTIVE"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_shock_tube_wrong_outflow_reference(self) -> None:
+        case = self.shock_tube_turbulence_case()
+        case["boundary"]["reference_states"]["wrong"] = {
+            "density": 2.0,
+            "velocity": [0.0, 0.0, 0.0],
+            "pressure": 1.0,
+        }
+        case["boundary"]["faces"]["x_max"]["reference_state"] = "wrong"
+
+        with self.assertRaisesRegex(CaseInputError, "reference state to equal"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_shock_tube_diaphragm_inside_turbulence(self) -> None:
+        case = self.shock_tube_turbulence_case()
+        case["flow"]["shock_tube"]["diaphragm_position"] = case["flow"][
+            "imported_turbulence"
+        ]["x_start"] + (
+            (case["grid"]["x_max"] - case["grid"]["x_min"])
+            / case["grid"]["nx"]
+        )
+
+        with self.assertRaisesRegex(CaseInputError, "must not lie inside"):
+            render_nse(case, self.manifest, "cpu_mpi")
 
     def test_renders_second_order_keep_selection(self) -> None:
         case = self.case()
@@ -240,7 +677,33 @@ class NseCaseInputTests(unittest.TestCase):
 
         self.assertIn(
             'imported_turbulence_file = '
-            '"cases/case0001/initial_data/turbulence.slf"',
+            '"initial_data/turbulence.slf"',
+            text,
+        )
+
+    def test_keeps_external_imported_turbulence_file_absolute(self) -> None:
+        case = self.case()
+        case["flow"] = {
+            "type": "imported_turbulence",
+            "imported_turbulence": {
+                "file": "../shared/turbulence.slf",
+                "blend_cells": 0,
+            },
+        }
+        runtime_root = Path.cwd() / "portable_runtime"
+        case_dir = runtime_root / "cases" / "case0001"
+        external_file = (case_dir / "../shared/turbulence.slf").resolve().as_posix()
+
+        text = render_nse(
+            case,
+            self.manifest,
+            "cpu_mpi",
+            case_dir=case_dir,
+            runtime_root=runtime_root,
+        )
+
+        self.assertIn(
+            f'imported_turbulence_file = "{external_file}"',
             text,
         )
 
@@ -535,6 +998,19 @@ class NseCaseInputTests(unittest.TestCase):
         self.assertIn("forcing_target_dissipation = 0.1", text)
         self.assertIn("forcing_dilatational_ratio = 0.25", text)
         self.assertIn("forcing_report_interval = 50", text)
+
+    def test_rejects_forcing_with_non_periodic_boundary(self) -> None:
+        case = self.case()
+        case["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
+        case["numerics"].pop("boundary_condition")
+        case["boundary"] = self.x_non_reflecting_boundary()
+        case["forcing"] = {
+            "type": "petersen_livescu",
+            "petersen_livescu": {"target_dissipation": 0.1},
+        }
+
+        with self.assertRaisesRegex(CaseInputError, "periodic boundaries"):
+            render_nse(case, self.manifest, "cpu_mpi_2decomp_fftw")
 
     def test_normalizes_human_readable_forcing_selectors(self) -> None:
         case = self.case()

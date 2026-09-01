@@ -32,6 +32,17 @@ constexpr int halo_direction_y = 1;
 constexpr int halo_direction_z = 2;
 constexpr int halo_side_low = -1;
 constexpr int halo_side_high = 1;
+constexpr int boundary_periodic = 0;
+constexpr int boundary_non_reflecting = 1;
+constexpr int boundary_reflective = 2;
+constexpr int boundary_dirichlet = 3;
+constexpr int boundary_face_count = 6;
+constexpr int boundary_face_x_min = 0;
+constexpr int boundary_face_x_max = 1;
+constexpr int boundary_face_y_min = 2;
+constexpr int boundary_face_y_max = 3;
+constexpr int boundary_face_z_min = 4;
+constexpr int boundary_face_z_max = 5;
 
 thread_local std::string last_error;
 
@@ -46,6 +57,13 @@ struct GridView {
   std::size_t cell_count;
 };
 
+struct BoundaryView {
+  int type[boundary_face_count]{};
+  double reference[boundary_face_count][5]{};
+  double relaxation_strength = 0.1;
+  double length_scale = -1.0;
+};
+
 struct NseCudaContext {
   GridView grid{};
   int nvar = 0;
@@ -56,6 +74,7 @@ struct NseCudaContext {
   int global_nz = 0;
   int global_y_start = 0;
   int global_z_start = 0;
+  BoundaryView boundary{};
   int convective_scheme = convective_keep6;
   int hybrid_smooth_scheme = convective_keep6;
   int hybrid_shock_scheme = convective_weno5z_roe;
@@ -226,8 +245,140 @@ __device__ inline int positive_mod(int value, int modulus) {
   return result < 0 ? result + modulus : result;
 }
 
-__global__ void periodic_halo_kernel(
-    double* q, GridView grid, int nvar, int wrap_y, int wrap_z) {
+__device__ inline double outgoing_or_relaxed(
+    double interior, double reference, double eigenvalue, double alpha) {
+  return eigenvalue >= 0.0
+      ? interior : (1.0 - alpha) * interior + alpha * reference;
+}
+
+__device__ inline void apply_dirichlet_state(
+    double state[5],
+    const BoundaryView& boundary,
+    int face,
+    double gamma) {
+  const double rho = boundary.reference[face][0];
+  const double u = boundary.reference[face][1];
+  const double v = boundary.reference[face][2];
+  const double w = boundary.reference[face][3];
+  const double pressure = boundary.reference[face][4];
+  state[0] = rho;
+  state[1] = rho * u;
+  state[2] = rho * v;
+  state[3] = rho * w;
+  state[4] = pressure / (gamma - 1.0)
+      + 0.5 * rho * (u * u + v * v + w * w);
+}
+
+__device__ inline void apply_non_reflecting_state(
+    double state[5],
+    const BoundaryView& boundary,
+    int face,
+    int normal_axis,
+    double outward_sign,
+    int ghost_layer,
+    double spacing,
+    double automatic_length_scale,
+    double gamma,
+    double small_rho,
+    double small_p) {
+  const double rho_i = state[0];
+  if (!isfinite(rho_i) || rho_i <= small_rho) {
+    for (int variable = 0; variable < 5; ++variable) state[variable] = nan("");
+    return;
+  }
+  double velocity_i[3] = {
+      state[1] / rho_i, state[2] / rho_i, state[3] / rho_i};
+  const double kinetic_i = 0.5 * rho_i * (
+      velocity_i[0] * velocity_i[0]
+      + velocity_i[1] * velocity_i[1]
+      + velocity_i[2] * velocity_i[2]);
+  const double pressure_i = (gamma - 1.0) * (state[4] - kinetic_i);
+  if (!isfinite(velocity_i[0]) || !isfinite(velocity_i[1])
+      || !isfinite(velocity_i[2]) || !isfinite(pressure_i)
+      || pressure_i <= small_p) {
+    for (int variable = 0; variable < 5; ++variable) state[variable] = nan("");
+    return;
+  }
+  const double rho_r = boundary.reference[face][0];
+  const double velocity_r[3] = {
+      boundary.reference[face][1],
+      boundary.reference[face][2],
+      boundary.reference[face][3]};
+  const double pressure_r = boundary.reference[face][4];
+  const double sound_i = sqrt(gamma * pressure_i / rho_i);
+  const double sound_r = sqrt(gamma * pressure_r / rho_r);
+  const double normal_i = outward_sign * velocity_i[normal_axis];
+  const double normal_r = outward_sign * velocity_r[normal_axis];
+  const double jminus_i = normal_i - 2.0 * sound_i / (gamma - 1.0);
+  const double jplus_i = normal_i + 2.0 * sound_i / (gamma - 1.0);
+  const double jminus_r = normal_r - 2.0 * sound_r / (gamma - 1.0);
+  const double jplus_r = normal_r + 2.0 * sound_r / (gamma - 1.0);
+  const double entropy_i = pressure_i / pow(rho_i, gamma);
+  const double entropy_r = pressure_r / pow(rho_r, gamma);
+  const double length_scale = boundary.length_scale > 0.0
+      ? boundary.length_scale : automatic_length_scale;
+  double alpha = 1.0 - exp(
+      -boundary.relaxation_strength * static_cast<double>(ghost_layer)
+      * spacing / length_scale);
+  alpha = fmax(0.0, fmin(1.0, alpha));
+  if (normal_i + sound_i < 0.0) alpha = 1.0;
+
+  const double jminus_b = outgoing_or_relaxed(
+      jminus_i, jminus_r, normal_i - sound_i, alpha);
+  const double jplus_b = outgoing_or_relaxed(
+      jplus_i, jplus_r, normal_i + sound_i, alpha);
+  const double entropy_b = outgoing_or_relaxed(
+      entropy_i, entropy_r, normal_i, alpha);
+  double velocity_b[3] = {velocity_i[0], velocity_i[1], velocity_i[2]};
+  for (int component = 0; component < 3; ++component) {
+    if (component != normal_axis) {
+      velocity_b[component] = outgoing_or_relaxed(
+          velocity_i[component], velocity_r[component], normal_i, alpha);
+    }
+  }
+  const double normal_b = 0.5 * (jplus_b + jminus_b);
+  const double sound_b = 0.25 * (gamma - 1.0) * (jplus_b - jminus_b);
+  if (!isfinite(sound_b) || sound_b <= 0.0
+      || !isfinite(entropy_b) || entropy_b <= 0.0) {
+    for (int variable = 0; variable < 5; ++variable) state[variable] = nan("");
+    return;
+  }
+  const double rho_b = pow(
+      sound_b * sound_b / (gamma * entropy_b), 1.0 / (gamma - 1.0));
+  const double pressure_b = entropy_b * pow(rho_b, gamma);
+  velocity_b[normal_axis] = outward_sign * normal_b;
+  if (!isfinite(rho_b) || rho_b <= small_rho
+      || !isfinite(pressure_b) || pressure_b <= small_p) {
+    for (int variable = 0; variable < 5; ++variable) state[variable] = nan("");
+    return;
+  }
+  state[0] = rho_b;
+  state[1] = rho_b * velocity_b[0];
+  state[2] = rho_b * velocity_b[1];
+  state[3] = rho_b * velocity_b[2];
+  state[4] = pressure_b / (gamma - 1.0) + 0.5 * rho_b * (
+      velocity_b[0] * velocity_b[0]
+      + velocity_b[1] * velocity_b[1]
+      + velocity_b[2] * velocity_b[2]);
+}
+
+__global__ void boundary_halo_kernel(
+    double* q,
+    GridView grid,
+    int nvar,
+    BoundaryView boundary,
+    int distributed_y,
+    int distributed_z,
+    int global_ny,
+    int global_nz,
+    int global_y_start,
+    int global_z_start,
+    double gamma,
+    double small_rho,
+    double small_p,
+    double dx,
+    double dy,
+    double dz) {
   const std::size_t linear =
       static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (linear >= grid.cell_count) {
@@ -245,19 +396,108 @@ __global__ void periodic_halo_kernel(
   if (interior) {
     return;
   }
-  if ((y_halo && wrap_y == 0) || (z_halo && wrap_z == 0)) {
-    return;
+
+  const bool x_low = x < grid.nghost;
+  const bool y_low = y < grid.nghost;
+  const bool z_low = z < grid.nghost;
+  const int x_face = x_low ? boundary_face_x_min : boundary_face_x_max;
+  const int y_face = y_low ? boundary_face_y_min : boundary_face_y_max;
+  const int z_face = z_low ? boundary_face_z_min : boundary_face_z_max;
+
+  if (y_halo && distributed_y != 0) {
+    const bool physical_y = y_low
+        ? global_y_start == 0 : global_y_start + grid.ny == global_ny;
+    if (!physical_y || boundary.type[y_face] == boundary_periodic) return;
+  }
+  if (z_halo && distributed_z != 0) {
+    const bool physical_z = z_low
+        ? global_z_start == 0 : global_z_start + grid.nz == global_nz;
+    if (!physical_z || boundary.type[z_face] == boundary_periodic) return;
   }
 
-  const int wrapped_x =
-      grid.nghost + positive_mod(x - grid.nghost, grid.nx);
-  const int wrapped_y = wrap_y != 0
-      ? grid.nghost + positive_mod(y - grid.nghost, grid.ny) : y;
-  const int wrapped_z = wrap_z != 0
-      ? grid.nghost + positive_mod(z - grid.nghost, grid.nz) : z;
+  int source_x = x;
+  int source_y = y;
+  int source_z = z;
+  if (x_halo) {
+    if (boundary.type[x_face] == boundary_periodic) {
+      source_x = grid.nghost + positive_mod(x - grid.nghost, grid.nx);
+    } else if (boundary.type[x_face] == boundary_reflective) {
+      source_x = x_low
+          ? 2 * grid.nghost - 1 - x
+          : 2 * (grid.nghost + grid.nx) - 1 - x;
+    } else {
+      source_x = x_low ? grid.nghost : grid.nghost + grid.nx - 1;
+    }
+  }
+  if (y_halo) {
+    if (boundary.type[y_face] == boundary_periodic) {
+      source_y = grid.nghost + positive_mod(y - grid.nghost, grid.ny);
+    } else if (boundary.type[y_face] == boundary_reflective) {
+      source_y = y_low
+          ? 2 * grid.nghost - 1 - y
+          : 2 * (grid.nghost + grid.ny) - 1 - y;
+    } else {
+      source_y = y_low ? grid.nghost : grid.nghost + grid.ny - 1;
+    }
+  }
+  if (z_halo) {
+    if (boundary.type[z_face] == boundary_periodic) {
+      source_z = grid.nghost + positive_mod(z - grid.nghost, grid.nz);
+    } else if (boundary.type[z_face] == boundary_reflective) {
+      source_z = z_low
+          ? 2 * grid.nghost - 1 - z
+          : 2 * (grid.nghost + grid.nz) - 1 - z;
+    } else {
+      source_z = z_low ? grid.nghost : grid.nghost + grid.nz - 1;
+    }
+  }
+
+  double state[5];
   for (int variable = 0; variable < nvar; ++variable) {
-    q[state_index(grid, x, y, z, variable)] =
-        q[state_index(grid, wrapped_x, wrapped_y, wrapped_z, variable)];
+    state[variable] = q[
+        state_index(grid, source_x, source_y, source_z, variable)];
+  }
+  if (x_halo) {
+    if (boundary.type[x_face] == boundary_reflective) {
+      state[1] = -state[1];
+    } else if (boundary.type[x_face] == boundary_dirichlet) {
+      apply_dirichlet_state(state, boundary, x_face, gamma);
+    } else if (boundary.type[x_face] == boundary_non_reflecting) {
+      const int layer = x_low
+          ? grid.nghost - x : x - (grid.nghost + grid.nx) + 1;
+      apply_non_reflecting_state(
+          state, boundary, x_face, 0, x_low ? -1.0 : 1.0, layer,
+          dx, dx * static_cast<double>(grid.nx), gamma, small_rho, small_p);
+    }
+  }
+  if (y_halo) {
+    if (boundary.type[y_face] == boundary_reflective) {
+      state[2] = -state[2];
+    } else if (boundary.type[y_face] == boundary_dirichlet) {
+      apply_dirichlet_state(state, boundary, y_face, gamma);
+    } else if (boundary.type[y_face] == boundary_non_reflecting) {
+      const int layer = y_low
+          ? grid.nghost - y : y - (grid.nghost + grid.ny) + 1;
+      apply_non_reflecting_state(
+          state, boundary, y_face, 1, y_low ? -1.0 : 1.0, layer,
+          dy, dy * static_cast<double>(global_ny), gamma, small_rho, small_p);
+    }
+  }
+  if (z_halo) {
+    if (boundary.type[z_face] == boundary_reflective) {
+      state[3] = -state[3];
+    } else if (boundary.type[z_face] == boundary_dirichlet) {
+      apply_dirichlet_state(state, boundary, z_face, gamma);
+    } else if (boundary.type[z_face] == boundary_non_reflecting) {
+      const int layer = z_low
+          ? grid.nghost - z : z - (grid.nghost + grid.nz) + 1;
+      apply_non_reflecting_state(
+          state, boundary, z_face, 2, z_low ? -1.0 : 1.0, layer,
+          dz, dz * static_cast<double>(global_nz), gamma, small_rho, small_p);
+    }
+  }
+  for (int variable = 0; variable < nvar; ++variable) {
+    q[state_index(grid, x, y, z, variable)] = state[variable];
   }
 }
 
@@ -1726,12 +1966,25 @@ bool valid_halo_request(
   return true;
 }
 
-bool launch_periodic(NseCudaContext* context) {
-  periodic_halo_kernel<<<block_count(context->grid.cell_count), 256>>>(
-      context->q, context->grid, context->nvar,
-      context->distributed_y ? 0 : 1,
-      context->distributed_z ? 0 : 1);
-  return check_cuda(cudaGetLastError(), "periodic halo kernel");
+bool launch_boundary(NseCudaContext* context) {
+  boundary_halo_kernel<<<block_count(context->grid.cell_count), 256>>>(
+      context->q,
+      context->grid,
+      context->nvar,
+      context->boundary,
+      context->distributed_y ? 1 : 0,
+      context->distributed_z ? 1 : 0,
+      context->global_ny,
+      context->global_nz,
+      context->global_y_start,
+      context->global_z_start,
+      context->gamma,
+      context->small_rho,
+      context->small_p,
+      context->dx,
+      context->dy,
+      context->dz);
+  return check_cuda(cudaGetLastError(), "boundary halo kernel");
 }
 
 bool launch_rhs(NseCudaContext* context) {
@@ -2093,6 +2346,14 @@ NSE_CUDA_EXPORT int nse_cuda_create(
     int device,
     int distributed_y,
     int distributed_z,
+    int global_ny,
+    int global_nz,
+    int global_y_start,
+    int global_z_start,
+    const int* boundary_type,
+    const double* boundary_reference,
+    double boundary_relaxation_strength,
+    double boundary_length_scale,
     int convective_scheme,
     int hybrid_smooth_scheme,
     int hybrid_shock_scheme,
@@ -2120,6 +2381,10 @@ NSE_CUDA_EXPORT int nse_cuda_create(
   last_error.clear();
   if (handle == nullptr) {
     set_error("CUDA context output pointer is null");
+    return 1;
+  }
+  if (boundary_type == nullptr || boundary_reference == nullptr) {
+    set_error("CUDA boundary configuration pointer is null");
     return 1;
   }
   *handle = nullptr;
@@ -2160,7 +2425,66 @@ NSE_CUDA_EXPORT int nse_cuda_create(
     set_error("central6 viscosity requires three ghosts and positive Re/Pr");
     return 1;
   }
+  if (global_ny <= 0 || global_nz <= 0
+      || global_y_start < 0 || global_z_start < 0
+      || global_y_start + ny > global_ny
+      || global_z_start + nz > global_nz
+      || (distributed_y == 0 && (global_y_start != 0 || ny != global_ny))
+      || (distributed_z == 0 && (global_z_start != 0 || nz != global_nz))) {
+    set_error("invalid local/global CUDA Y-Z domain bounds");
+    return 1;
+  }
+  if (!std::isfinite(boundary_relaxation_strength)
+      || boundary_relaxation_strength < 0.0
+      || !std::isfinite(boundary_length_scale)
+      || boundary_length_scale == 0.0
+      || (boundary_length_scale < 0.0
+          && std::abs(boundary_length_scale + 1.0)
+              > 10.0 * std::numeric_limits<double>::epsilon())) {
+    set_error("invalid CUDA non-reflecting boundary relaxation parameter");
+    return 1;
+  }
+  bool any_non_periodic = false;
+  for (int face = 0; face < boundary_face_count; ++face) {
+    if (boundary_type[face] != boundary_periodic
+        && boundary_type[face] != boundary_non_reflecting
+        && boundary_type[face] != boundary_reflective
+        && boundary_type[face] != boundary_dirichlet) {
+      set_error("unsupported CUDA boundary face type");
+      return 1;
+    }
+    if (boundary_type[face] != boundary_periodic) any_non_periodic = true;
+    if (boundary_type[face] == boundary_non_reflecting
+        || boundary_type[face] == boundary_dirichlet) {
+      const double rho = boundary_reference[5 * face];
+      const double pressure = boundary_reference[5 * face + 4];
+      if (!std::isfinite(rho) || rho <= small_rho
+          || !std::isfinite(pressure) || pressure <= small_p) {
+        set_error("CUDA boundary reference density/pressure is invalid");
+        return 1;
+      }
+      for (int component = 1; component <= 3; ++component) {
+        if (!std::isfinite(boundary_reference[5 * face + component])) {
+          set_error("CUDA boundary reference velocity is invalid");
+          return 1;
+        }
+      }
+    }
+  }
+  if ((boundary_type[boundary_face_x_min] == boundary_periodic)
+          != (boundary_type[boundary_face_x_max] == boundary_periodic)
+      || (boundary_type[boundary_face_y_min] == boundary_periodic)
+          != (boundary_type[boundary_face_y_max] == boundary_periodic)
+      || (boundary_type[boundary_face_z_min] == boundary_periodic)
+          != (boundary_type[boundary_face_z_max] == boundary_periodic)) {
+    set_error("CUDA periodic boundaries must be paired by direction");
+    return 1;
+  }
   if (forcing_enabled != 0) {
+    if (any_non_periodic) {
+      set_error("Petersen-Livescu forcing requires six periodic boundaries");
+      return 1;
+    }
 #if !defined(NSE_FORCING_CUFFTMP)
     if (distributed_y != 0 || distributed_z != 0) {
       set_error(
@@ -2194,10 +2518,10 @@ NSE_CUDA_EXPORT int nse_cuda_create(
   context->device = device;
   context->distributed_y = distributed_y != 0;
   context->distributed_z = distributed_z != 0;
-  context->global_ny = ny;
-  context->global_nz = nz;
-  context->global_y_start = 0;
-  context->global_z_start = 0;
+  context->global_ny = global_ny;
+  context->global_nz = global_nz;
+  context->global_y_start = global_y_start;
+  context->global_z_start = global_z_start;
   context->grid.nx = nx;
   context->grid.ny = ny;
   context->grid.nz = nz;
@@ -2220,6 +2544,15 @@ NSE_CUDA_EXPORT int nse_cuda_create(
     return 1;
   }
   context->nvar = nvar;
+  context->boundary.relaxation_strength = boundary_relaxation_strength;
+  context->boundary.length_scale = boundary_length_scale;
+  for (int face = 0; face < boundary_face_count; ++face) {
+    context->boundary.type[face] = boundary_type[face];
+    for (int variable = 0; variable < 5; ++variable) {
+      context->boundary.reference[face][variable] =
+          boundary_reference[5 * face + variable];
+    }
+  }
   context->convective_scheme = convective_scheme;
   context->hybrid_smooth_scheme = hybrid_smooth_scheme;
   context->hybrid_shock_scheme = hybrid_shock_scheme;
@@ -2519,7 +2852,7 @@ NSE_CUDA_EXPORT int nse_cuda_upload(void* handle, const double* q) {
           cudaMemcpy(
               context->q, q, context->state_bytes, cudaMemcpyHostToDevice),
           "copy Q to CUDA device")
-      || !launch_periodic(context)
+      || !launch_boundary(context)
       || !check_cuda(cudaDeviceSynchronize(), "finish NSE upload")) {
     return 1;
   }
@@ -2533,7 +2866,7 @@ NSE_CUDA_EXPORT int nse_cuda_download(void* handle, double* q) {
     set_error("invalid CUDA context or download pointer");
     return 1;
   }
-  if (!launch_periodic(context)
+  if (!launch_boundary(context)
       || !check_cuda(
           cudaMemcpy(
               q, context->q, context->state_bytes, cudaMemcpyDeviceToHost),
@@ -2543,14 +2876,18 @@ NSE_CUDA_EXPORT int nse_cuda_download(void* handle, double* q) {
   return 0;
 }
 
-NSE_CUDA_EXPORT int nse_cuda_apply_local_periodic(void* handle) {
+NSE_CUDA_EXPORT int nse_cuda_apply_local_boundary(void* handle) {
   last_error.clear();
   auto* context = static_cast<NseCudaContext*>(handle);
   if (context == nullptr) {
-    set_error("invalid CUDA context during local periodic update");
+    set_error("invalid CUDA context during local boundary update");
     return 1;
   }
-  return launch_periodic(context) ? 0 : 1;
+  return launch_boundary(context) ? 0 : 1;
+}
+
+NSE_CUDA_EXPORT int nse_cuda_apply_local_periodic(void* handle) {
+  return nse_cuda_apply_local_boundary(handle);
 }
 
 NSE_CUDA_EXPORT int nse_cuda_halo_count(
@@ -2730,7 +3067,7 @@ NSE_CUDA_EXPORT int nse_cuda_advance_ssprk3(void* handle, double dt) {
   }
 
   for (int stage = 1; stage <= 3; ++stage) {
-    if (!launch_periodic(context)
+    if (!launch_boundary(context)
         || nse_cuda_advance_ssprk3_stage(handle, dt, stage) != 0) {
       return 1;
     }

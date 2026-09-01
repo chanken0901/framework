@@ -1,7 +1,7 @@
 # NSEソルバー総合仕様書
 
-更新日: 2026-08-25
-仕様区分: 現行実装準拠（as implemented）
+更新日: 2026-09-01
+仕様区分: 現行実装準拠
 対象: `FrameWork/SolverLibrary/NSE` および `ScriptLibrary/RunEnvironment`
 
 ## 1. 目的と適用範囲
@@ -10,7 +10,7 @@
 支配方程式、無次元化、数値解法、初期条件、境界条件、Forcing、並列化、
 入出力および既知の制約を一つにまとめた総合仕様書である。
 
-本書では理想的な設計ではなく、2026-08-25時点のローカルソースが実際に行う
+本書では理想的な設計ではなく、2026-09-01時点のローカルソースが実際に行う
 計算を仕様とする。既存文書と実装が一致しない箇所は「現行実装上の注意事項」へ
 明記する。
 
@@ -22,11 +22,11 @@
 | 気体モデル | 比熱比一定の熱量的完全気体 |
 | 保存変数 | 5変数 `[rho, rho*u, rho*v, rho*w, rho*E]` |
 | 格子 | 一様直交Cartesian、セル中心有限体積法 |
-| 境界条件 | x、y、z全方向の周期境界のみ |
+| 境界条件 | 全backendで6面別の周期／特性無反射／鏡像 |
 | 対流流束 | KEEP2、KEEP6、WENO5-Z/Roe、KEEP/WENOハイブリッド |
 | 粘性項 | 無効、または一定輸送係数の6次精度中心差分 |
 | 時間積分 | 3段3次SSPRK（SSPRK3） |
-| 初期条件 | Taylor–Green渦、スペクトルHIT、保存済み乱流場のx方向配置 |
+| 初期条件 | Taylor–Green渦、スペクトルHIT、保存乱流配置、平面衝撃波または有限高圧室との乱流干渉 |
 | 外力 | なし、またはPetersen–Livescu線形Forcing |
 | CPU並列 | MPIによるy-z分割＋OpenMP |
 | GPU | 単一NVIDIA GPU、またはMPI＋複数NVIDIA GPU、CUDA、float64 |
@@ -393,15 +393,23 @@ NSE calculation completed successfully: step=<step>, time=<time>
 
 ## 8. 境界条件
 
-現行実装は三方向周期境界のみである。
+CPU/MPI/OpenMP版は、6物理面を個別に`periodic`、`non_reflecting`、`reflective`へ設定できる。
 
-- x方向は各MPI rankが全x範囲を保持するためローカルコピー
-- y、z方向はMPI halo交換と周期端rank間通信
+- x方向は各MPI rankが全x範囲を保持するため、各rankが物理境界を処理
+- y、z方向はMPI内部halo交換を行い、物理端を持つrankだけが境界を処理
 - 6次混合微分に必要な辺・角ghostを埋めるため、段階的にhaloを伝播
 - ghostセル数はちょうど3
 - 保存変数数はちょうど5
 
-壁面、流入流出、対称、非反射境界は未実装である。
+代表的な対象は、x方向両端を特性波ベースの無反射境界、y-z方向を周期境界
+とする孤立乱流・移流乱流計算である。新旧入力の互換規則、特性波の定義、ghost、
+MPI/CUDA処理順および検証条件は
+[`NSE_BOUNDARY_CONDITIONS.md`](NSE_BOUNDARY_CONDITIONS.md)を正規仕様とする。
+
+単一GPUおよびMPI＋CUDA版も同じ面別設定に対応し、境界ghostをGPU上で生成する。
+MPI＋CUDAでは物理端の無反射／鏡像処理と領域内部のhalo交換を分離する。
+`reflective`は法線運動量だけを反転する自由滑り・断熱の鏡像壁または対称面である。
+no-slip壁、移動壁、規定温度壁および一般の規定流入・流出は本実装の対象外である。
 
 ## 9. 初期条件
 
@@ -511,6 +519,24 @@ CPU MPI、単一GPU、MPI＋CUDAのいずれへ読み込める。元計算のバ
 圧力を検査してから計算を開始する。変換と入力の詳細は
 [`NSE_IMPORTED_TURBULENCE.md`](NSE_IMPORTED_TURBULENCE.md)に定義する。
 
+### 9.5 平面衝撃波–乱流干渉
+
+`flow.type: shock_turbulence_interaction`は、`embed`配置した保存乱流の外側に
+x法線の平面衝撃波を置く。衝撃Mach数と前方状態から完全気体のRankine–Hugoniot
+関係で背後状態を導くか、背後状態を直接指定する。正のx方向では衝撃波より左、
+負のx方向では右を背後状態とし、同じ状態を進行方向上流側のDirichlet境界から供給する。
+位置はxセル境界上かつ乱流ブロック外でなければならない。詳細は
+[`NSE_SHOCK_TURBULENCE_INTERACTION.md`](NSE_SHOCK_TURBULENCE_INTERACTION.md)に定義する。
+
+### 9.6 有限高圧室の衝撃波管–乱流干渉
+
+`flow.type: shock_tube_turbulence_interaction`は、`x_min`の鏡像閉端から隔膜までを
+有限高圧室、隔膜より右を低圧室として初期化し、その下流へ`embed`配置した保存乱流を
+重ねる。隔膜除去により右向き衝撃波・接触面と左向き膨張波が発生し、閉端で反射した
+膨張波が衝撃波を追う。`x_min`は`reflective`、`x_max`は低圧状態を参照する
+`non_reflecting`であり、高圧状態を境界から継続供給しない。詳細は
+[`NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md`](NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md)に定義する。
+
 ## 10. Petersen–Livescu Forcing
 
 密度重み付き速度
@@ -612,13 +638,21 @@ NSEのCPU/MPI生成環境には互換profileを同梱し、`case.yaml`の要求�
 | `physics.nse.mach_number` | 非HIT初期速度振幅。方程式係数ではない |
 | `physics.nse.reynolds_number` | 音響スケーリングReynolds数 |
 | `physics.nse.prandtl_number` | Prandtl数 |
-| `flow.type` | `taylor_green`, `hit`, `imported_turbulence` |
+| `flow.type` | `taylor_green`, `hit`, `imported_turbulence`, `shock_turbulence_interaction`, `shock_tube_turbulence_interaction` |
 | `flow.imported_turbulence.file` | ghostなしの可搬NSE SLF |
 | `flow.imported_turbulence.mode` | `embed`または`tile` |
 | `flow.imported_turbulence.x_start` | 元乱流セル列を開始するxセル境界座標 |
 | `flow.imported_turbulence.blend_cells` | `embed`両端の混合セル数 |
 | `flow.imported_turbulence.velocity_offset` | 読込み速度へ加える一定速度3成分 |
 | `flow.imported_turbulence.background` | `embed`外側の密度、速度、圧力 |
+| `flow.planar_shock.position` | 対象格子のxセル境界上にある初期衝撃波位置 |
+| `flow.planar_shock.propagation_direction` | `positive_x`または`negative_x` |
+| `flow.planar_shock.upstream` | 衝撃波前方の密度、速度3成分、圧力 |
+| `flow.planar_shock.mach_number` | 1より大きい衝撃Mach数。`downstream`と排他的 |
+| `flow.planar_shock.downstream` | 背後状態の直接指定。`mach_number`と排他的 |
+| `flow.shock_tube.diaphragm_position` | 有限高圧室と低圧室を分けるxセル境界座標 |
+| `flow.shock_tube.driver` | 閉端側高圧室の密度、速度3成分、圧力。x速度は0 |
+| `flow.shock_tube.driven` | 下流低圧域、乱流背景、x_max参照状態に共通する原始変数 |
 | `flow.hit.turbulent_mach_number` | HIT目標乱流Mach数 `M_t` |
 | `flow.hit.turbulent_reynolds_number` | HIT目標 `Re_lambda` |
 | `flow.hit.random_seed` | MPI分割数に依存しない乱数seed |
@@ -646,7 +680,13 @@ NSEのCPU/MPI生成環境には互換profileを同梱し、`case.yaml`の要求�
 | `numerics.hybrid.sensor_onset` | 混合開始閾値。0以上 |
 | `numerics.hybrid.sensor_full` | 完全切替閾値。onsetより大きい値 |
 | `numerics.viscous_scheme` | `none` または `central6` |
-| `numerics.boundary_condition` | `periodic`のみ |
+| `numerics.boundary_condition` | 旧互換指定。`boundary`がない場合の`periodic`のみ |
+| `boundary.faces.{x_min,x_max,y_min,y_max,z_min,z_max}.type` | `periodic`、`non_reflecting`、`reflective`、`dirichlet`。6面すべて必須 |
+| `boundary.faces.<face>.reference_state` | 無反射面またはDirichlet面が参照する名前付き状態 |
+| `boundary.reference_states.<name>` | 無次元密度、速度3成分、圧力 |
+| `boundary.reference_states.<name>.source` | 衝撃波ケースでは`planar_shock.upstream`、`planar_shock.downstream`、または`shock_tube.driven` |
+| `boundary.non_reflecting.relaxation_strength` | 0以上の特性緩和強度。既定0.1 |
+| `boundary.non_reflecting.length_scale` | `auto`または正の無次元代表長さ |
 | `numerics.time_integrator` | `ssprk3`のみ |
 | `solver.mpi_processes` | MPI版は2以上。`cuda_mpi`では通常GPU総数と同じ |
 | `solver.use_openmp` | case単位のOpenMP使用可否 |
@@ -694,10 +734,23 @@ time:
   output_frequency: 100
   use_fixed_dt: false
 
+boundary:
+  faces:
+    x_min: {type: periodic}
+    x_max: {type: periodic}
+    y_min: {type: periodic}
+    y_max: {type: periodic}
+    z_min: {type: periodic}
+    z_max: {type: periodic}
+  reference_states: {}
+  non_reflecting:
+    formulation: characteristic_relaxation
+    relaxation_strength: 0.1
+    length_scale: auto
+
 numerics:
   convective_scheme: keep6
   viscous_scheme: central6
-  boundary_condition: periodic
   time_integrator: ssprk3
 
 solver:
@@ -705,6 +758,9 @@ solver:
   mpi_processes: 4
   omp_threads: 1
 ```
+
+上の例は新規ケースの正規境界形式である。既存ケースでは旧
+`numerics.boundary_condition: periodic`も受理するが、新形式と同時指定しない。
 
 `case.yaml`が正本であり、生成されたFortran namelist `input.dat`を直接編集しない。
 
@@ -765,6 +821,8 @@ Reynolds応力、等方性誤差、積分スケール、散逸率、Taylor長、
 - ハイブリッドのKEEP/WENO切替え、連続混合、保存性
 - 6次精度粘性項と拡散時間刻み
 - 周期境界の面、辺、角ghost
+- x無反射・y-z周期の一様場、音響波、辺・角、MPI分割独立性
+- 全面鏡像の各ghost層、面・辺・角、CPU/CUDA一致、CPU/MPI・単一GPU・MPI＋CUDA時間発展
 - HITの等方化数学、目標Mach／Reynolds導出
 - Forcing係数とCPU／CUDAの整合
 - CPU参照実装とCUDA SSPRK3結果の一致
@@ -801,7 +859,7 @@ Reynolds応力、等方性誤差、積分スケール、散逸率、Taylor長、
 
 ### 15.4 数値・物理モデル上の制約
 
-- 一様直交格子、三方向周期境界のみ。
+- 一様直交格子。全backendで面別周期／無反射／鏡像境界を使用できる。
 - 5保存変数の完全気体のみ。
 - 粘性係数と熱伝導係数は一定。
 - 化学反応、多成分、LES/RANS、重力、一般物体力は未実装。
@@ -822,7 +880,7 @@ Reynolds応力、等方性誤差、積分スケール、散逸率、Taylor長、
 | Taylor–Green | `src/init/mod_init_taylor_green.f90` |
 | HIT CPU | `src/init/mod_init_hit_spectral_2decomp.f90` |
 | HIT GPU | `src/init/mod_init_hit_spectral_cufft.f90` |
-| 周期境界 | `src/boundary/mod_boundary_periodic.f90` |
+| 面別周期／無反射／鏡像境界 | `src/boundary/mod_boundary_runtime.f90`、`src/gpu/nse_cuda_bridge.cu` |
 | KEEP | `src/numerics/convective/mod_convective_keep.f90` |
 | WENO5-Z | `src/numerics/reconstruction/mod_reconstruction_weno5z.f90` |
 | Roe | `src/numerics/riemann/mod_riemann_roe.f90` |

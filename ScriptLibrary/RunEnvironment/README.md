@@ -375,6 +375,9 @@ CTestも含みます。実行時のカレントディレクトリは`cases/<case
 `case.yaml`が入力ファイルより新しい場合は、`case_input.py`を自動実行してから
 検証、ビルド、実行へ進みます。また、`--prepare`、検証、ビルド、テスト、実行の
 開始時に、現在の`case.yaml`から共通`case_index.csv`の該当行を更新します。
+Windowsで`case_index.csv`をExcelやエディタが開いていて置換できない場合は、警告を
+表示して入力生成、ビルド、実行を継続します。共通台帳は`case.yaml`から再構築できる
+補助ファイルであり、ファイルを閉じた後の次回実行時に自動で再同期されます。
 
 既存環境をまとめて再走査し、共通台帳を再構築する場合は次を使います。
 
@@ -508,6 +511,13 @@ flow:
 [`NSE_IMPORTED_TURBULENCE.md`](../../SolverLibrary/NSE/docs/NSE_IMPORTED_TURBULENCE.md)
 を参照してください。
 
+CPU/MPI/OpenMP、単一GPU CUDA、MPI＋CUDAの各版で、各物理面を`periodic`、
+`non_reflecting`、`reflective`から選べます。無反射面には`reference_state`を指定し、
+`boundary.reference_states`に密度、速度、圧力を定義します。鏡像面は基準状態を持たず、
+法線運動量だけを反転する自由滑り・断熱条件です。詳細は
+[`NSE_BOUNDARY_CONDITIONS.md`](../../SolverLibrary/NSE/docs/NSE_BOUNDARY_CONDITIONS.md)
+を参照してください。
+
 Forcingも流れ場と同様に`type`で選択し、方式固有の設定を同名のブロックへ
 まとめます。無効化するときは`type: none`のままにします。
 
@@ -611,3 +621,19 @@ python "$tool\prepare_environment.py" $design `
 上書きでは`build`、`cases`、計算結果を含む生成環境全体を置換します。残す必要がある
 `case.yaml`や`output`は実行前に別の場所へ退避してください。生成先を完全なパスで
 指定する従来の`--output <path> --overwrite`も引き続き利用できます。
+
+## NSEの平面衝撃波–乱流干渉
+
+保存乱流の外側へ平面衝撃波を配置し、衝撃波背後状態をDirichlet境界から供給する
+NSEケースは`flow.type: shock_turbulence_interaction`で生成できます。設計書の完全な
+YAML例、衝撃波前後状態の定義、配置制約、実行手順は
+[`NSE_SHOCK_TURBULENCE_INTERACTION.md`](../../SolverLibrary/NSE/docs/NSE_SHOCK_TURBULENCE_INTERACTION.md)
+を参照してください。`case.yaml`変更後は`python .\tools\run_case.py --prepare`を再実行します。
+
+## NSEの有限高圧室–衝撃波–乱流干渉
+
+鏡像閉端を持つ有限高圧室から衝撃波と膨張波を発生させ、局所乱流へ入射させる場合は
+`flow.type: shock_tube_turbulence_interaction`を使用します。高圧・低圧状態、隔膜位置、
+境界条件、実行手順は
+[`NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md`](../../SolverLibrary/NSE/docs/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md)
+を参照してください。

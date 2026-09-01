@@ -1,6 +1,6 @@
 # NSE 生成・ビルド・実行手順
 
-更新日: 2026-08-25
+更新日: 2026-09-01
 
 ## 1. 推奨フロー
 
@@ -147,7 +147,8 @@ Set-Location "$env:USERPROFILE\ResearchRuns\nse_caseNNNN"
 - `physics.nse`: 比熱比、Mach数、Reynolds数、Prandtl数
 - `flow`: Taylor-Green、HIT、または保存済み乱流場の初期条件
 - `forcing`: Forcingの有無と方式
-- `numerics`: 対流流束、粘性項、境界条件、時間積分
+- `boundary`: 6物理面の周期／無反射／鏡像条件と無反射基準状態
+- `numerics`: 対流流束、粘性項、時間積分
 - `solver`: MPIランク数、OpenMPスレッド数、CUDAデバイス
 
 対流流束は実行時に4方式から選択できる。
@@ -163,12 +164,54 @@ numerics:
     sensor_onset: 0.01
     sensor_full: 0.10
   viscous_scheme: central6
-  boundary_condition: periodic
   time_integrator: ssprk3
 ```
 
 `hybrid`以外の場合、`hybrid`以下の項目は使用されない。設定と混合則は
 [`NSE_HYBRID_FLUX.md`](NSE_HYBRID_FLUX.md)を参照する。
+
+CPU版でx方向だけを無反射、y-z方向を周期にする例を次に示す。
+
+```yaml
+boundary:
+  faces:
+    x_min: {type: non_reflecting, reference_state: far_field}
+    x_max: {type: non_reflecting, reference_state: far_field}
+    y_min: {type: periodic}
+    y_max: {type: periodic}
+    z_min: {type: periodic}
+    z_max: {type: periodic}
+  reference_states:
+    far_field:
+      density: 1.0
+      velocity: [0.5, 0.0, 0.0]
+      pressure: 0.7142857142857143
+  non_reflecting:
+    formulation: characteristic_relaxation
+    relaxation_strength: 0.1
+    length_scale: auto
+```
+
+周期面は方向ごとの対で指定する。この面別設定はCPU/MPI/OpenMP、単一GPU、MPI＋CUDAの
+全profileで共通に使用できる。詳細は
+[`NSE_BOUNDARY_CONDITIONS.md`](NSE_BOUNDARY_CONDITIONS.md)を参照する。
+
+自由滑り・断熱の鏡像面にする場合は、基準状態を付けずに`reflective`を指定する。
+
+```yaml
+boundary:
+  faces:
+    x_min: {type: reflective}
+    x_max: {type: reflective}
+    y_min: {type: periodic}
+    y_max: {type: periodic}
+    z_min: {type: periodic}
+    z_max: {type: periodic}
+  reference_states: {}
+```
+
+`reflective`では密度、接線運動量、全エネルギーを偶対称、法線運動量を奇対称に
+ghostへ写す。粘着壁（no-slip）や規定温度壁が必要な場合は別の境界条件を実装する。
 
 保存済み乱流を長いx領域へ配置する場合は、先にrank別SLFを可搬SLFへ変換する。
 元計算と読込み先の組合せは、CPU MPI→CPU MPI、CPU MPI→CUDA、CUDA→CPU MPI、
@@ -325,3 +368,16 @@ python -m unittest discover ..\RunEnvironment\tests
 
 ハイブリッド流束を変更した場合は、CPUの保存性・切替えテストと
 CPU/CUDA一致テストの両方を確認する。
+
+## 11. 衝撃波–乱流干渉ケース
+
+保存乱流SLFの作成後、`case.yaml`で`flow.type: shock_turbulence_interaction`を選ぶ。
+Dirichlet駆動面を含む完全な設定例と実行前チェックは
+[`NSE_SHOCK_TURBULENCE_INTERACTION.md`](NSE_SHOCK_TURBULENCE_INTERACTION.md)を参照する。
+caseを編集した後は必ず`--prepare`を再実行し、Rankine–Hugoniot関係から得た背後状態を
+`input.dat`へ反映してからビルド・実行する。
+
+有限高圧室から衝撃波と膨張波を同時に発生させる場合は、
+`flow.type: shock_tube_turbulence_interaction`を選ぶ。鏡像閉端、隔膜、高圧・低圧状態、
+局所乱流の完全な設定例は
+[`NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md`](NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md)を参照する。

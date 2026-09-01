@@ -4,12 +4,13 @@ MPI＋CUDAで分散HIT初期化またはPetersen–Livescu forcingを使う場�
 [`docs/NSE_CUFFTMP.md`](docs/NSE_CUFFTMP.md)の`cuda_mpi_cufftmp`手順を参照してください。
 
 MPI/OpenMP、単一GPU CUDA、またはMPI＋CUDAマルチGPUで実行する、5保存変数の三次元圧縮性
-Navier-Stokesソルバーです。周期境界、SSPRK3、KEEP/WENO系の対流流束、
+Navier-Stokesソルバーです。全backendの面別周期／特性無反射／鏡像境界、SSPRK3、KEEP/WENO系の対流流束、
 6次精度粘性項、Taylor-Green/HIT初期条件、Petersen-Livescu Forcingをモジュール化しています。
 
 ## 最初に読む文書
 
 - ソルバー全体仕様・無次元化: [`docs/NSE_SOLVER_SPECIFICATION.md`](docs/NSE_SOLVER_SPECIFICATION.md)
+- 境界条件（全backendの面別周期／無反射／鏡像）: [`docs/NSE_BOUNDARY_CONDITIONS.md`](docs/NSE_BOUNDARY_CONDITIONS.md)
 - 生成・ビルド・実行: [`docs/NSE_BUILD_AND_RUN.md`](docs/NSE_BUILD_AND_RUN.md)
 - 対流ハイブリッド: [`docs/NSE_HYBRID_FLUX.md`](docs/NSE_HYBRID_FLUX.md)
 - CUDA対応範囲: [`docs/NSE_CUDA.md`](docs/NSE_CUDA.md)
@@ -19,6 +20,8 @@ Navier-Stokesソルバーです。周期境界、SSPRK3、KEEP/WENO系の対流�
 - Forcing: [`docs/NSE_FORCING.md`](docs/NSE_FORCING.md)
 - 乱流統計: [`docs/NSE_TURBULENCE_STATISTICS.md`](docs/NSE_TURBULENCE_STATISTICS.md)
 - 保存済み乱流場の配置: [`docs/NSE_IMPORTED_TURBULENCE.md`](docs/NSE_IMPORTED_TURBULENCE.md)
+- 平面衝撃波と保存乱流の干渉: [`docs/NSE_SHOCK_TURBULENCE_INTERACTION.md`](docs/NSE_SHOCK_TURBULENCE_INTERACTION.md)
+- 有限高圧室の衝撃波管と保存乱流の干渉: [`docs/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md`](docs/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md)
 
 ## 対応プロファイル
 
@@ -87,9 +90,13 @@ physics:
 
 numerics:
   viscous_scheme: central6
-  boundary_condition: periodic
   time_integrator: ssprk3
 ```
+
+境界条件は`boundary.faces`で6物理面を指定する。CPU/MPI/OpenMP、単一GPU CUDA、
+MPI＋CUDAのすべてで`periodic`、`non_reflecting`、`reflective`を使用できる。
+`reflective`は法線運動量だけを反転する自由滑り・断熱の鏡像条件であり、no-slip壁ではない。
+旧`numerics.boundary_condition: periodic`も、`boundary`がない既存ケースに限り受理する。
 
 自動時間刻みは対流CFL条件と拡散安定条件を併用します。
 

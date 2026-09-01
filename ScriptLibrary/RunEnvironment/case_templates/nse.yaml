@@ -74,6 +74,30 @@ flow:
       density: 1.0
       velocity: [0.0, 0.0, 0.0]
       pressure: 0.7142857142857143
+  # Used when type is shock_turbulence_interaction. The shock position must
+  # be an x-cell boundary outside the imported turbulence block.
+  planar_shock:
+    position: 1.5707963267948966
+    propagation_direction: positive_x
+    # Specify either mach_number or a complete downstream state, not both.
+    mach_number: 1.5
+    upstream:
+      density: 1.0
+      velocity: [0.0, 0.0, 0.0]
+      pressure: 0.7142857142857143
+  # Used when type is shock_tube_turbulence_interaction. The x_min boundary
+  # is a reflective closed end. The diaphragm and turbulence x_start must be
+  # target x-cell boundaries, with diaphragm_position <= x_start.
+  shock_tube:
+    diaphragm_position: 1.5707963267948966
+    driver:
+      density: 1.0
+      velocity: [0.0, 0.0, 0.0]
+      pressure: 3.5714285714285716
+    driven:
+      density: 1.0
+      velocity: [0.0, 0.0, 0.0]
+      pressure: 0.7142857142857143
 
 # Petersen-Livescu linear forcing. Set type to petersen_livescu for
 # statistically stationary periodic turbulence. run_case.py selects the
@@ -106,6 +130,31 @@ grid:
   z_min: 0.0
   z_max: 6.283185307179586
 
+# CPU/MPI/OpenMP, single-GPU CUDA, and MPI+CUDA profiles support periodic,
+# characteristic non-reflecting, reflective (free-slip/adiabatic mirror), and
+# fixed primitive-state Dirichlet
+# boundaries independently on each physical face. Periodic faces must be paired
+# in each direction. Non_reflecting and dirichlet faces use reference_state.
+boundary:
+  faces:
+    x_min:
+      type: periodic
+    x_max:
+      type: periodic
+    y_min:
+      type: periodic
+    y_max:
+      type: periodic
+    z_min:
+      type: periodic
+    z_max:
+      type: periodic
+  reference_states: {}
+  non_reflecting:
+    formulation: characteristic_relaxation
+    relaxation_strength: 0.1
+    length_scale: auto
+
 time:
   cfl: 0.5
   dt: 1.0e-4
@@ -133,7 +182,6 @@ numerics:
     sensor_onset: 0.01
     sensor_full: 0.10
   viscous_scheme: central6
-  boundary_condition: periodic
   time_integrator: ssprk3
   time_integration: ssprk3
 
