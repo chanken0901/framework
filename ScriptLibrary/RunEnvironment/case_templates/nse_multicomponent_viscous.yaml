@@ -1,0 +1,104 @@
+case_id: {{case_id}}
+case_label: {{case_label}}
+status: development
+description: {{description}}
+created_at: {{created_at}}
+
+project:
+  name: {{project_name}}
+  author: Kento Tanaka
+
+physics:
+  model: {{physics_model}}
+  multicomponent:
+    mode: viscous_navier_stokes
+    species:
+      - N2
+      - O2
+
+# SI units: molecular_weight [kg/kmol], Ru [J/(kmol K)], T [K].
+thermodynamics:
+  model: thermally_perfect
+  universal_gas_constant: 8314.46261815324
+  temperature_min: 200.0
+  temperature_max: 6000.0
+  temperature_tolerance: 1.0e-10
+  species_data:
+    N2:
+      molecular_weight: 28.0134
+      temperature_midpoint: 1000.0
+      nasa7_low: [3.53100528, -1.23660987e-4, -5.02999433e-7, 2.43530612e-9, -1.40881235e-12, -1046.97628, 2.96747468]
+      nasa7_high: [2.95257626, 1.39690040e-3, -4.92631603e-7, 7.86010367e-11, -4.60755321e-15, -923.948645, 5.87188762]
+    O2:
+      molecular_weight: 31.9988
+      temperature_midpoint: 1000.0
+      nasa7_low: [3.78245636, -2.99673416e-3, 9.84730201e-6, -9.68129509e-9, 3.24372837e-12, -1063.94356, 3.65767573]
+      nasa7_high: [3.28253784, 1.48308754e-3, -7.57966669e-7, 2.09470555e-10, -2.16717794e-14, -1088.45772, 5.45323129]
+
+# Stage 4 uses constant reference viscosity, constant species diffusivities,
+# and k = mu*cp/Pr. Values are SI: mu [Pa s], D [m2/s].
+transport:
+  model: mixture_averaged
+  reference_dynamic_viscosity: 1.8e-5
+  prandtl_number: 0.72
+  species_data:
+    N2:
+      diffusivity: 2.0e-5
+    O2:
+      diffusivity: 2.0e-5
+
+chemistry:
+  model: none
+
+grid:
+  nx: 64
+  ny: 4
+  nz: 4
+  x_min: 0.0
+  x_max: 1.0
+  y_min: 0.0
+  y_max: 1.0
+  z_min: 0.0
+  z_max: 1.0
+
+flow:
+  type: periodic_species_wave
+  periodic_species_wave:
+    initial_condition: periodic_species_wave_x
+    density: 1.0
+    temperature: 300.0
+    velocity: [0.0, 0.0, 0.0]
+    mean_mass_fractions: [0.5, 0.5]
+    positive_species: N2
+    negative_species: O2
+    amplitude: 0.1
+    wavenumber: 1
+
+time:
+  cfl: 0.20
+  diffusion_cfl: 0.40
+  dt: 0.0
+  nsteps: 20
+
+numerics:
+  convective_scheme: rusanov1
+  boundary_condition: periodic
+  time_integration: ssprk3
+
+solver:
+  profile: {{solver_profile}}
+  use_mpi: {{use_mpi}}
+  use_openmp: {{use_openmp}}
+  use_cuda: {{use_cuda}}
+  mpi_processes: {{mpi_processes}}
+  omp_threads: {{omp_threads}}
+
+output:
+  write_final: true
+  filename: multicomponent_viscous_final.csv
+
+storage:
+  raw_data_location: {{raw_data_location}}
+
+outputs:
+  used_in:

@@ -13,6 +13,7 @@ module mod_mc_euler_solver
   private
 
   public :: run_mc_euler
+  public :: write_mc_euler_csv
 
 contains
 

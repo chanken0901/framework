@@ -1,0 +1,58 @@
+! Stage-4 multicomponent Navier-Stokes smoke test.
+&multicomponent
+  nspecies = 2
+  species_names = "species_a", "species_b"
+  simulation_mode = "viscous_navier_stokes"
+  thermodynamics_model = "thermally_perfect"
+  transport_model = "mixture_averaged"
+  chemistry_model = "none"
+/
+
+&thermally_perfect
+  thermo_species_names = "species_a", "species_b"
+  universal_gas_constant = 8314.46261815324
+  temperature_min = 200.0
+  temperature_max = 6000.0
+  temperature_tolerance = 1.0e-10
+  molecular_weights = 28.0134, 28.0134
+  temperature_midpoints = 1000.0, 1000.0
+  nasa_low_coefficients = 3.53100528, -1.23660987e-4, -5.02999433e-7, 2.43530612e-9, -1.40881235e-12, -1046.97628, 2.96747468, 3.53100528, -1.23660987e-4, -5.02999433e-7, 2.43530612e-9, -1.40881235e-12, -1046.97628, 2.96747468
+  nasa_high_coefficients = 2.95257626, 1.39690040e-3, -4.92631603e-7, 7.86010367e-11, -4.60755321e-15, -923.948645, 5.87188762, 2.95257626, 1.39690040e-3, -4.92631603e-7, 7.86010367e-11, -4.60755321e-15, -923.948645, 5.87188762
+/
+
+&mixture_averaged_transport
+  transport_species_names = "species_a", "species_b"
+  reference_dynamic_viscosity = 1.8e-5
+  prandtl_number = 0.72
+  species_diffusivities = 2.0e-5, 3.0e-5
+/
+
+&multicomponent_euler
+  nx = 24
+  ny = 4
+  nz = 4
+  x_min = 0.0
+  x_max = 1.0
+  y_min = 0.0
+  y_max = 1.0
+  z_min = 0.0
+  z_max = 1.0
+  cfl = 0.20
+  diffusion_cfl = 0.40
+  dt = 0.0
+  nsteps = 5
+  initial_condition = "periodic_species_wave_x"
+  wave_density = 1.17197031944841
+  wave_temperature = 300.0
+  wave_velocity = 0.0, 0.0, 0.0
+  wave_mean_mass_fractions = 0.5, 0.5
+  wave_positive_species = 1
+  wave_negative_species = 2
+  wave_amplitude = 0.10
+  wave_wavenumber = 1
+  riemann_solver = "rusanov1"
+  boundary_condition = "periodic"
+  time_integrator = "ssprk3"
+  write_final = .true.
+  output_file = "multicomponent_viscous_final.csv"
+/

@@ -156,6 +156,19 @@ options:
         description: Thermally-perfect non-reacting multicomponent Sod problem
         project_name: NSEMulticomponentResearch
         data_root: results
+    nse_multicomponent_viscous:
+      label: Multicomponent NSE stage-4 transport
+      description: Periodic species wave with diffusion, viscosity, and heat conduction.
+      requires:
+        model.name: nse_multicomponent
+      values:
+        create: true
+        template: ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_viscous.yaml
+        id: case0001
+        label: viscous_species_wave
+        description: Stage-4 multicomponent transport validation
+        project_name: NSEMulticomponentResearch
+        data_root: results
     gpe_quantum_taylor_green:
       label: GPE量子Taylor-Green
       description: 周期的な量子Taylor-Green渦caseを生成する。

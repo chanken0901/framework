@@ -1,4 +1,4 @@
-# Additive multicomponent foundation through stage-3 thermodynamics.
+# Additive multicomponent foundation through stage-4 transport.
 # The production single-component NSE remains in solver_manifest.yaml.
 schema_version: 1
 solver_id: nse_multicomponent
@@ -6,7 +6,7 @@ solver_api_version: 1
 model: nse_multicomponent
 runtime_profile_selection: false
 default_profiles:
-  serial: cpu_serial_thermally_perfect
+  serial: cpu_serial_viscous
 build_adapter: nse_cmake_v1
 cmake_file: CMakeLists.txt
 
@@ -42,6 +42,11 @@ components:
     cmake_role: library
     files:
       - src/extensions/multicomponent/providers/mod_mc_transport_none.f90
+
+  transport_mixture_averaged:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/providers/mod_mc_transport_mixture_averaged.f90
 
   chemistry_none:
     cmake_role: library
@@ -79,6 +84,17 @@ components:
     files:
       - src/extensions/multicomponent/main_nse_multicomponent_inviscid.f90
 
+  viscous_core:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/mod_mc_viscous_flux.f90
+      - src/extensions/multicomponent/mod_mc_viscous_solver.f90
+
+  main_viscous:
+    cmake_role: executable
+    files:
+      - src/extensions/multicomponent/main_nse_multicomponent_viscous.f90
+
   foundation_tests:
     files:
       - tests/test_multicomponent_foundation.f90
@@ -98,6 +114,11 @@ components:
     files:
       - tests/test_multicomponent_thermally_perfect.f90
       - tests/input_multicomponent_thermally_perfect.dat
+
+  viscous_tests:
+    files:
+      - tests/test_multicomponent_viscous.f90
+      - tests/input_multicomponent_viscous.dat
 
   foundation_docs:
     files:
@@ -237,3 +258,44 @@ profiles:
       NSE_INIT_FFT_BACKEND: none
       NSE_FORCING_FFT_BACKEND: none
       NSE_TEST_SUITE: multicomponent_thermally_perfect
+
+  cpu_serial_viscous:
+    description: Stage-4 thermally-perfect mixture-averaged Navier-Stokes solver
+    capabilities:
+      - multicomponent_foundation
+      - nonreacting_multicomponent_navier_stokes
+      - thermally_perfect_ideal_gas_mixture
+      - nasa7_thermodynamics
+      - temperature_recovery
+      - mixture_averaged_species_diffusion
+      - newtonian_viscosity
+      - fourier_heat_conduction
+      - periodic_boundary
+      - rusanov1
+      - ssprk3
+    components:
+      - foundation_core
+      - thermodynamics_thermally_perfect
+      - transport_mixture_averaged
+      - chemistry_none
+      - euler_core
+      - viscous_core
+      - foundation_docs
+      - main_viscous
+    test_components:
+      - foundation_tests
+      - viscous_tests
+    executable: nse_multicomponent
+    execution:
+      use_mpi: false
+      use_openmp: false
+    cmake:
+      NSE_USE_MPI: false
+      NSE_ENABLE_OPENMP: false
+      NSE_GPU_BACKEND: none
+      NSE_CONVECTIVE_BACKEND: runtime
+      NSE_VISCOUS_SCHEME: none
+      NSE_BOUNDARY_SCHEME: periodic
+      NSE_INIT_FFT_BACKEND: none
+      NSE_FORCING_FFT_BACKEND: none
+      NSE_TEST_SUITE: multicomponent_viscous

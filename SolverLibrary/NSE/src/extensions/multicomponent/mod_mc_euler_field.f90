@@ -3,7 +3,8 @@ module mod_mc_euler_field
   use mod_mc_state_layout, only : mc_state_layout
   use mod_mc_euler_config, only : mc_euler_config
   use mod_mc_thermodynamics_provider, only : mc_mixture_density, mc_pressure, &
-    mc_temperature, mc_total_energy_from_primitive
+    mc_temperature, mc_total_energy_from_primitive, &
+    mc_mixture_gas_constant
   implicit none
   private
 
@@ -20,7 +21,9 @@ contains
     type(mc_state_layout), intent(in) :: layout
     type(mc_euler_config), intent(in) :: config
     integer :: i, j, k
-    real(dp) :: x, dx
+    real(dp) :: x, dx, phase, pressure, gas_constant
+    real(dp) :: mass_fractions(layout%nspecies)
+    real(dp), parameter :: pi = acos(-1.0_dp)
 
     if (size(q,1) /= config%nx .or. size(q,2) /= config%ny .or. &
         size(q,3) /= config%nz .or. size(q,4) /= layout%nvariables) then
@@ -31,17 +34,39 @@ contains
       do j = 1, config%ny
         do i = 1, config%nx
           x = config%x_min + (real(i,dp)-0.5_dp)*dx
-          if (x < config%interface_location) then
+          select case (trim(config%initial_condition))
+          case ('multispecies_sod_x')
+            if (x < config%interface_location) then
+              call set_mc_euler_conservative_state( &
+                q(i,j,k,:), layout, config%gamma, config%left_density, &
+                config%left_velocity, config%left_pressure, &
+                config%left_mass_fractions(1:layout%nspecies))
+            else
+              call set_mc_euler_conservative_state( &
+                q(i,j,k,:), layout, config%gamma, config%right_density, &
+                config%right_velocity, config%right_pressure, &
+                config%right_mass_fractions(1:layout%nspecies))
+            end if
+          case ('periodic_species_wave_x')
+            phase = 2.0_dp*pi*real(config%wave_wavenumber,dp)* &
+              (x-config%x_min)/(config%x_max-config%x_min)
+            mass_fractions = &
+              config%wave_mean_mass_fractions(1:layout%nspecies)
+            mass_fractions(config%wave_positive_species) = &
+              mass_fractions(config%wave_positive_species) + &
+              config%wave_amplitude*sin(phase)
+            mass_fractions(config%wave_negative_species) = &
+              mass_fractions(config%wave_negative_species) - &
+              config%wave_amplitude*sin(phase)
+            gas_constant = mc_mixture_gas_constant(mass_fractions,layout)
+            pressure = config%wave_density*gas_constant* &
+              config%wave_temperature
             call set_mc_euler_conservative_state( &
-              q(i,j,k,:), layout, config%gamma, config%left_density, &
-              config%left_velocity, config%left_pressure, &
-              config%left_mass_fractions(1:layout%nspecies))
-          else
-            call set_mc_euler_conservative_state( &
-              q(i,j,k,:), layout, config%gamma, config%right_density, &
-              config%right_velocity, config%right_pressure, &
-              config%right_mass_fractions(1:layout%nspecies))
-          end if
+              q(i,j,k,:),layout,config%gamma,config%wave_density, &
+              config%wave_velocity,pressure,mass_fractions)
+          case default
+            error stop 'unsupported multicomponent initial condition'
+          end select
         end do
       end do
     end do

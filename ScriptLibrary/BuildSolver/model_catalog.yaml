@@ -10,11 +10,11 @@ models:
     default_profile: cpu_mpi
 
   nse_multicomponent:
-    description: Additive multicomponent NSE through stage-3 thermodynamics
+    description: Additive multicomponent NSE through stage-4 transport
     library_subpath: NSE
     manifest: solver_manifest_multicomponent.yaml
     required_adapter: nse_cmake_v1
-    default_profile: cpu_serial_thermally_perfect
+    default_profile: cpu_serial_viscous
 
   gpe:
     description: Three-dimensional Gross-Pitaevskii pseudo-spectral solver

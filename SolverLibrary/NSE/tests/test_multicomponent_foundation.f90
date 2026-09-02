@@ -5,6 +5,8 @@ program test_multicomponent_foundation
   use mod_mc_provider_registry, only : validate_mc_providers
   use mod_mc_thermodynamics_provider, only : &
     mc_thermodynamics_provider_name
+  use mod_mc_transport_provider, only : mc_transport_provider_name
+  use mod_mc_chemistry_provider, only : mc_chemistry_provider_name
   implicit none
 
   type(mc_config) :: config
@@ -15,6 +17,8 @@ program test_multicomponent_foundation
     'stage-0 default simulation mode must remain foundation')
   call initialize_mc_state_layout(layout, config%nspecies)
   config%thermodynamics_model = mc_thermodynamics_provider_name
+  config%transport_model = mc_transport_provider_name
+  config%chemistry_model = mc_chemistry_provider_name
   call assert_true(layout%nvariables == 5, &
     'one species must reduce to five conservative variables')
   call assert_true(mc_species_index(layout, 1) == 1, &

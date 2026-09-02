@@ -2042,6 +2042,44 @@ def _thermally_perfect_settings(
     }
 
 
+def _mixture_averaged_transport_settings(
+    transport: dict[str, Any], species: list[str]
+) -> dict[str, Any]:
+    dynamic_viscosity = _positive_float(
+        transport.get("reference_dynamic_viscosity"),
+        "transport.reference_dynamic_viscosity",
+    )
+    prandtl_number = _positive_float(
+        transport.get("prandtl_number"),
+        "transport.prandtl_number",
+    )
+    species_data = _mapping(
+        transport.get("species_data"), "transport.species_data"
+    )
+    if set(species_data) != set(species):
+        raise CaseInputError(
+            "transport.species_data keys must exactly match "
+            "physics.multicomponent.species"
+        )
+    diffusivities = []
+    for name in species:
+        properties = _mapping(
+            species_data[name], f"transport.species_data.{name}"
+        )
+        diffusivities.append(
+            _positive_float(
+                properties.get("diffusivity"),
+                f"transport.species_data.{name}.diffusivity",
+            )
+        )
+    return {
+        "transport_species_names": species,
+        "reference_dynamic_viscosity": dynamic_viscosity,
+        "prandtl_number": prandtl_number,
+        "species_diffusivities": diffusivities,
+    }
+
+
 def render_nse_multicomponent(
     case: dict[str, Any], profile_name: str | None = None
 ) -> str:
@@ -2070,10 +2108,12 @@ def render_nse_multicomponent(
         "passive_scalar",
         "inviscid_euler",
         "thermally_perfect_euler",
+        "viscous_navier_stokes",
     }:
         raise CaseInputError(
             "physics.multicomponent.mode must be foundation, passive_scalar, "
-            "inviscid_euler, or thermally_perfect_euler"
+            "inviscid_euler, thermally_perfect_euler, or "
+            "viscous_navier_stokes"
         )
     if simulation_mode == "passive_scalar" and len(species) < 2:
         raise CaseInputError(
@@ -2084,6 +2124,7 @@ def render_nse_multicomponent(
         "cpu_serial_passive_scalar": "passive_scalar",
         "cpu_serial_inviscid": "inviscid_euler",
         "cpu_serial_thermally_perfect": "thermally_perfect_euler",
+        "cpu_serial_viscous": "viscous_navier_stokes",
     }
     if profile_name in expected_modes and simulation_mode != expected_modes[profile_name]:
         raise CaseInputError(
@@ -2105,12 +2146,19 @@ def render_nse_multicomponent(
     }
     expected_thermodynamics = (
         "thermally_perfect"
-        if simulation_mode == "thermally_perfect_euler"
+        if simulation_mode in {
+            "thermally_perfect_euler",
+            "viscous_navier_stokes",
+        }
         else "calorically_perfect"
     )
     supported = {
         "thermodynamics": expected_thermodynamics,
-        "transport": "none",
+        "transport": (
+            "mixture_averaged"
+            if simulation_mode == "viscous_navier_stokes"
+            else "none"
+        ),
         "chemistry": "none",
     }
     for category, expected in supported.items():
@@ -2126,6 +2174,9 @@ def render_nse_multicomponent(
         "inviscid_euler": "Stage-2 non-reacting inviscid multicomponent Euler",
         "thermally_perfect_euler": (
             "Stage-3 thermally-perfect non-reacting multicomponent Euler"
+        ),
+        "viscous_navier_stokes": (
+            "Stage-4 thermally-perfect multicomponent Navier-Stokes"
         ),
     }
     lines = [
@@ -2148,12 +2199,23 @@ def render_nse_multicomponent(
     lines.extend(["/", ""])
 
     thermally_perfect: dict[str, Any] | None = None
-    if simulation_mode == "thermally_perfect_euler":
+    if simulation_mode in {
+        "thermally_perfect_euler",
+        "viscous_navier_stokes",
+    }:
         thermally_perfect = _thermally_perfect_settings(
             thermodynamics, species
         )
         lines.append("&thermally_perfect")
         _append(lines, list(thermally_perfect.items()))
+        lines.extend(["/", ""])
+
+    if simulation_mode == "viscous_navier_stokes":
+        mixture_transport = _mixture_averaged_transport_settings(
+            transport, species
+        )
+        lines.append("&mixture_averaged_transport")
+        _append(lines, list(mixture_transport.items()))
         lines.extend(["/", ""])
 
     if simulation_mode == "passive_scalar":
@@ -2286,20 +2348,18 @@ def render_nse_multicomponent(
             ],
         )
         lines.extend(["/", ""])
-    elif simulation_mode in {"inviscid_euler", "thermally_perfect_euler"}:
-        stage_number = 3 if simulation_mode == "thermally_perfect_euler" else 2
+    elif simulation_mode in {
+        "inviscid_euler",
+        "thermally_perfect_euler",
+        "viscous_navier_stokes",
+    }:
+        stage_number = {
+            "inviscid_euler": 2,
+            "thermally_perfect_euler": 3,
+            "viscous_navier_stokes": 4,
+        }[simulation_mode]
         flow = _mapping(nested(case, "flow", {}), "flow")
         flow_type = _canonical_selector(str(flow.get("type", "")))
-        if flow_type != "multispecies_sod":
-            raise CaseInputError(
-                f"stage-{stage_number} requires flow.type='multispecies_sod'"
-            )
-        initial = _mapping(
-            nested(case, "flow.multispecies_sod", {}),
-            "flow.multispecies_sod",
-        )
-        left = _mapping(initial.get("left"), "flow.multispecies_sod.left")
-        right = _mapping(initial.get("right"), "flow.multispecies_sod.right")
         time = _mapping(nested(case, "time", {}), "time")
         numerics = _mapping(nested(case, "numerics", {}), "numerics")
         output = _mapping(nested(case, "output", {}), "output")
@@ -2314,67 +2374,174 @@ def render_nse_multicomponent(
             )
             if gamma <= 1.0:
                 raise CaseInputError("thermodynamics.gamma must exceed one")
-        interface_location = _finite_float(
-            initial.get("interface_location", 0.5),
-            "flow.multispecies_sod.interface_location",
-        )
-        if not extents[0] < interface_location < extents[1]:
-            raise CaseInputError(
-                "flow.multispecies_sod.interface_location must lie inside x"
+
+        interface_location = None
+        left_density = None
+        left_velocity = None
+        left_pressure = None
+        left_fractions = None
+        right_density = None
+        right_velocity = None
+        right_pressure = None
+        right_fractions = None
+        wave_density = None
+        wave_temperature = None
+        wave_velocity = None
+        wave_mean_fractions = None
+        wave_positive_species = None
+        wave_negative_species = None
+        wave_amplitude = None
+        wave_wavenumber = None
+
+        if simulation_mode == "viscous_navier_stokes":
+            if flow_type != "periodic_species_wave":
+                raise CaseInputError(
+                    "stage-4 requires flow.type='periodic_species_wave'"
+                )
+            initial = _mapping(
+                nested(case, "flow.periodic_species_wave", {}),
+                "flow.periodic_species_wave",
             )
-        left_density = _positive_float(
-            left.get("density"), "flow.multispecies_sod.left.density"
-        )
-        left_velocity = _vector3(
-            left.get("velocity"), "flow.multispecies_sod.left.velocity"
-        )
-        left_pressure = _positive_float(
-            left.get("pressure"), "flow.multispecies_sod.left.pressure"
-        )
-        left_fractions = _mass_fraction_vector(
-            left.get("mass_fractions"),
-            "flow.multispecies_sod.left.mass_fractions",
-            len(species),
-        )
-        right_density = _positive_float(
-            right.get("density"), "flow.multispecies_sod.right.density"
-        )
-        right_velocity = _vector3(
-            right.get("velocity"), "flow.multispecies_sod.right.velocity"
-        )
-        right_pressure = _positive_float(
-            right.get("pressure"), "flow.multispecies_sod.right.pressure"
-        )
-        right_fractions = _mass_fraction_vector(
-            right.get("mass_fractions"),
-            "flow.multispecies_sod.right.mass_fractions",
-            len(species),
-        )
-        if thermally_perfect is not None:
-            for side_name, density, pressure_value, fractions in (
-                ("left", left_density, left_pressure, left_fractions),
-                ("right", right_density, right_pressure, right_fractions),
+            wave_density = _positive_float(
+                initial.get("density"),
+                "flow.periodic_species_wave.density",
+            )
+            wave_temperature = _positive_float(
+                initial.get("temperature"),
+                "flow.periodic_species_wave.temperature",
+            )
+            if thermally_perfect is not None and not (
+                thermally_perfect["temperature_min"]
+                <= wave_temperature
+                <= thermally_perfect["temperature_max"]
             ):
-                mixture_gas_constant = thermally_perfect[
-                    "universal_gas_constant"
-                ] * sum(
-                    fractions[index]
-                    / thermally_perfect["molecular_weights"][index]
-                    for index in range(len(species))
+                raise CaseInputError(
+                    "flow.periodic_species_wave.temperature is outside the "
+                    "configured thermodynamics temperature range"
                 )
-                initial_temperature = pressure_value / (
-                    density * mixture_gas_constant
+            wave_velocity = _vector3(
+                initial.get("velocity", [0.0, 0.0, 0.0]),
+                "flow.periodic_species_wave.velocity",
+            )
+            wave_mean_fractions = _mass_fraction_vector(
+                initial.get("mean_mass_fractions"),
+                "flow.periodic_species_wave.mean_mass_fractions",
+                len(species),
+            )
+            positive_name = str(initial.get("positive_species", "")).strip()
+            negative_name = str(initial.get("negative_species", "")).strip()
+            if positive_name not in species or negative_name not in species:
+                raise CaseInputError(
+                    "periodic species-wave species must appear in "
+                    "physics.multicomponent.species"
                 )
-                if not (
-                    thermally_perfect["temperature_min"]
-                    <= initial_temperature
-                    <= thermally_perfect["temperature_max"]
+            if positive_name == negative_name:
+                raise CaseInputError(
+                    "periodic species-wave positive_species and "
+                    "negative_species must differ"
+                )
+            wave_positive_species = species.index(positive_name) + 1
+            wave_negative_species = species.index(negative_name) + 1
+            wave_amplitude = _positive_float(
+                initial.get("amplitude", 0.1),
+                "flow.periodic_species_wave.amplitude",
+                allow_zero=True,
+            )
+            if wave_amplitude >= min(
+                wave_mean_fractions[wave_positive_species - 1],
+                wave_mean_fractions[wave_negative_species - 1],
+            ):
+                raise CaseInputError(
+                    "periodic species-wave amplitude violates mass-fraction "
+                    "positivity"
+                )
+            wave_wavenumber = initial.get("wavenumber", 1)
+            if (
+                isinstance(wave_wavenumber, bool)
+                or not isinstance(wave_wavenumber, int)
+                or wave_wavenumber < 1
+            ):
+                raise CaseInputError(
+                    "flow.periodic_species_wave.wavenumber must be a "
+                    "positive integer"
+                )
+        else:
+            if flow_type != "multispecies_sod":
+                raise CaseInputError(
+                    f"stage-{stage_number} requires "
+                    "flow.type='multispecies_sod'"
+                )
+            initial = _mapping(
+                nested(case, "flow.multispecies_sod", {}),
+                "flow.multispecies_sod",
+            )
+            left = _mapping(
+                initial.get("left"), "flow.multispecies_sod.left"
+            )
+            right = _mapping(
+                initial.get("right"), "flow.multispecies_sod.right"
+            )
+            interface_location = _finite_float(
+                initial.get("interface_location", 0.5),
+                "flow.multispecies_sod.interface_location",
+            )
+            if not extents[0] < interface_location < extents[1]:
+                raise CaseInputError(
+                    "flow.multispecies_sod.interface_location must lie inside x"
+                )
+            left_density = _positive_float(
+                left.get("density"), "flow.multispecies_sod.left.density"
+            )
+            left_velocity = _vector3(
+                left.get("velocity"), "flow.multispecies_sod.left.velocity"
+            )
+            left_pressure = _positive_float(
+                left.get("pressure"), "flow.multispecies_sod.left.pressure"
+            )
+            left_fractions = _mass_fraction_vector(
+                left.get("mass_fractions"),
+                "flow.multispecies_sod.left.mass_fractions",
+                len(species),
+            )
+            right_density = _positive_float(
+                right.get("density"), "flow.multispecies_sod.right.density"
+            )
+            right_velocity = _vector3(
+                right.get("velocity"), "flow.multispecies_sod.right.velocity"
+            )
+            right_pressure = _positive_float(
+                right.get("pressure"), "flow.multispecies_sod.right.pressure"
+            )
+            right_fractions = _mass_fraction_vector(
+                right.get("mass_fractions"),
+                "flow.multispecies_sod.right.mass_fractions",
+                len(species),
+            )
+            if thermally_perfect is not None:
+                for side_name, density, pressure_value, fractions in (
+                    ("left", left_density, left_pressure, left_fractions),
+                    ("right", right_density, right_pressure, right_fractions),
                 ):
-                    raise CaseInputError(
-                        f"flow.multispecies_sod.{side_name} gives "
-                        f"T={initial_temperature:g}, outside the configured "
-                        "thermodynamics temperature range"
+                    mixture_gas_constant = thermally_perfect[
+                        "universal_gas_constant"
+                    ] * sum(
+                        fractions[index]
+                        / thermally_perfect["molecular_weights"][index]
+                        for index in range(len(species))
                     )
+                    initial_temperature = pressure_value / (
+                        density * mixture_gas_constant
+                    )
+                    if not (
+                        thermally_perfect["temperature_min"]
+                        <= initial_temperature
+                        <= thermally_perfect["temperature_max"]
+                    ):
+                        raise CaseInputError(
+                            f"flow.multispecies_sod.{side_name} gives "
+                            f"T={initial_temperature:g}, outside the "
+                            "configured thermodynamics temperature range"
+                        )
 
         nsteps = time.get("nsteps")
         if isinstance(nsteps, bool) or not isinstance(nsteps, int) or nsteps < 0:
@@ -2384,11 +2551,25 @@ def render_nse_multicomponent(
             raise CaseInputError(
                 f"stage-{stage_number} multicomponent Euler CFL must not exceed 1"
             )
+        diffusion_cfl = None
+        if simulation_mode == "viscous_navier_stokes":
+            diffusion_cfl = _positive_float(
+                time.get("diffusion_cfl", 0.4), "time.diffusion_cfl"
+            )
+            if diffusion_cfl > 1.0:
+                raise CaseInputError(
+                    "stage-4 multicomponent diffusion CFL must not exceed 1"
+                )
         fixed_dt = _positive_float(
             time.get("dt",0.0), "time.dt", allow_zero=True
         )
+        default_initial_condition = (
+            "periodic_species_wave_x"
+            if simulation_mode == "viscous_navier_stokes"
+            else "multispecies_sod_x"
+        )
         initial_condition = _canonical_selector(
-            str(initial.get("initial_condition","multispecies_sod_x"))
+            str(initial.get("initial_condition", default_initial_condition))
         )
         riemann_solver = _canonical_selector(
             str(numerics.get("convective_scheme","rusanov1"))
@@ -2399,9 +2580,14 @@ def render_nse_multicomponent(
         time_integrator = _canonical_selector(
             str(numerics.get("time_integration","ssprk3"))
         )
+        initial_condition_label = (
+            "flow.periodic_species_wave.initial_condition"
+            if simulation_mode == "viscous_navier_stokes"
+            else "flow.multispecies_sod.initial_condition"
+        )
         supported_values = {
-            "flow.multispecies_sod.initial_condition": (
-                initial_condition, "multispecies_sod_x"
+            initial_condition_label: (
+                initial_condition, default_initial_condition
             ),
             "numerics.convective_scheme": (riemann_solver,"rusanov1"),
             "numerics.boundary_condition": (boundary_condition,"periodic"),
@@ -2416,9 +2602,12 @@ def render_nse_multicomponent(
         write_final = output.get("write_final",True)
         if not isinstance(write_final,bool):
             raise CaseInputError("output.write_final must be true or false")
-        output_file = str(
-            output.get("filename","multicomponent_euler_final.csv")
-        ).strip()
+        default_output_file = (
+            "multicomponent_viscous_final.csv"
+            if simulation_mode == "viscous_navier_stokes"
+            else "multicomponent_euler_final.csv"
+        )
+        output_file = str(output.get("filename", default_output_file)).strip()
         if write_final and not output_file:
             raise CaseInputError("output.filename must not be empty")
 
@@ -2437,6 +2626,7 @@ def render_nse_multicomponent(
                 ("z_max",extents[5]),
                 ("gamma",gamma if simulation_mode == "inviscid_euler" else None),
                 ("cfl",cfl),
+                ("diffusion_cfl",diffusion_cfl),
                 ("dt",fixed_dt),
                 ("nsteps",nsteps),
                 ("initial_condition",initial_condition),
@@ -2449,6 +2639,14 @@ def render_nse_multicomponent(
                 ("right_velocity",right_velocity),
                 ("right_pressure",right_pressure),
                 ("right_mass_fractions",right_fractions),
+                ("wave_density",wave_density),
+                ("wave_temperature",wave_temperature),
+                ("wave_velocity",wave_velocity),
+                ("wave_mean_mass_fractions",wave_mean_fractions),
+                ("wave_positive_species",wave_positive_species),
+                ("wave_negative_species",wave_negative_species),
+                ("wave_amplitude",wave_amplitude),
+                ("wave_wavenumber",wave_wavenumber),
                 ("riemann_solver",riemann_solver),
                 ("boundary_condition",boundary_condition),
                 ("time_integrator",time_integrator),

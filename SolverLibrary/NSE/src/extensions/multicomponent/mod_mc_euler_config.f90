@@ -18,6 +18,7 @@ module mod_mc_euler_config
     real(dp) :: z_max = 1.0_dp
     real(dp) :: gamma = 1.4_dp
     real(dp) :: cfl = 0.35_dp
+    real(dp) :: diffusion_cfl = 0.40_dp
     real(dp) :: dt = 0.0_dp
     integer :: nsteps = 20
     character(len=32) :: initial_condition = 'multispecies_sod_x'
@@ -30,6 +31,14 @@ module mod_mc_euler_config
     real(dp) :: right_velocity(3) = 0.0_dp
     real(dp) :: right_pressure = 0.1_dp
     real(dp) :: right_mass_fractions(mc_max_species) = 0.0_dp
+    real(dp) :: wave_density = 1.0_dp
+    real(dp) :: wave_temperature = 300.0_dp
+    real(dp) :: wave_velocity(3) = 0.0_dp
+    real(dp) :: wave_mean_mass_fractions(mc_max_species) = 0.0_dp
+    integer :: wave_positive_species = 1
+    integer :: wave_negative_species = 2
+    real(dp) :: wave_amplitude = 0.10_dp
+    integer :: wave_wavenumber = 1
     character(len=32) :: riemann_solver = 'rusanov1'
     character(len=32) :: boundary_condition = 'periodic'
     character(len=32) :: time_integrator = 'ssprk3'
@@ -55,11 +64,15 @@ contains
     if (nspecies == 1) then
       config%left_mass_fractions(1) = 1.0_dp
       config%right_mass_fractions(1) = 1.0_dp
+      config%wave_mean_mass_fractions(1) = 1.0_dp
     else
       config%left_mass_fractions(1) = 0.8_dp
       config%left_mass_fractions(nspecies) = 0.2_dp
       config%right_mass_fractions(1) = 0.2_dp
       config%right_mass_fractions(nspecies) = 0.8_dp
+      config%wave_mean_mass_fractions(1) = 0.5_dp
+      config%wave_mean_mass_fractions(nspecies) = 0.5_dp
+      config%wave_negative_species = nspecies
     end if
   end subroutine initialize_mc_euler_config
 
@@ -70,22 +83,29 @@ contains
     integer :: unit, ios
     integer :: nx, ny, nz, nsteps
     real(dp) :: x_min, x_max, y_min, y_max, z_min, z_max
-    real(dp) :: gamma, cfl, dt, interface_location
+    real(dp) :: gamma, cfl, diffusion_cfl, dt, interface_location
     real(dp) :: left_density, left_velocity(3), left_pressure
     real(dp) :: left_mass_fractions(mc_max_species)
     real(dp) :: right_density, right_velocity(3), right_pressure
     real(dp) :: right_mass_fractions(mc_max_species)
+    real(dp) :: wave_density, wave_temperature, wave_velocity(3)
+    real(dp) :: wave_mean_mass_fractions(mc_max_species), wave_amplitude
+    integer :: wave_positive_species, wave_negative_species, wave_wavenumber
     character(len=32) :: initial_condition, riemann_solver
     character(len=32) :: boundary_condition, time_integrator
     logical :: write_final
     character(len=mc_path_length) :: output_file
     character(len=512) :: message
     namelist /multicomponent_euler/ nx, ny, nz, x_min, x_max, y_min, &
-      y_max, z_min, z_max, gamma, cfl, dt, nsteps, initial_condition, &
+      y_max, z_min, z_max, gamma, cfl, diffusion_cfl, dt, nsteps, &
+      initial_condition, &
       interface_location, left_density, left_velocity, left_pressure, &
       left_mass_fractions, right_density, right_velocity, right_pressure, &
-      right_mass_fractions, riemann_solver, boundary_condition, &
-      time_integrator, write_final, output_file
+      right_mass_fractions, wave_density, wave_temperature, wave_velocity, &
+      wave_mean_mass_fractions, wave_positive_species, &
+      wave_negative_species, wave_amplitude, wave_wavenumber, &
+      riemann_solver, boundary_condition, time_integrator, write_final, &
+      output_file
 
     call initialize_mc_euler_config(config, nspecies)
     nx = config%nx
@@ -99,6 +119,7 @@ contains
     z_max = config%z_max
     gamma = config%gamma
     cfl = config%cfl
+    diffusion_cfl = config%diffusion_cfl
     dt = config%dt
     nsteps = config%nsteps
     initial_condition = config%initial_condition
@@ -111,6 +132,14 @@ contains
     right_velocity = config%right_velocity
     right_pressure = config%right_pressure
     right_mass_fractions = config%right_mass_fractions
+    wave_density = config%wave_density
+    wave_temperature = config%wave_temperature
+    wave_velocity = config%wave_velocity
+    wave_mean_mass_fractions = config%wave_mean_mass_fractions
+    wave_positive_species = config%wave_positive_species
+    wave_negative_species = config%wave_negative_species
+    wave_amplitude = config%wave_amplitude
+    wave_wavenumber = config%wave_wavenumber
     riemann_solver = config%riemann_solver
     boundary_condition = config%boundary_condition
     time_integrator = config%time_integrator
@@ -144,6 +173,7 @@ contains
     config%z_max = z_max
     config%gamma = gamma
     config%cfl = cfl
+    config%diffusion_cfl = diffusion_cfl
     config%dt = dt
     config%nsteps = nsteps
     config%initial_condition = adjustl(initial_condition)
@@ -156,6 +186,14 @@ contains
     config%right_velocity = right_velocity
     config%right_pressure = right_pressure
     config%right_mass_fractions = right_mass_fractions
+    config%wave_density = wave_density
+    config%wave_temperature = wave_temperature
+    config%wave_velocity = wave_velocity
+    config%wave_mean_mass_fractions = wave_mean_mass_fractions
+    config%wave_positive_species = wave_positive_species
+    config%wave_negative_species = wave_negative_species
+    config%wave_amplitude = wave_amplitude
+    config%wave_wavenumber = wave_wavenumber
     config%riemann_solver = adjustl(riemann_solver)
     config%boundary_condition = adjustl(boundary_condition)
     config%time_integrator = adjustl(time_integrator)
@@ -186,29 +224,64 @@ contains
     if (config%cfl <= 0.0_dp .or. config%cfl > 1.0_dp) then
       error stop 'multicomponent Euler CFL must be in (0,1]'
     end if
+    if (config%diffusion_cfl <= 0.0_dp .or. &
+        config%diffusion_cfl > 1.0_dp) then
+      error stop 'multicomponent diffusion CFL must be in (0,1]'
+    end if
     if (config%dt < 0.0_dp .or. config%nsteps < 0) then
       error stop 'multicomponent Euler time settings are invalid'
     end if
-    if (trim(config%initial_condition) /= 'multispecies_sod_x') then
-      error stop 'multicomponent Euler supports initial_condition=multispecies_sod_x'
+    if (trim(config%initial_condition) /= 'multispecies_sod_x' .and. &
+        trim(config%initial_condition) /= 'periodic_species_wave_x') then
+      error stop 'unsupported multicomponent initial condition'
     end if
-    if (config%interface_location <= config%x_min .or. &
-        config%interface_location >= config%x_max) then
-      error stop 'Euler interface location must lie inside the x domain'
-    end if
-    if (min(config%left_density,config%right_density) <= 0.0_dp .or. &
-        min(config%left_pressure,config%right_pressure) <= 0.0_dp) then
-      error stop 'Euler initial density and pressure must be positive'
-    end if
-    if (minval(config%left_mass_fractions(1:nspecies)) < 0.0_dp .or. &
-        minval(config%right_mass_fractions(1:nspecies)) < 0.0_dp) then
-      error stop 'Euler initial mass fractions must be non-negative'
-    end if
-    if (abs(sum(config%left_mass_fractions(1:nspecies))-1.0_dp) > &
-        fraction_tolerance .or. &
-        abs(sum(config%right_mass_fractions(1:nspecies))-1.0_dp) > &
-        fraction_tolerance) then
-      error stop 'Euler initial mass fractions must sum to one'
+    if (trim(config%initial_condition) == 'multispecies_sod_x') then
+      if (config%interface_location <= config%x_min .or. &
+          config%interface_location >= config%x_max) then
+        error stop 'Euler interface location must lie inside the x domain'
+      end if
+      if (min(config%left_density,config%right_density) <= 0.0_dp .or. &
+          min(config%left_pressure,config%right_pressure) <= 0.0_dp) then
+        error stop 'Euler initial density and pressure must be positive'
+      end if
+      if (minval(config%left_mass_fractions(1:nspecies)) < 0.0_dp .or. &
+          minval(config%right_mass_fractions(1:nspecies)) < 0.0_dp) then
+        error stop 'Euler initial mass fractions must be non-negative'
+      end if
+      if (abs(sum(config%left_mass_fractions(1:nspecies))-1.0_dp) > &
+          fraction_tolerance .or. &
+          abs(sum(config%right_mass_fractions(1:nspecies))-1.0_dp) > &
+          fraction_tolerance) then
+        error stop 'Euler initial mass fractions must sum to one'
+      end if
+    else
+      if (nspecies < 2) then
+        error stop 'periodic species wave requires at least two species'
+      end if
+      if (config%wave_density <= 0.0_dp .or. &
+          config%wave_temperature <= 0.0_dp) then
+        error stop 'periodic species-wave density and temperature must be positive'
+      end if
+      if (minval(config%wave_mean_mass_fractions(1:nspecies)) < 0.0_dp .or. &
+          abs(sum(config%wave_mean_mass_fractions(1:nspecies))-1.0_dp) > &
+          fraction_tolerance) then
+        error stop 'periodic species-wave mean fractions are invalid'
+      end if
+      if (min(config%wave_positive_species,config%wave_negative_species) < 1 .or. &
+          max(config%wave_positive_species,config%wave_negative_species) > &
+          nspecies .or. &
+          config%wave_positive_species == config%wave_negative_species) then
+        error stop 'periodic species-wave indices are invalid'
+      end if
+      if (config%wave_amplitude < 0.0_dp .or. &
+          config%wave_amplitude >= min( &
+          config%wave_mean_mass_fractions(config%wave_positive_species), &
+          config%wave_mean_mass_fractions(config%wave_negative_species))) then
+        error stop 'periodic species-wave amplitude violates positivity'
+      end if
+      if (config%wave_wavenumber < 1) then
+        error stop 'periodic species-wave wavenumber must be positive'
+      end if
     end if
     if (trim(config%riemann_solver) /= 'rusanov1') then
       error stop 'multicomponent Euler supports riemann_solver=rusanov1'

@@ -15,6 +15,7 @@
 | `nse_multicomponent` | `cpu_serial_passive_scalar` | Stage 1パッシブスカラー |
 | `nse_multicomponent` | `cpu_serial_inviscid` | Stage 2非反応・非粘性多成分流 |
 | `nse_multicomponent` | `cpu_serial_thermally_perfect` | Stage 3温度・組成依存熱力学 |
+| `nse_multicomponent` | `cpu_serial_viscous` | Stage 4拡散・粘性・熱伝導 |
 
 多成分profileの実行ファイル名はすべて`nse_multicomponent`である。profileごとに
 main programとコンパイル対象を切り替えるため、各Stageの実行内容は混在しない。
@@ -139,7 +140,47 @@ NASA-7の`a6`が定める生成エンタルピーの基準によっては`rhoE`�
 温度・圧力が正で設定範囲内なら異常ではない。Stage 3の正値性判定も`rhoE`の符号ではなく、
 部分密度、混合密度、温度、圧力に対して行う。
 
-## 6. 保存変数
+## 6. Stage 4: 混合平均輸送
+
+Stage 4はStage 3の熱力学に、化学種拡散、Newton粘性およびFourier熱伝導を加えた
+非反応多成分Navier--Stokes方程式を解く。対流流束はStage 2/3と同じRusanov法、
+輸送流束はセル中心勾配を面へ補間する二次精度中心差分で評価する。
+
+```text
+J_s^0 = -rho D_s grad(Y_s)
+J_s   = J_s^0 - Y_s sum_r J_r^0
+sum_s J_s = 0
+
+tau = mu [grad(u) + grad(u)^T - (2/3) div(u) I]
+k   = mu cp_mix / Pr
+```
+
+保存式へ加える輸送項は次のとおりである。
+
+```text
+species:  -div(J_s)
+momentum:  div(tau)
+energy:    div(tau.u + k grad(T) - sum_s h_s J_s)
+```
+
+`mixture_averaged` providerは現段階では一定の基準粘性係数、一定の各成分拡散係数、
+一定Prandtl数を受け取る。熱伝導率は局所温度・組成から求めた`cp_mix`を通して変化する。
+拡散補正により各面の全成分拡散質量流束を厳密にゼロとし、全質量を保存する。
+エネルギー流束にはNASA-7から得た各成分エンタルピーを含める。
+
+自動時間刻みは対流CFL制約と次の陽的拡散制約の小さい方を使う。
+
+```text
+alpha_max = max_s(D_s, mu/rho, k/[rho cv_mix])
+dt_diff   = diffusion_cfl /
+            {2 alpha_max (1/dx^2 + 1/dy^2 + 1/dz^2)}
+```
+
+検証用初期条件`periodic_species_wave_x`は、一定密度・温度・速度の周期場で2成分の
+質量分率に逆符号の正弦波を加える。これは拡散による振幅減衰、成分流束和ゼロ、
+周期領域の保存性を分離して確認するための初期条件である。
+
+## 7. 保存変数
 
 全Stageで状態レイアウトを共有する。
 
@@ -151,7 +192,7 @@ nvar = Ns + 4
 
 `Ns=1`では5保存変数になる。変数番号は`mod_mc_state_layout`だけが決定する。
 
-## 7. Provider境界
+## 8. Provider境界
 
 熱力学、輸送、化学反応は同一APIを持つ代替Fortran moduleとして実装し、manifestが
 ビルド時に各1個を選択する。
@@ -164,10 +205,11 @@ mod_mc_chemistry_provider
 
 Stage 2では熱力学providerが混合密度、圧力、音速を提供する。Stage 3では同じAPIに
 温度、混合気体定数、混合比熱比、primitive状態からの全エネルギー生成を追加した。
-輸送と化学反応providerは引き続き`none`である。入力名とコンパイル済みproviderが
-異なる場合は開始前に停止する。
+Stage 4では輸送providerを`mixture_averaged`へ交換し、Stage 0--3では`none`を維持する。
+化学反応providerは全Stageで`none`である。入力名とコンパイル済みproviderが異なる場合は
+開始前に停止する。
 
-## 8. 設計書
+## 9. 設計書
 
 完全なひな型は
 `ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_inviscid.yaml`
@@ -234,7 +276,43 @@ thermodynamics:
       nasa7_high: [2.95257626, 1.39690040e-3, -4.92631603e-7, 7.86010367e-11, -4.60755321e-15, -923.948645, 5.87188762]
 ```
 
-## 9. ビルドと実行環境
+Stage 4では`case_templates/nse_multicomponent_viscous.yaml`をひな型にする。
+輸送物性もspecies名をキーにするため、species一覧との過不足を入力生成時に拒否する。
+
+```yaml
+physics:
+  multicomponent:
+    mode: viscous_navier_stokes
+    species: [N2, O2]
+
+transport:
+  model: mixture_averaged
+  reference_dynamic_viscosity: 1.8e-5
+  prandtl_number: 0.72
+  species_data:
+    N2: {diffusivity: 2.0e-5}
+    O2: {diffusivity: 2.0e-5}
+
+flow:
+  type: periodic_species_wave
+  periodic_species_wave:
+    initial_condition: periodic_species_wave_x
+    density: 1.0
+    temperature: 300.0
+    velocity: [0.0, 0.0, 0.0]
+    mean_mass_fractions: [0.5, 0.5]
+    positive_species: N2
+    negative_species: O2
+    amplitude: 0.1
+    wavenumber: 1
+
+time:
+  cfl: 0.2
+  diffusion_cfl: 0.4
+  dt: 0.0
+```
+
+## 10. ビルドと実行環境
 
 Windows（PowerShell）:
 
@@ -242,7 +320,7 @@ Windows（PowerShell）:
 python .\ScriptLibrary\BuildSolver\build_model.py `
   .\ScriptLibrary\BuildSolver\build.yaml `
   --model nse_multicomponent `
-  --profile cpu_serial_thermally_perfect `
+  --profile cpu_serial_viscous `
   --test
 ```
 
@@ -252,15 +330,15 @@ Linux（bash）:
 python3 ./ScriptLibrary/BuildSolver/build_model.py \
   ./ScriptLibrary/BuildSolver/build.yaml \
   --model nse_multicomponent \
-  --profile cpu_serial_thermally_perfect \
+  --profile cpu_serial_viscous \
   --test
 ```
 
 実行環境設計書は
-`ScriptLibrary/RunEnvironment/environment.nse_multicomponent.thermally_perfect.yaml`
+`ScriptLibrary/RunEnvironment/environment.nse_multicomponent.viscous.yaml`
 を使用する。
 
-## 10. Stage 3の制約
+## 11. Stage 4の制約
 
 - CPU逐次実行のみ
 - 三次元直交等間隔格子
@@ -268,15 +346,16 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 - 一次Rusanov流束のみ
 - 理想混合気体のみ（実在気体効果なし）
 - NASA-7係数の設定温度範囲内のみ
-- 化学反応、species拡散、粘性、熱伝導なし
-- x方向の多成分Sod初期条件のみ
+- 化学反応なし
+- 粘性係数、Prandtl数、species拡散係数は入力値で一定
+- Soret効果、Dufour効果、圧力拡散、実在気体輸送なし
+- x方向の周期species波初期条件のみ
 - CSVは最終時刻だけ出力
 
 未実装の選択肢は黙って別方式として扱わず、入力生成時または計算開始前に拒否する。
 
-## 11. 後続Stage
+## 12. 後続Stage
 
-4. 混合平均拡散、粘性、熱伝導
 5. 0次元有限反応速度化学
 6. Strang分割による流体・反応結合
 7. 反応流境界条件、初期条件、出力
@@ -284,7 +363,7 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 9. 一般座標
 10. CUDA
 
-## 12. 必須回帰条件
+## 13. 必須回帰条件
 
 - 現行`nse`のmanifest、実行ファイル名、既定profileを維持する。
 - Stage 0/1 profileを独立してビルド・実行できる。
@@ -298,4 +377,7 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 - 混合比熱比が温度と組成に応じて変化する。
 - NASA-7の温度範囲外やspecies物性の不一致を開始前に拒否する。
 - 反応追加後も成分生成速度の総和をゼロにする。
-- 拡散追加後も成分拡散流束の総和をゼロにする。
+- 成分拡散流束の総和を各セルでゼロにする。
+- 一様場の輸送右辺をゼロにする。
+- 周期species波と周期速度波を拡散・粘性で減衰させる。
+- 輸送を含む周期計算でも全species質量、運動量、全エネルギーを保存する。

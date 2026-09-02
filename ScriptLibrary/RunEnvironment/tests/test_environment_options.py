@@ -221,6 +221,24 @@ class EnvironmentOptionTests(unittest.TestCase):
         self.assertEqual(resolved["model"]["name"], "nse")
         self.assertNotIn("processes", resolved["execution"])
 
+    def test_stage_four_multicomponent_environment_resolves(self) -> None:
+        design_path = (
+            SCRIPT_DIR / "environment.nse_multicomponent.viscous.yaml"
+        )
+        resolved, _ = resolve_design_options(
+            load_yaml(design_path), design_path, BUILTIN
+        )
+
+        self.assertEqual(resolved["model"]["name"], "nse_multicomponent")
+        self.assertEqual(resolved["solver"]["profile"], "cpu_serial_viscous")
+        self.assertEqual(
+            resolved["case"]["template"],
+            "ScriptLibrary/RunEnvironment/case_templates/"
+            "nse_multicomponent_viscous.yaml",
+        )
+        self.assertFalse(resolved["parallel"]["use_mpi"])
+        self.assertFalse(resolved["parallel"]["use_cuda"])
+
 
 if __name__ == "__main__":
     unittest.main()

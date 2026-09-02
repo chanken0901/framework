@@ -33,6 +33,7 @@ module mod_mc_thermodynamics_provider
   public :: mc_mixture_gas_constant
   public :: mc_mixture_cp
   public :: mc_mixture_gamma
+  public :: mc_species_enthalpies
   public :: mc_pressure
   public :: mc_temperature
   public :: mc_sound_speed
@@ -265,6 +266,15 @@ contains
     end if
   end function species_internal_energy
 
+  real(dp) function species_enthalpy( &
+      species,temperature) result(enthalpy)
+    integer, intent(in) :: species
+    real(dp), intent(in) :: temperature
+
+    enthalpy = species_internal_energy(species,temperature) + &
+      species_gas_constant(species)*temperature
+  end function species_enthalpy
+
   real(dp) function mixture_internal_energy( &
       mass_fractions,temperature) result(internal_energy)
     real(dp), intent(in) :: mass_fractions(:), temperature
@@ -380,6 +390,23 @@ contains
     gas_constant = mc_mixture_gas_constant(mass_fractions,layout)
     gamma_value = cp_value/(cp_value-gas_constant)
   end function mc_mixture_gamma
+
+  subroutine mc_species_enthalpies( &
+      layout,temperature,enthalpies)
+    type(mc_state_layout), intent(in) :: layout
+    real(dp), intent(in) :: temperature
+    real(dp), intent(out) :: enthalpies(:)
+    integer :: species
+
+    call ensure_configured(layout)
+    if (temperature < temperature_min .or. temperature > temperature_max .or. &
+        size(enthalpies) < layout%nspecies) then
+      error stop 'species-enthalpy request is outside the provider contract'
+    end if
+    do species = 1, layout%nspecies
+      enthalpies(species) = species_enthalpy(species,temperature)
+    end do
+  end subroutine mc_species_enthalpies
 
   real(dp) function mc_temperature(state,layout,gamma) result(temperature)
     real(dp), intent(in) :: state(:)

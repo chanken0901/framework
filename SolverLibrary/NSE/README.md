@@ -6,7 +6,8 @@
 > [`docs/NSE_MULTICOMPONENT_ROADMAP.md`](docs/NSE_MULTICOMPONENT_ROADMAP.md)
 > および`solver_manifest_multicomponent.yaml`で管理します。
 > Stage 1ではCPU逐次の周期パッシブスカラー移流まで実装済みです。
-> Stage 3ではNASA-7物性による温度・組成依存の理想混合気体まで実装済みです。
+> Stage 4ではNASA-7物性に加え、混合平均species拡散、Newton粘性、
+> Fourier熱伝導まで実装済みです。
 > Stage 2の共通γモデルも独立profileとして維持しています。
 
 MPI＋CUDAで分散HIT初期化またはPetersen–Livescu forcingを使う場合は、
@@ -50,6 +51,7 @@ Navier-Stokesソルバーです。全backendの面別周期／特性無反射／
 | `cpu_serial_passive_scalar` | CPU逐次 | Stage 1保存形周期パッシブスカラー移流 |
 | `cpu_serial_inviscid` | CPU逐次 | Stage 2非反応・非粘性多成分Euler流 |
 | `cpu_serial_thermally_perfect` | CPU逐次 | Stage 3 NASA-7熱的完全混合気体 |
+| `cpu_serial_viscous` | CPU逐次 | Stage 4拡散・粘性・熱伝導 |
 
 新規cloneではFrameWorkモノレポと`2decomp-fft`サブモジュールをまとめて取得します。
 

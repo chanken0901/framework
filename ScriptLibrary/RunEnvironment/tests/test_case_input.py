@@ -249,6 +249,44 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
         )
         return case
 
+    @classmethod
+    def viscous_case(cls) -> dict:
+        case = cls.thermally_perfect_case()
+        case["physics"]["multicomponent"]["mode"] = (
+            "viscous_navier_stokes"
+        )
+        case["transport"] = {
+            "model": "mixture_averaged",
+            "reference_dynamic_viscosity": 1.8e-5,
+            "prandtl_number": 0.72,
+            "species_data": {
+                "N2": {"diffusivity": 2.0e-5},
+                "O2": {"diffusivity": 2.1e-5},
+            },
+        }
+        case["flow"] = {
+            "type": "periodic_species_wave",
+            "periodic_species_wave": {
+                "initial_condition": "periodic_species_wave_x",
+                "density": 1.0,
+                "temperature": 300.0,
+                "velocity": [0.0, 0.0, 0.0],
+                "mean_mass_fractions": [0.5, 0.5],
+                "positive_species": "N2",
+                "negative_species": "O2",
+                "amplitude": 0.1,
+                "wavenumber": 1,
+            },
+        }
+        case["time"] = {
+            "cfl": 0.2,
+            "diffusion_cfl": 0.4,
+            "dt": 0.0,
+            "nsteps": 10,
+        }
+        case["output"]["filename"] = "multicomponent_viscous_final.csv"
+        return case
+
     def test_renders_one_species_stage_zero_contract(self) -> None:
         text = render_nse_multicomponent(self.case())
 
@@ -407,6 +445,42 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
             render_nse_multicomponent(
                 self.euler_case(), "cpu_serial_thermally_perfect"
             )
+
+    def test_renders_stage_four_transport_contract(self) -> None:
+        text = render_nse_multicomponent(
+            self.viscous_case(), "cpu_serial_viscous"
+        )
+
+        self.assertIn('simulation_mode = "viscous_navier_stokes"', text)
+        self.assertIn('transport_model = "mixture_averaged"', text)
+        self.assertIn("&mixture_averaged_transport", text)
+        self.assertIn('transport_species_names = "N2", "O2"', text)
+        self.assertIn("species_diffusivities = 2.0000000000000002e-05", text)
+        self.assertIn('initial_condition = "periodic_species_wave_x"', text)
+        self.assertIn("wave_positive_species = 1", text)
+        self.assertIn("wave_negative_species = 2", text)
+        self.assertIn("diffusion_cfl = 0.40000000000000002", text)
+
+    def test_stage_four_transport_species_keys_must_match(self) -> None:
+        case = self.viscous_case()
+        del case["transport"]["species_data"]["O2"]
+
+        with self.assertRaisesRegex(CaseInputError, "must exactly match"):
+            render_nse_multicomponent(case, "cpu_serial_viscous")
+
+    def test_stage_four_rejects_nonpositive_diffusivity(self) -> None:
+        case = self.viscous_case()
+        case["transport"]["species_data"]["O2"]["diffusivity"] = 0.0
+
+        with self.assertRaisesRegex(CaseInputError, "must be positive"):
+            render_nse_multicomponent(case, "cpu_serial_viscous")
+
+    def test_stage_four_rejects_wave_that_breaks_positivity(self) -> None:
+        case = self.viscous_case()
+        case["flow"]["periodic_species_wave"]["amplitude"] = 0.5
+
+        with self.assertRaisesRegex(CaseInputError, "violates.*positivity"):
+            render_nse_multicomponent(case, "cpu_serial_viscous")
 
     def test_passive_scalar_rejects_unimplemented_scheme(self) -> None:
         case = self.case()

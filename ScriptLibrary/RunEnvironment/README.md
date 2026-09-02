@@ -20,6 +20,13 @@ Stage 3の温度・組成依存熱力学には
 出力します。物性値と流れ場は整合するSI単位で指定してください。Stage 3もCPU逐次、
 非粘性、周期境界、非反応です。
 
+Stage 4の混合平均輸送には
+`environment.nse_multicomponent.viscous.yaml`を使用します。設計書から
+`case_templates/nse_multicomponent_viscous.yaml`を展開し、一定のspecies拡散係数、
+基準粘性係数、Prandtl数と周期species波を設定します。生成される
+`cpu_serial_viscous`環境はCPU逐次で、拡散・粘性・熱伝導を含む非反応
+多成分Navier--Stokes計算をビルド・試験できます。
+
 > OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通のパス、Python、CMake、MPIの対応表は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 NSEの`case.yaml`では`numerics.convective_scheme`に`keep2`、`keep6`、

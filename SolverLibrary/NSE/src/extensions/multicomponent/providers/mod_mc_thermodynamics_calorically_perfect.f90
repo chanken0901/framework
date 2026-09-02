@@ -11,6 +11,7 @@ module mod_mc_thermodynamics_provider
   public :: validate_mc_thermodynamics_provider
   public :: configure_mc_thermodynamics
   public :: mc_mixture_density
+  public :: mc_mixture_gas_constant
   public :: mc_mixture_gamma
   public :: mc_pressure
   public :: mc_temperature
@@ -47,6 +48,15 @@ contains
 
     density = sum(state(layout%first_species:layout%last_species))
   end function mc_mixture_density
+
+  pure real(dp) function mc_mixture_gas_constant( &
+      mass_fractions, layout) result(gas_constant)
+    real(dp), intent(in) :: mass_fractions(:)
+    type(mc_state_layout), intent(in) :: layout
+
+    gas_constant = 1.0_dp + &
+      0.0_dp*sum(mass_fractions(1:layout%nspecies))
+  end function mc_mixture_gas_constant
 
   pure real(dp) function mc_pressure(state, layout, gamma) result(pressure)
     real(dp), intent(in) :: state(:)

@@ -1,0 +1,29 @@
+schema_version: 1
+environment_id: nse_multicomponent_viscous
+
+option_catalogs: []
+
+select:
+  source: local_framework
+  destination: windows_research_runs
+  model: nse_multicomponent
+  target: windows_gnu_msmpi
+  case: nse_multicomponent_viscous
+  execution: release
+  scheduler: disabled
+  archive: none
+
+parallel:
+  use_mpi: false
+  use_openmp: false
+  use_cuda: false
+
+case:
+  id: case0001
+  label: viscous_species_wave
+  description: Stage-4 multicomponent diffusion, viscosity, and conduction
+  project_name: NSEMulticomponentResearch
+
+solver:
+  profile: cpu_serial_viscous
+  include_tests: true
