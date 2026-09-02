@@ -383,7 +383,155 @@ class FortranDependencyInspectionTests(unittest.TestCase):
             )
 
 
+class MulticomponentFoundationManifestTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.framework_root = SCRIPT_DIR.parents[1]
+        cls.solver_root = cls.framework_root / "SolverLibrary" / "NSE"
+        cls.catalog = load_yaml(
+            cls.framework_root
+            / "ScriptLibrary"
+            / "BuildSolver"
+            / "model_catalog.yaml"
+        )
+        cls.manifest = load_yaml(
+            cls.solver_root / "solver_manifest_multicomponent.yaml"
+        )
+
+    def test_legacy_nse_registration_is_preserved(self) -> None:
+        nse = self.catalog["models"]["nse"]
+
+        self.assertEqual(nse["manifest"], "solver_manifest.yaml")
+        self.assertEqual(nse["default_profile"], "cpu_mpi")
+
+    def test_multicomponent_registration_is_additive(self) -> None:
+        model = self.catalog["models"]["nse_multicomponent"]
+
+        self.assertEqual(model["library_subpath"], "NSE")
+        self.assertEqual(
+            model["manifest"], "solver_manifest_multicomponent.yaml"
+        )
+        self.assertEqual(self.manifest["model"], "nse_multicomponent")
+        self.assertEqual(model["default_profile"], "cpu_serial_inviscid")
+        self.assertEqual(
+            self.manifest["profiles"]["cpu_serial_foundation"]["executable"],
+            "nse_multicomponent",
+        )
+
+    def test_passive_scalar_profile_has_complete_fortran_dependencies(self) -> None:
+        files, components = _selected_solver_files(
+            self.solver_root,
+            self.manifest,
+            "cpu_serial_passive_scalar",
+            True,
+        )
+
+        dependencies = _inspect_dependencies(
+            self.solver_root,
+            self.manifest,
+            files,
+            _profile_preprocessor_defines(
+                self.manifest, "cpu_serial_passive_scalar"
+            ),
+        )
+
+        self.assertIn("passive_scalar_core", components)
+        self.assertIn(
+            "src/extensions/multicomponent/mod_mc_passive_scalar_advection.f90",
+            dependencies,
+        )
+        self.assertIn(
+            "tests/test_multicomponent_passive_scalar.f90", dependencies
+        )
+
+    def test_euler_profile_has_complete_fortran_dependencies(self) -> None:
+        files, components = _selected_solver_files(
+            self.solver_root,
+            self.manifest,
+            "cpu_serial_inviscid",
+            True,
+        )
+
+        dependencies = _inspect_dependencies(
+            self.solver_root,
+            self.manifest,
+            files,
+            _profile_preprocessor_defines(
+                self.manifest, "cpu_serial_inviscid"
+            ),
+        )
+
+        self.assertIn("euler_core", components)
+        self.assertIn(
+            "src/extensions/multicomponent/mod_mc_euler_flux.f90",
+            dependencies,
+        )
+        self.assertIn("tests/test_multicomponent_euler.f90", dependencies)
+
+    def test_foundation_profile_has_complete_fortran_dependencies(self) -> None:
+        files, components = _selected_solver_files(
+            self.solver_root,
+            self.manifest,
+            "cpu_serial_foundation",
+            True,
+        )
+
+        dependencies = _inspect_dependencies(
+            self.solver_root,
+            self.manifest,
+            files,
+            _profile_preprocessor_defines(
+                self.manifest, "cpu_serial_foundation"
+            ),
+        )
+
+        self.assertIn("foundation_core", components)
+        self.assertIn(
+            "src/extensions/multicomponent/mod_mc_state_layout.f90",
+            dependencies,
+        )
+        self.assertIn("tests/test_multicomponent_foundation.f90", dependencies)
+
+
 class NseCaseTemplateTests(unittest.TestCase):
+    def test_multicomponent_template_exposes_stage_zero_contract(self) -> None:
+        template = (
+            SCRIPT_DIR / "case_templates" / "nse_multicomponent.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("model: {{physics_model}}", template)
+        self.assertIn("species:\n      - mixture", template)
+        self.assertIn("model: calorically_perfect", template)
+        self.assertIn("transport:\n  model: none", template)
+        self.assertIn("chemistry:\n  model: none", template)
+
+    def test_multicomponent_passive_scalar_template_exposes_stage_one(self) -> None:
+        template = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "nse_multicomponent_passive_scalar.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("mode: passive_scalar", template)
+        self.assertIn("- tracer\n      - carrier", template)
+        self.assertIn("type: passive_scalar_advection", template)
+        self.assertIn("convective_scheme: upwind1", template)
+        self.assertIn("boundary_condition: periodic", template)
+        self.assertIn("time_integration: ssprk3", template)
+
+    def test_multicomponent_inviscid_template_exposes_stage_two(self) -> None:
+        template = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "nse_multicomponent_inviscid.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("mode: inviscid_euler", template)
+        self.assertIn("type: multispecies_sod", template)
+        self.assertIn("mass_fractions: [0.8, 0.2]", template)
+        self.assertIn("convective_scheme: rusanov1", template)
+        self.assertIn("boundary_condition: periodic", template)
+
     def test_parallel_features_and_runtime_counts_are_template_fields(self) -> None:
         template = (
             SCRIPT_DIR / "case_templates" / "nse.yaml"

@@ -1,5 +1,19 @@
 # 外部実行環境ジェネレーター
 
+多成分・反応流拡張のStage 0検証環境には
+`environment.nse_multicomponent.yaml`を使用します。この環境は現行単成分NSEとは
+別モデル`nse_multicomponent`を生成し、まだ流体時間発展を行いません。
+
+Stage 1の周期パッシブスカラー移流には
+`environment.nse_multicomponent.passive_scalar.yaml`を使用します。一定速度場、
+一次風上法、SSPRK3で部分密度を保存形式により移流し、最終場をCSV出力します。
+Stage 1はCPU逐次専用で、運動量・全エネルギーは更新しません。
+
+Stage 2の非反応・非粘性多成分Euler計算には
+`environment.nse_multicomponent.inviscid.yaml`を使用します。全species部分密度、
+運動量、全エネルギーをRusanov流束とSSPRK3で連成更新します。物理拡散、粘性、
+熱伝導、化学反応はまだ含みません。
+
 > OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通のパス、Python、CMake、MPIの対応表は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 NSEの`case.yaml`では`numerics.convective_scheme`に`keep2`、`keep6`、

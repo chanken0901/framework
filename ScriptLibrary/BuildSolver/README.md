@@ -74,6 +74,64 @@ python3 ./build_model.py ./build.yaml \
   --model nse --profile cuda_single --test
 ```
 
+### NSE多成分・反応流拡張
+
+`nse_multicomponent`は現行`nse`と別manifest、別実行ファイルで管理します。
+Stage 0は状態レイアウトとprovider契約、Stage 1は一定速度場による保存形式の
+周期パッシブスカラー移流、Stage 2は非反応・非粘性多成分Euler方程式を検証します。
+
+| プロファイル | 内容 |
+|---|---|
+| `cpu_serial_foundation` | 1成分極限、熱力学・輸送・反応provider契約 |
+| `cpu_serial_passive_scalar` | 一次風上法、SSPRK3、周期パッシブスカラー移流 |
+| `cpu_serial_inviscid` | 共通γ理想気体、Rusanov流束、非粘性多成分Sod問題 |
+
+```powershell
+python .\build_model.py .\build.yaml `
+  --model nse_multicomponent `
+  --profile cpu_serial_foundation `
+  --validate-only
+```
+
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model nse_multicomponent \
+  --profile cpu_serial_foundation \
+  --validate-only
+```
+
+Stage 1のビルドと回帰試験:
+
+```powershell
+python .\build_model.py .\build.yaml `
+  --model nse_multicomponent `
+  --profile cpu_serial_passive_scalar `
+  --test
+```
+
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model nse_multicomponent \
+  --profile cpu_serial_passive_scalar \
+  --test
+```
+
+Stage 2のビルドと回帰試験:
+
+```powershell
+python .\build_model.py .\build.yaml `
+  --model nse_multicomponent `
+  --profile cpu_serial_inviscid `
+  --test
+```
+
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model nse_multicomponent \
+  --profile cpu_serial_inviscid \
+  --test
+```
+
 ### GPE
 
 | プロファイル | 内容 |

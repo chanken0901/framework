@@ -1,0 +1,45 @@
+case_id: {{case_id}}
+case_label: {{case_label}}
+status: development
+description: {{description}}
+created_at: {{created_at}}
+
+project:
+  name: {{project_name}}
+  author: Kento Tanaka
+
+physics:
+  model: {{physics_model}}
+  multicomponent:
+    mode: foundation
+    # Stage 0 verifies the one-species reduction. Additional species transport
+    # is introduced in stage 1 and stage 2.
+    species:
+      - mixture
+
+thermodynamics:
+  model: calorically_perfect
+
+transport:
+  model: none
+
+chemistry:
+  model: none
+
+solver:
+  profile: {{solver_profile}}
+  use_mpi: {{use_mpi}}
+  use_openmp: {{use_openmp}}
+  use_cuda: {{use_cuda}}
+  mpi_processes: {{mpi_processes}}
+  omp_threads: {{omp_threads}}
+
+output:
+  directory: output
+  format: slf
+
+storage:
+  raw_data_location: {{raw_data_location}}
+
+outputs:
+  used_in:

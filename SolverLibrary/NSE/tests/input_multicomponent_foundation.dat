@@ -1,0 +1,9 @@
+! Stage-0 multicomponent provider and state-layout contract input.
+&multicomponent
+  nspecies = 1
+  species_names = "mixture"
+  simulation_mode = "foundation"
+  thermodynamics_model = "calorically_perfect"
+  transport_model = "none"
+  chemistry_model = "none"
+/

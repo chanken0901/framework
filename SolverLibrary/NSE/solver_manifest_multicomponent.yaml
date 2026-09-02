@@ -1,0 +1,192 @@
+# Additive multicomponent foundation through stage-2 inviscid flow.
+# The production single-component NSE remains in solver_manifest.yaml.
+schema_version: 1
+solver_id: nse_multicomponent
+solver_api_version: 1
+model: nse_multicomponent
+runtime_profile_selection: false
+default_profiles:
+  serial: cpu_serial_inviscid
+build_adapter: nse_cmake_v1
+cmake_file: CMakeLists.txt
+
+input:
+  default_name: input.dat
+  pass_as_argument: true
+
+distribution:
+  required_files:
+    - CMakeLists.txt
+    - cmake/NSEMPI.cmake
+
+components:
+  foundation_core:
+    cmake_role: library
+    files:
+      - src/common/mod_precision.f90
+      - src/extensions/multicomponent/mod_mc_state_layout.f90
+      - src/extensions/multicomponent/mod_mc_config.f90
+      - src/extensions/multicomponent/mod_mc_provider_registry.f90
+
+  thermodynamics_calorically_perfect:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/providers/mod_mc_thermodynamics_calorically_perfect.f90
+
+  transport_none:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/providers/mod_mc_transport_none.f90
+
+  chemistry_none:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/providers/mod_mc_chemistry_none.f90
+
+  main_foundation:
+    cmake_role: executable
+    files:
+      - src/extensions/multicomponent/main_nse_multicomponent.f90
+
+  passive_scalar_core:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/mod_mc_passive_scalar_config.f90
+      - src/extensions/multicomponent/mod_mc_passive_scalar_field.f90
+      - src/extensions/multicomponent/mod_mc_passive_scalar_advection.f90
+      - src/extensions/multicomponent/mod_mc_passive_scalar_solver.f90
+
+  main_passive_scalar:
+    cmake_role: executable
+    files:
+      - src/extensions/multicomponent/main_nse_multicomponent_passive_scalar.f90
+
+  euler_core:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/mod_mc_euler_config.f90
+      - src/extensions/multicomponent/mod_mc_euler_field.f90
+      - src/extensions/multicomponent/mod_mc_euler_flux.f90
+      - src/extensions/multicomponent/mod_mc_euler_solver.f90
+
+  main_inviscid:
+    cmake_role: executable
+    files:
+      - src/extensions/multicomponent/main_nse_multicomponent_inviscid.f90
+
+  foundation_tests:
+    files:
+      - tests/test_multicomponent_foundation.f90
+      - tests/input_multicomponent_foundation.dat
+
+  passive_scalar_tests:
+    files:
+      - tests/test_multicomponent_passive_scalar.f90
+      - tests/input_multicomponent_passive_scalar.dat
+
+  euler_tests:
+    files:
+      - tests/test_multicomponent_euler.f90
+      - tests/input_multicomponent_euler.dat
+
+  foundation_docs:
+    files:
+      - docs/NSE_MULTICOMPONENT_ROADMAP.md
+
+profiles:
+  cpu_serial_foundation:
+    description: Stage-0 multicomponent state-layout and provider contract
+    capabilities:
+      - multicomponent_foundation
+    components:
+      - foundation_core
+      - thermodynamics_calorically_perfect
+      - transport_none
+      - chemistry_none
+      - foundation_docs
+      - main_foundation
+    test_components:
+      - foundation_tests
+    executable: nse_multicomponent
+    execution:
+      use_mpi: false
+      use_openmp: false
+    cmake:
+      NSE_USE_MPI: false
+      NSE_ENABLE_OPENMP: false
+      NSE_GPU_BACKEND: none
+      NSE_CONVECTIVE_BACKEND: runtime
+      NSE_VISCOUS_SCHEME: none
+      NSE_BOUNDARY_SCHEME: periodic
+      NSE_INIT_FFT_BACKEND: none
+      NSE_FORCING_FFT_BACKEND: none
+      NSE_TEST_SUITE: multicomponent_foundation
+
+  cpu_serial_passive_scalar:
+    description: Stage-1 conservative periodic passive-scalar advection
+    capabilities:
+      - multicomponent_foundation
+      - passive_scalar_advection
+      - periodic_boundary
+      - upwind1
+      - ssprk3
+    components:
+      - foundation_core
+      - thermodynamics_calorically_perfect
+      - transport_none
+      - chemistry_none
+      - passive_scalar_core
+      - foundation_docs
+      - main_passive_scalar
+    test_components:
+      - foundation_tests
+      - passive_scalar_tests
+    executable: nse_multicomponent
+    execution:
+      use_mpi: false
+      use_openmp: false
+    cmake:
+      NSE_USE_MPI: false
+      NSE_ENABLE_OPENMP: false
+      NSE_GPU_BACKEND: none
+      NSE_CONVECTIVE_BACKEND: runtime
+      NSE_VISCOUS_SCHEME: none
+      NSE_BOUNDARY_SCHEME: periodic
+      NSE_INIT_FFT_BACKEND: none
+      NSE_FORCING_FFT_BACKEND: none
+      NSE_TEST_SUITE: multicomponent_passive_scalar
+
+  cpu_serial_inviscid:
+    description: Stage-2 non-reacting inviscid multicomponent Euler solver
+    capabilities:
+      - multicomponent_foundation
+      - nonreacting_multicomponent_euler
+      - calorically_perfect_mixture
+      - periodic_boundary
+      - rusanov1
+      - ssprk3
+    components:
+      - foundation_core
+      - thermodynamics_calorically_perfect
+      - transport_none
+      - chemistry_none
+      - euler_core
+      - foundation_docs
+      - main_inviscid
+    test_components:
+      - foundation_tests
+      - euler_tests
+    executable: nse_multicomponent
+    execution:
+      use_mpi: false
+      use_openmp: false
+    cmake:
+      NSE_USE_MPI: false
+      NSE_ENABLE_OPENMP: false
+      NSE_GPU_BACKEND: none
+      NSE_CONVECTIVE_BACKEND: runtime
+      NSE_VISCOUS_SCHEME: none
+      NSE_BOUNDARY_SCHEME: periodic
+      NSE_INIT_FFT_BACKEND: none
+      NSE_FORCING_FFT_BACKEND: none
+      NSE_TEST_SUITE: multicomponent_euler

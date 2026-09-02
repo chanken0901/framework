@@ -1,0 +1,31 @@
+schema_version: 1
+environment_id: nse_multicomponent_foundation
+
+option_catalogs: []
+
+# This environment builds only the additive stage-0 foundation. The production
+# single-component NSE remains selected with model=nse and case=nse_case.
+select:
+  source: local_framework
+  destination: windows_research_runs
+  model: nse_multicomponent
+  target: windows_gnu_msmpi
+  case: nse_multicomponent_foundation
+  execution: release
+  scheduler: disabled
+  archive: none
+
+parallel:
+  use_mpi: false
+  use_openmp: false
+  use_cuda: false
+
+case:
+  id: case0001
+  label: multicomponent_foundation
+  description: Multicomponent NSE stage-0 foundation
+  project_name: NSEMulticomponentResearch
+
+solver:
+  profile: cpu_serial_foundation
+  include_tests: true

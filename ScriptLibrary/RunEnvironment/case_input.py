@@ -297,6 +297,10 @@ def _fortran(value: Any) -> str:
         return format(value, ".17g")
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, (list, tuple)):
+        if not value:
+            raise CaseInputError("empty namelist sequences are not supported")
+        return ", ".join(_fortran(item) for item in value)
     raise CaseInputError(f"unsupported namelist value: {value!r}")
 
 
@@ -1882,6 +1886,399 @@ def render_gpe(
     return "\n".join(lines)
 
 
+def _multicomponent_grid_settings(
+    case: dict[str, Any], stage_name: str
+) -> tuple[list[int], list[float]]:
+    grid = _mapping(nested(case, "grid", {}), "grid")
+    dimensions: list[int] = []
+    for name in ("nx", "ny", "nz"):
+        value = grid.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 2:
+            raise CaseInputError(f"grid.{name} must be an integer of at least 2")
+        dimensions.append(value)
+    extents = [
+        _finite_float(_required(case, f"grid.{name}"), f"grid.{name}")
+        for name in ("x_min", "x_max", "y_min", "y_max", "z_min", "z_max")
+    ]
+    if any(extents[index+1] <= extents[index] for index in (0, 2, 4)):
+        raise CaseInputError(f"{stage_name} grid extents must be positive")
+    return dimensions, extents
+
+
+def _mass_fraction_vector(value: Any, label: str, nspecies: int) -> list[float]:
+    if not isinstance(value, (list, tuple)) or len(value) != nspecies:
+        raise CaseInputError(f"{label} must contain exactly {nspecies} values")
+    fractions = [
+        _positive_float(item, f"{label}[{index}]", allow_zero=True)
+        for index, item in enumerate(value)
+    ]
+    if abs(sum(fractions)-1.0) > 1.0e-12:
+        raise CaseInputError(f"{label} must sum to one")
+    return fractions
+
+
+def render_nse_multicomponent(
+    case: dict[str, Any], profile_name: str | None = None
+) -> str:
+    physics = _mapping(
+        nested(case, "physics.multicomponent", {}),
+        "physics.multicomponent",
+    )
+    raw_species = physics.get("species")
+    if not isinstance(raw_species, list) or not raw_species:
+        raise CaseInputError(
+            "physics.multicomponent.species must be a non-empty YAML list"
+        )
+    species = [str(value).strip() for value in raw_species]
+    if any(not value for value in species):
+        raise CaseInputError("multicomponent species names must not be empty")
+    if any(len(value) > 32 for value in species):
+        raise CaseInputError("multicomponent species names must not exceed 32 characters")
+    if len(species) > 64:
+        raise CaseInputError("multicomponent NSE supports at most 64 species")
+    if len(set(species)) != len(species):
+        raise CaseInputError("multicomponent species names must be unique")
+
+    simulation_mode = _canonical_selector(str(physics.get("mode", "foundation")))
+    if simulation_mode not in {"foundation", "passive_scalar", "inviscid_euler"}:
+        raise CaseInputError(
+            "physics.multicomponent.mode must be foundation, passive_scalar, "
+            "or inviscid_euler"
+        )
+    if simulation_mode == "passive_scalar" and len(species) < 2:
+        raise CaseInputError(
+            "passive_scalar mode requires at least tracer and carrier species"
+        )
+    expected_modes = {
+        "cpu_serial_foundation": "foundation",
+        "cpu_serial_passive_scalar": "passive_scalar",
+        "cpu_serial_inviscid": "inviscid_euler",
+    }
+    if profile_name in expected_modes and simulation_mode != expected_modes[profile_name]:
+        raise CaseInputError(
+            f"solver profile {profile_name!r} requires "
+            f"physics.multicomponent.mode={expected_modes[profile_name]!r}"
+        )
+
+    thermodynamics = _mapping(
+        nested(case, "thermodynamics", {}), "thermodynamics"
+    )
+    transport = _mapping(nested(case, "transport", {}), "transport")
+    chemistry = _mapping(nested(case, "chemistry", {}), "chemistry")
+    models = {
+        "thermodynamics": _canonical_selector(
+            str(thermodynamics.get("model", "calorically_perfect"))
+        ),
+        "transport": _canonical_selector(str(transport.get("model", "none"))),
+        "chemistry": _canonical_selector(str(chemistry.get("model", "none"))),
+    }
+    supported = {
+        "thermodynamics": "calorically_perfect",
+        "transport": "none",
+        "chemistry": "none",
+    }
+    for category, expected in supported.items():
+        if models[category] != expected:
+            raise CaseInputError(
+                f"current multicomponent stages require {category}.model="
+                f"{expected!r}, got {models[category]!r}"
+            )
+
+    stage_names = {
+        "foundation": "Stage-0 foundation",
+        "passive_scalar": "Stage-1 passive-scalar advection",
+        "inviscid_euler": "Stage-2 non-reacting inviscid multicomponent Euler",
+    }
+    lines = [
+        "! Automatically generated from case.yaml.",
+        f"! {stage_names[simulation_mode]}.",
+        "",
+        "&multicomponent",
+    ]
+    _append(
+        lines,
+        [
+            ("nspecies", len(species)),
+            ("species_names", species),
+            ("simulation_mode", simulation_mode),
+            ("thermodynamics_model", models["thermodynamics"]),
+            ("transport_model", models["transport"]),
+            ("chemistry_model", models["chemistry"]),
+        ],
+    )
+    lines.extend(["/", ""])
+
+    if simulation_mode == "passive_scalar":
+        flow = _mapping(nested(case, "flow", {}), "flow")
+        flow_type = _canonical_selector(str(flow.get("type", "")))
+        if flow_type != "passive_scalar_advection":
+            raise CaseInputError(
+                "stage-1 requires flow.type='passive_scalar_advection'"
+            )
+        initial = _mapping(
+            nested(case, "flow.passive_scalar", {}),
+            "flow.passive_scalar",
+        )
+        time = _mapping(nested(case, "time", {}), "time")
+        numerics = _mapping(nested(case, "numerics", {}), "numerics")
+        output = _mapping(nested(case, "output", {}), "output")
+
+        dimensions, extents = _multicomponent_grid_settings(
+            case, "passive-scalar"
+        )
+        velocity = _vector3(_required(case, "flow.velocity"), "flow.velocity")
+        center = _vector3(
+            initial.get("tracer_center", [0.25, 0.5, 0.5]),
+            "flow.passive_scalar.tracer_center",
+        )
+        if any(
+            center[axis] < extents[2*axis]
+            or center[axis] > extents[2*axis+1]
+            for axis in range(3)
+        ):
+            raise CaseInputError(
+                "flow.passive_scalar.tracer_center must lie inside the domain"
+            )
+        tracer_background = _positive_float(
+            initial.get("tracer_background", 0.05),
+            "flow.passive_scalar.tracer_background",
+            allow_zero=True,
+        )
+        tracer_amplitude = _positive_float(
+            initial.get("tracer_amplitude", 0.90),
+            "flow.passive_scalar.tracer_amplitude",
+            allow_zero=True,
+        )
+        if tracer_background + tracer_amplitude > 1.0:
+            raise CaseInputError(
+                "passive-scalar tracer_background + tracer_amplitude must not exceed 1"
+            )
+        tracer_width = _positive_float(
+            initial.get("tracer_width", 0.08),
+            "flow.passive_scalar.tracer_width",
+        )
+        nsteps = time.get("nsteps")
+        if isinstance(nsteps, bool) or not isinstance(nsteps, int) or nsteps < 0:
+            raise CaseInputError("time.nsteps must be a non-negative integer")
+        cfl = _positive_float(time.get("cfl", 0.45), "time.cfl")
+        if cfl > 1.0:
+            raise CaseInputError("stage-1 passive-scalar CFL must not exceed 1")
+        fixed_dt = _positive_float(time.get("dt", 0.0), "time.dt", allow_zero=True)
+        cell_widths = [
+            (extents[2*axis+1]-extents[2*axis]) / dimensions[axis]
+            for axis in range(3)
+        ]
+        advection_rate = sum(
+            abs(velocity[axis]) / cell_widths[axis] for axis in range(3)
+        )
+        if fixed_dt == 0.0 and advection_rate == 0.0:
+            raise CaseInputError(
+                "zero passive-scalar velocity requires a positive time.dt"
+            )
+        if fixed_dt * advection_rate > 1.0 + 1.0e-14:
+            raise CaseInputError("time.dt violates the stage-1 upwind CFL limit")
+
+        initial_condition = _canonical_selector(
+            str(initial.get("initial_condition", "gaussian"))
+        )
+        advection_scheme = _canonical_selector(
+            str(numerics.get("convective_scheme", "upwind1"))
+        )
+        boundary_condition = _canonical_selector(
+            str(numerics.get("boundary_condition", "periodic"))
+        )
+        time_integrator = _canonical_selector(
+            str(numerics.get("time_integration", "ssprk3"))
+        )
+        supported_values = {
+            "flow.passive_scalar.initial_condition": (initial_condition, "gaussian"),
+            "numerics.convective_scheme": (advection_scheme, "upwind1"),
+            "numerics.boundary_condition": (boundary_condition, "periodic"),
+            "numerics.time_integration": (time_integrator, "ssprk3"),
+        }
+        for label, (actual, expected) in supported_values.items():
+            if actual != expected:
+                raise CaseInputError(
+                    f"stage-1 requires {label}={expected!r}, got {actual!r}"
+                )
+        write_final = output.get("write_final", True)
+        if not isinstance(write_final, bool):
+            raise CaseInputError("output.write_final must be true or false")
+        output_file = str(output.get("filename", "passive_scalar_final.csv")).strip()
+        if write_final and not output_file:
+            raise CaseInputError("output.filename must not be empty")
+
+        lines.append("&passive_scalar")
+        _append(
+            lines,
+            [
+                ("nx", dimensions[0]),
+                ("ny", dimensions[1]),
+                ("nz", dimensions[2]),
+                ("x_min", extents[0]),
+                ("x_max", extents[1]),
+                ("y_min", extents[2]),
+                ("y_max", extents[3]),
+                ("z_min", extents[4]),
+                ("z_max", extents[5]),
+                ("velocity", velocity),
+                ("cfl", cfl),
+                ("dt", fixed_dt),
+                ("nsteps", nsteps),
+                ("initial_condition", initial_condition),
+                ("tracer_background", tracer_background),
+                ("tracer_amplitude", tracer_amplitude),
+                ("tracer_center", center),
+                ("tracer_width", tracer_width),
+                ("advection_scheme", advection_scheme),
+                ("boundary_condition", boundary_condition),
+                ("time_integrator", time_integrator),
+                ("write_final", write_final),
+                ("output_file", output_file),
+            ],
+        )
+        lines.extend(["/", ""])
+    elif simulation_mode == "inviscid_euler":
+        flow = _mapping(nested(case, "flow", {}), "flow")
+        flow_type = _canonical_selector(str(flow.get("type", "")))
+        if flow_type != "multispecies_sod":
+            raise CaseInputError("stage-2 requires flow.type='multispecies_sod'")
+        initial = _mapping(
+            nested(case, "flow.multispecies_sod", {}),
+            "flow.multispecies_sod",
+        )
+        left = _mapping(initial.get("left"), "flow.multispecies_sod.left")
+        right = _mapping(initial.get("right"), "flow.multispecies_sod.right")
+        time = _mapping(nested(case, "time", {}), "time")
+        numerics = _mapping(nested(case, "numerics", {}), "numerics")
+        output = _mapping(nested(case, "output", {}), "output")
+        dimensions, extents = _multicomponent_grid_settings(
+            case, "multicomponent Euler"
+        )
+
+        gamma = _positive_float(
+            thermodynamics.get("gamma", 1.4), "thermodynamics.gamma"
+        )
+        if gamma <= 1.0:
+            raise CaseInputError("thermodynamics.gamma must exceed one")
+        interface_location = _finite_float(
+            initial.get("interface_location", 0.5),
+            "flow.multispecies_sod.interface_location",
+        )
+        if not extents[0] < interface_location < extents[1]:
+            raise CaseInputError(
+                "flow.multispecies_sod.interface_location must lie inside x"
+            )
+        left_density = _positive_float(
+            left.get("density"), "flow.multispecies_sod.left.density"
+        )
+        left_velocity = _vector3(
+            left.get("velocity"), "flow.multispecies_sod.left.velocity"
+        )
+        left_pressure = _positive_float(
+            left.get("pressure"), "flow.multispecies_sod.left.pressure"
+        )
+        left_fractions = _mass_fraction_vector(
+            left.get("mass_fractions"),
+            "flow.multispecies_sod.left.mass_fractions",
+            len(species),
+        )
+        right_density = _positive_float(
+            right.get("density"), "flow.multispecies_sod.right.density"
+        )
+        right_velocity = _vector3(
+            right.get("velocity"), "flow.multispecies_sod.right.velocity"
+        )
+        right_pressure = _positive_float(
+            right.get("pressure"), "flow.multispecies_sod.right.pressure"
+        )
+        right_fractions = _mass_fraction_vector(
+            right.get("mass_fractions"),
+            "flow.multispecies_sod.right.mass_fractions",
+            len(species),
+        )
+
+        nsteps = time.get("nsteps")
+        if isinstance(nsteps, bool) or not isinstance(nsteps, int) or nsteps < 0:
+            raise CaseInputError("time.nsteps must be a non-negative integer")
+        cfl = _positive_float(time.get("cfl",0.35), "time.cfl")
+        if cfl > 1.0:
+            raise CaseInputError("stage-2 multicomponent Euler CFL must not exceed 1")
+        fixed_dt = _positive_float(
+            time.get("dt",0.0), "time.dt", allow_zero=True
+        )
+        initial_condition = _canonical_selector(
+            str(initial.get("initial_condition","multispecies_sod_x"))
+        )
+        riemann_solver = _canonical_selector(
+            str(numerics.get("convective_scheme","rusanov1"))
+        )
+        boundary_condition = _canonical_selector(
+            str(numerics.get("boundary_condition","periodic"))
+        )
+        time_integrator = _canonical_selector(
+            str(numerics.get("time_integration","ssprk3"))
+        )
+        supported_values = {
+            "flow.multispecies_sod.initial_condition": (
+                initial_condition, "multispecies_sod_x"
+            ),
+            "numerics.convective_scheme": (riemann_solver,"rusanov1"),
+            "numerics.boundary_condition": (boundary_condition,"periodic"),
+            "numerics.time_integration": (time_integrator,"ssprk3"),
+        }
+        for label, (actual, expected) in supported_values.items():
+            if actual != expected:
+                raise CaseInputError(
+                    f"stage-2 requires {label}={expected!r}, got {actual!r}"
+                )
+        write_final = output.get("write_final",True)
+        if not isinstance(write_final,bool):
+            raise CaseInputError("output.write_final must be true or false")
+        output_file = str(
+            output.get("filename","multicomponent_euler_final.csv")
+        ).strip()
+        if write_final and not output_file:
+            raise CaseInputError("output.filename must not be empty")
+
+        lines.append("&multicomponent_euler")
+        _append(
+            lines,
+            [
+                ("nx",dimensions[0]),
+                ("ny",dimensions[1]),
+                ("nz",dimensions[2]),
+                ("x_min",extents[0]),
+                ("x_max",extents[1]),
+                ("y_min",extents[2]),
+                ("y_max",extents[3]),
+                ("z_min",extents[4]),
+                ("z_max",extents[5]),
+                ("gamma",gamma),
+                ("cfl",cfl),
+                ("dt",fixed_dt),
+                ("nsteps",nsteps),
+                ("initial_condition",initial_condition),
+                ("interface_location",interface_location),
+                ("left_density",left_density),
+                ("left_velocity",left_velocity),
+                ("left_pressure",left_pressure),
+                ("left_mass_fractions",left_fractions),
+                ("right_density",right_density),
+                ("right_velocity",right_velocity),
+                ("right_pressure",right_pressure),
+                ("right_mass_fractions",right_fractions),
+                ("riemann_solver",riemann_solver),
+                ("boundary_condition",boundary_condition),
+                ("time_integrator",time_integrator),
+                ("write_final",write_final),
+                ("output_file",output_file),
+            ],
+        )
+        lines.extend(["/",""])
+    return "\n".join(lines)
+
+
 def render_case_input(
     case_path: Path,
     manifest_path: Path,
@@ -1912,6 +2309,8 @@ def render_case_input(
         )
     if model.lower() == "gpe":
         return input_name, render_gpe(case, manifest, profile_name)
+    if model.lower() == "nse_multicomponent":
+        return input_name, render_nse_multicomponent(case, profile_name)
     raise CaseInputError(f"unsupported model: {model}")
 
 
@@ -1921,7 +2320,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--case", required=True)
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--model", required=True, choices=["nse", "gpe"])
+    parser.add_argument(
+        "--model",
+        required=True,
+        help="Model identifier declared by the selected solver manifest",
+    )
     parser.add_argument("--profile", required=True)
     parser.add_argument("--output")
     parser.add_argument("--overwrite", action="store_true")

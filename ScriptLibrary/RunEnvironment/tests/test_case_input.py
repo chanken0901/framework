@@ -15,6 +15,7 @@ from case_input import (  # noqa: E402
     _validate_solver_selection,
     derive_nse_hit_transport,
     render_nse,
+    render_nse_multicomponent,
 )
 from yaml_support import load_yaml  # noqa: E402
 
@@ -107,6 +108,221 @@ class CaseInputProfileTests(unittest.TestCase):
 
         with self.assertRaisesRegex(CaseInputError, "without OpenMP"):
             _validate_solver_selection(case, self.manifest, "cuda_single")
+
+
+class MulticomponentFoundationInputTests(unittest.TestCase):
+    @staticmethod
+    def case() -> dict:
+        return {
+            "physics": {
+                "model": "nse_multicomponent",
+                "multicomponent": {"species": ["mixture"]},
+            },
+            "thermodynamics": {"model": "calorically_perfect"},
+            "transport": {"model": "none"},
+            "chemistry": {"model": "none"},
+        }
+
+    @classmethod
+    def euler_case(cls) -> dict:
+        case = cls.case()
+        case["physics"]["multicomponent"] = {
+            "mode": "inviscid_euler",
+            "species": ["species_a", "species_b"],
+        }
+        case["thermodynamics"]["gamma"] = 1.4
+        case["grid"] = {
+            "nx": 32,
+            "ny": 4,
+            "nz": 4,
+            "x_min": 0.0,
+            "x_max": 1.0,
+            "y_min": 0.0,
+            "y_max": 1.0,
+            "z_min": 0.0,
+            "z_max": 1.0,
+        }
+        case["flow"] = {
+            "type": "multispecies_sod",
+            "multispecies_sod": {
+                "initial_condition": "multispecies_sod_x",
+                "interface_location": 0.5,
+                "left": {
+                    "density": 1.0,
+                    "velocity": [0.0, 0.0, 0.0],
+                    "pressure": 1.0,
+                    "mass_fractions": [0.8, 0.2],
+                },
+                "right": {
+                    "density": 0.125,
+                    "velocity": [0.0, 0.0, 0.0],
+                    "pressure": 0.1,
+                    "mass_fractions": [0.2, 0.8],
+                },
+            },
+        }
+        case["time"] = {"cfl": 0.35, "dt": 0.0, "nsteps": 10}
+        case["numerics"] = {
+            "convective_scheme": "rusanov1",
+            "boundary_condition": "periodic",
+            "time_integration": "ssprk3",
+        }
+        case["output"] = {
+            "write_final": True,
+            "filename": "multicomponent_euler_final.csv",
+        }
+        return case
+
+    def test_renders_one_species_stage_zero_contract(self) -> None:
+        text = render_nse_multicomponent(self.case())
+
+        self.assertIn("&multicomponent", text)
+        self.assertIn("nspecies = 1", text)
+        self.assertIn('species_names = "mixture"', text)
+        self.assertIn('simulation_mode = "foundation"', text)
+        self.assertIn('thermodynamics_model = "calorically_perfect"', text)
+        self.assertIn('transport_model = "none"', text)
+        self.assertIn('chemistry_model = "none"', text)
+
+    def test_renders_multiple_species_without_changing_the_contract(self) -> None:
+        case = self.case()
+        case["physics"]["multicomponent"]["species"] = ["fuel", "oxidizer"]
+
+        text = render_nse_multicomponent(case)
+
+        self.assertIn("nspecies = 2", text)
+        self.assertIn('species_names = "fuel", "oxidizer"', text)
+
+    def test_rejects_unimplemented_reactive_provider(self) -> None:
+        case = self.case()
+        case["chemistry"]["model"] = "finite_rate"
+
+        with self.assertRaisesRegex(CaseInputError, "multicomponent.*chemistry"):
+            render_nse_multicomponent(case)
+
+    def test_rejects_duplicate_species(self) -> None:
+        case = self.case()
+        case["physics"]["multicomponent"]["species"] = ["N2", "N2"]
+
+        with self.assertRaisesRegex(CaseInputError, "unique"):
+            render_nse_multicomponent(case)
+
+    def test_renders_stage_one_passive_scalar_contract(self) -> None:
+        case = self.case()
+        case["physics"]["multicomponent"] = {
+            "mode": "passive_scalar",
+            "species": ["tracer", "carrier"],
+        }
+        case.update(
+            {
+                "grid": {
+                    "nx": 16,
+                    "ny": 8,
+                    "nz": 4,
+                    "x_min": 0.0,
+                    "x_max": 1.0,
+                    "y_min": 0.0,
+                    "y_max": 1.0,
+                    "z_min": 0.0,
+                    "z_max": 1.0,
+                },
+                "flow": {
+                    "type": "passive_scalar_advection",
+                    "velocity": [1.0, -0.25, 0.0],
+                    "passive_scalar": {
+                        "initial_condition": "gaussian",
+                        "tracer_center": [0.25, 0.5, 0.5],
+                    },
+                },
+                "time": {"cfl": 0.45, "dt": 0.0, "nsteps": 20},
+                "numerics": {
+                    "convective_scheme": "upwind1",
+                    "boundary_condition": "periodic",
+                    "time_integration": "ssprk3",
+                },
+                "output": {
+                    "write_final": True,
+                    "filename": "passive_scalar_final.csv",
+                },
+            }
+        )
+
+        text = render_nse_multicomponent(case)
+
+        self.assertIn('simulation_mode = "passive_scalar"', text)
+        self.assertIn("&passive_scalar", text)
+        self.assertIn("velocity = 1, -0.25, 0", text)
+        self.assertIn('advection_scheme = "upwind1"', text)
+        self.assertIn('boundary_condition = "periodic"', text)
+        self.assertIn('time_integrator = "ssprk3"', text)
+
+    def test_passive_scalar_requires_two_species(self) -> None:
+        case = self.case()
+        case["physics"]["multicomponent"]["mode"] = "passive_scalar"
+
+        with self.assertRaisesRegex(CaseInputError, "tracer and carrier"):
+            render_nse_multicomponent(case)
+
+    def test_profile_must_match_multicomponent_mode(self) -> None:
+        with self.assertRaisesRegex(CaseInputError, "requires.*passive_scalar"):
+            render_nse_multicomponent(
+                self.case(), "cpu_serial_passive_scalar"
+            )
+
+    def test_renders_stage_two_multicomponent_euler_contract(self) -> None:
+        text = render_nse_multicomponent(
+            self.euler_case(), "cpu_serial_inviscid"
+        )
+
+        self.assertIn('simulation_mode = "inviscid_euler"', text)
+        self.assertIn("&multicomponent_euler", text)
+        self.assertIn("gamma = 1.3999999999999999", text)
+        self.assertIn("left_mass_fractions = 0.80000000000000004", text)
+        self.assertIn('riemann_solver = "rusanov1"', text)
+        self.assertIn('boundary_condition = "periodic"', text)
+        self.assertIn('time_integrator = "ssprk3"', text)
+
+    def test_euler_rejects_mass_fractions_that_do_not_sum_to_one(self) -> None:
+        case = self.euler_case()
+        case["flow"]["multispecies_sod"]["left"]["mass_fractions"] = [
+            0.8,
+            0.3,
+        ]
+
+        with self.assertRaisesRegex(CaseInputError, "must sum to one"):
+            render_nse_multicomponent(case)
+
+    def test_euler_profile_rejects_foundation_mode(self) -> None:
+        with self.assertRaisesRegex(CaseInputError, "requires.*inviscid_euler"):
+            render_nse_multicomponent(self.case(), "cpu_serial_inviscid")
+
+    def test_passive_scalar_rejects_unimplemented_scheme(self) -> None:
+        case = self.case()
+        case["physics"]["multicomponent"] = {
+            "mode": "passive_scalar",
+            "species": ["tracer", "carrier"],
+        }
+        case["grid"] = {
+            "nx": 4,
+            "ny": 4,
+            "nz": 4,
+            "x_min": 0.0,
+            "x_max": 1.0,
+            "y_min": 0.0,
+            "y_max": 1.0,
+            "z_min": 0.0,
+            "z_max": 1.0,
+        }
+        case["flow"] = {
+            "type": "passive_scalar_advection",
+            "velocity": [1.0, 0.0, 0.0],
+            "passive_scalar": {},
+        }
+        case["time"] = {"nsteps": 1}
+        case["numerics"] = {"convective_scheme": "weno5z_roe"}
+
+        with self.assertRaisesRegex(CaseInputError, "requires.*upwind1"):
+            render_nse_multicomponent(case)
 
 
 class NseCaseInputTests(unittest.TestCase):

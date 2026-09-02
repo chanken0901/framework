@@ -2,6 +2,12 @@
 
 > Windows（PowerShell）とLinux（bash）の共通コマンド対応は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
+> 多成分・反応流の追加開発は、現行単成分NSEと分離した
+> [`docs/NSE_MULTICOMPONENT_ROADMAP.md`](docs/NSE_MULTICOMPONENT_ROADMAP.md)
+> および`solver_manifest_multicomponent.yaml`で管理します。
+> Stage 1ではCPU逐次の周期パッシブスカラー移流まで実装済みです。
+> Stage 2ではCPU逐次の非反応・非粘性多成分Euler方程式まで実装済みです。
+
 MPI＋CUDAで分散HIT初期化またはPetersen–Livescu forcingを使う場合は、
 [`docs/NSE_CUFFTMP.md`](docs/NSE_CUFFTMP.md)の`cuda_mpi_cufftmp`手順を参照してください。
 
@@ -34,6 +40,14 @@ Navier-Stokesソルバーです。全backendの面別周期／特性無反射／
 | `cuda_single` | 単一GPU | CUDAによる時間発展、cuFFT HIT/Forcing |
 | `cuda_mpi` | MPI + CUDA | 1 rank＝1 GPUのy-z分割時間発展 |
 | `cuda_mpi_cufftmp` | MPI + CUDA + cuFFTMp | 分散HIT初期化、分散FFT Forcing |
+
+多成分拡張では次の独立profileを使用します。
+
+| profile | 実行方式 | 主な用途 |
+|---|---|---|
+| `cpu_serial_foundation` | CPU逐次 | Stage 0状態・provider契約 |
+| `cpu_serial_passive_scalar` | CPU逐次 | Stage 1保存形周期パッシブスカラー移流 |
+| `cpu_serial_inviscid` | CPU逐次 | Stage 2非反応・非粘性多成分Euler流 |
 
 新規cloneではFrameWorkモノレポと`2decomp-fft`サブモジュールをまとめて取得します。
 

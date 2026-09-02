@@ -1,0 +1,35 @@
+! Stage-1 periodic passive-scalar advection smoke-test input.
+&multicomponent
+  nspecies = 2
+  species_names = "tracer", "carrier"
+  simulation_mode = "passive_scalar"
+  thermodynamics_model = "calorically_perfect"
+  transport_model = "none"
+  chemistry_model = "none"
+/
+
+&passive_scalar
+  nx = 12
+  ny = 6
+  nz = 4
+  x_min = 0.0
+  x_max = 1.0
+  y_min = 0.0
+  y_max = 1.0
+  z_min = 0.0
+  z_max = 1.0
+  velocity = 0.8, -0.2, 0.1
+  cfl = 0.4
+  dt = 0.0
+  nsteps = 5
+  initial_condition = "gaussian"
+  tracer_background = 0.05
+  tracer_amplitude = 0.90
+  tracer_center = 0.25, 0.5, 0.5
+  tracer_width = 0.08
+  advection_scheme = "upwind1"
+  boundary_condition = "periodic"
+  time_integrator = "ssprk3"
+  write_final = .true.
+  output_file = "passive_scalar_final.csv"
+/

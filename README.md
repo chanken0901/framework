@@ -19,6 +19,7 @@ NSE（Navier-Stokes equations）およびGPE（Gross-Pitaevskii equation）の�
 
 - [NSE](SolverLibrary/NSE/README.md)
 - [NSEのビルドと実行](SolverLibrary/NSE/docs/NSE_BUILD_AND_RUN.md)
+- [NSE多成分・反応流拡張](SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_ROADMAP.md)
 - [GPE](SolverLibrary/GPE/README.md)
 - [GP3D](SolverLibrary/GPE/gp3d/README.md)
 - [共通ビルドランナー](ScriptLibrary/BuildSolver/README.md)

@@ -18,6 +18,16 @@ include(NSEMPI)
 option(NSE_ENABLE_WARNINGS "Enable additional Fortran compiler warnings" ON)
 option(NSE_ENABLE_OPENMP "Enable OpenMP support" ON)
 option(NSE_USE_MPI "Build the MPI domain-decomposition backend" ON)
+set(
+  NSE_TEST_SUITE "legacy"
+  CACHE STRING
+  "CTest suite: legacy, multicomponent_foundation, multicomponent_passive_scalar, multicomponent_euler, or none"
+)
+set_property(
+  CACHE NSE_TEST_SUITE
+  PROPERTY STRINGS legacy multicomponent_foundation
+    multicomponent_passive_scalar multicomponent_euler none
+)
 option(
   NSE_ENABLE_MULTI_GPU_TESTS
   "Run MPI+CUDA tests that require one visible GPU per MPI rank"
@@ -109,6 +119,19 @@ string(TOLOWER "${NSE_BOUNDARY_SCHEME}" NSE_BOUNDARY_SCHEME)
 string(TOLOWER "${NSE_GPU_BACKEND}" NSE_GPU_BACKEND)
 string(TOLOWER "${NSE_INIT_FFT_BACKEND}" NSE_INIT_FFT_BACKEND)
 string(TOLOWER "${NSE_FORCING_FFT_BACKEND}" NSE_FORCING_FFT_BACKEND)
+string(TOLOWER "${NSE_TEST_SUITE}" NSE_TEST_SUITE)
+
+if(NOT NSE_TEST_SUITE STREQUAL "legacy" AND
+   NOT NSE_TEST_SUITE STREQUAL "multicomponent_foundation" AND
+   NOT NSE_TEST_SUITE STREQUAL "multicomponent_passive_scalar" AND
+   NOT NSE_TEST_SUITE STREQUAL "multicomponent_euler" AND
+   NOT NSE_TEST_SUITE STREQUAL "none")
+  message(FATAL_ERROR
+    "Unsupported NSE_TEST_SUITE='${NSE_TEST_SUITE}'. "
+    "Available suites: legacy, multicomponent_foundation, "
+    "multicomponent_passive_scalar, multicomponent_euler, none"
+  )
+endif()
 
 if(NOT NSE_GPU_BACKEND STREQUAL "none" AND
    NOT NSE_GPU_BACKEND STREQUAL "cuda")
@@ -599,6 +622,123 @@ install(
 )
 
 include(CTest)
+if(BUILD_TESTING AND
+   (NSE_TEST_SUITE STREQUAL "multicomponent_foundation" OR
+    NSE_TEST_SUITE STREQUAL "multicomponent_passive_scalar" OR
+    NSE_TEST_SUITE STREQUAL "multicomponent_euler"))
+  add_executable(
+    nse_test_multicomponent_foundation
+    tests/test_multicomponent_foundation.f90
+  )
+  set_target_properties(
+    nse_test_multicomponent_foundation
+    PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/multicomponent_foundation_test"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+  )
+  target_link_libraries(nse_test_multicomponent_foundation PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_multicomponent_foundation)
+  add_test(
+    NAME nse_multicomponent_foundation
+    COMMAND $<TARGET_FILE:nse_test_multicomponent_foundation>
+  )
+  set_tests_properties(
+    nse_multicomponent_foundation
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION
+        "Multicomponent foundation contract tests passed"
+  )
+  if(NSE_TEST_SUITE STREQUAL "multicomponent_foundation")
+    add_test(
+      NAME nse_multicomponent_foundation_input
+      COMMAND $<TARGET_FILE:nse_solver>
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_multicomponent_foundation.dat"
+    )
+    set_tests_properties(
+      nse_multicomponent_foundation_input
+      PROPERTIES
+        PASS_REGULAR_EXPRESSION
+          "Multicomponent NSE stage-0 foundation initialized successfully"
+    )
+  endif()
+endif()
+
+if(BUILD_TESTING AND NSE_TEST_SUITE STREQUAL "multicomponent_euler")
+  add_executable(
+    nse_test_multicomponent_euler
+    tests/test_multicomponent_euler.f90
+  )
+  set_target_properties(
+    nse_test_multicomponent_euler
+    PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/multicomponent_euler_test"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+  )
+  target_link_libraries(nse_test_multicomponent_euler PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_multicomponent_euler)
+  add_test(
+    NAME nse_multicomponent_euler
+    COMMAND $<TARGET_FILE:nse_test_multicomponent_euler>
+  )
+  set_tests_properties(
+    nse_multicomponent_euler
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION "Multicomponent Euler tests passed"
+  )
+  add_test(
+    NAME nse_multicomponent_euler_input
+    COMMAND $<TARGET_FILE:nse_solver>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_multicomponent_euler.dat"
+  )
+  set_tests_properties(
+    nse_multicomponent_euler_input
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION
+        "Multicomponent Euler calculation completed successfully"
+      FAIL_REGULAR_EXPRESSION
+        "floating-point exceptions are signalling;ERROR STOP"
+  )
+endif()
+
+if(BUILD_TESTING AND NSE_TEST_SUITE STREQUAL "multicomponent_passive_scalar")
+  add_executable(
+    nse_test_multicomponent_passive_scalar
+    tests/test_multicomponent_passive_scalar.f90
+  )
+  set_target_properties(
+    nse_test_multicomponent_passive_scalar
+    PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/multicomponent_passive_scalar_test"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+  )
+  target_link_libraries(nse_test_multicomponent_passive_scalar PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_multicomponent_passive_scalar)
+  add_test(
+    NAME nse_multicomponent_passive_scalar
+    COMMAND $<TARGET_FILE:nse_test_multicomponent_passive_scalar>
+  )
+  set_tests_properties(
+    nse_multicomponent_passive_scalar
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION
+        "Multicomponent passive-scalar tests passed"
+  )
+  add_test(
+    NAME nse_multicomponent_passive_scalar_input
+    COMMAND $<TARGET_FILE:nse_solver>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_multicomponent_passive_scalar.dat"
+  )
+  set_tests_properties(
+    nse_multicomponent_passive_scalar_input
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION
+        "Passive-scalar calculation completed successfully"
+      FAIL_REGULAR_EXPRESSION
+        "floating-point exceptions are signalling;ERROR STOP"
+  )
+endif()
+
+if(NSE_TEST_SUITE STREQUAL "legacy")
 if(BUILD_TESTING AND NSE_ENABLE_CUFFTMP_CONTRACT_TESTS)
   add_test(
     NAME nse_cufftmp_forcing_contract
@@ -1304,6 +1444,7 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda" AND NSE_USE_MPI AND
         "CUDA backend failure;floating-point exceptions are signalling"
   )
 endif()
+endif()
 
 message(STATUS "NSE MPI provider: ${NSE_MPI_PROVIDER_RESOLVED}")
 message(STATUS "NSE MPI enabled: ${NSE_USE_MPI}")
@@ -1313,6 +1454,7 @@ message(STATUS "NSE viscous scheme: ${NSE_VISCOUS_SCHEME}")
 message(STATUS "NSE boundary scheme: ${NSE_BOUNDARY_SCHEME}")
 message(STATUS "NSE init FFT backend: ${NSE_INIT_FFT_BACKEND}")
 message(STATUS "NSE forcing FFT backend: ${NSE_FORCING_FFT_BACKEND}")
+message(STATUS "NSE test suite: ${NSE_TEST_SUITE}")
 if(NSE_INIT_FFT_BACKEND STREQUAL "2decomp_fftw")
   message(STATUS "NSE 2DECOMP root: ${NSE_2DECOMP_ROOT}")
 endif()

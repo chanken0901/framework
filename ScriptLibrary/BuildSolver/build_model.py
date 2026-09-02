@@ -1093,7 +1093,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Build and run NSE or GPE from one model-selecting YAML design."
     )
     parser.add_argument("design", nargs="?", help="Build YAML; default: build.yaml")
-    parser.add_argument("--model", choices=["nse", "gpe"], help="Override selected_model")
+    parser.add_argument(
+        "--model",
+        help="Override selected_model; the value must exist in model_catalog.yaml",
+    )
     parser.add_argument(
         "--solver-profile", "--profile", dest="solver_profile", help="Override solver profile"
     )

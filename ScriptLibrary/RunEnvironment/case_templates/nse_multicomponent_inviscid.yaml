@@ -1,0 +1,82 @@
+case_id: {{case_id}}
+case_label: {{case_label}}
+status: development
+description: {{description}}
+created_at: {{created_at}}
+
+project:
+  name: {{project_name}}
+  author: Kento Tanaka
+
+physics:
+  model: {{physics_model}}
+  multicomponent:
+    mode: inviscid_euler
+    species:
+      - species_a
+      - species_b
+
+thermodynamics:
+  model: calorically_perfect
+  gamma: 1.4
+
+transport:
+  model: none
+
+chemistry:
+  model: none
+
+grid:
+  nx: 64
+  ny: 4
+  nz: 4
+  x_min: 0.0
+  x_max: 1.0
+  y_min: 0.0
+  y_max: 1.0
+  z_min: 0.0
+  z_max: 1.0
+
+flow:
+  type: multispecies_sod
+  multispecies_sod:
+    initial_condition: multispecies_sod_x
+    interface_location: 0.5
+    left:
+      density: 1.0
+      velocity: [0.0, 0.0, 0.0]
+      pressure: 1.0
+      mass_fractions: [0.8, 0.2]
+    right:
+      density: 0.125
+      velocity: [0.0, 0.0, 0.0]
+      pressure: 0.1
+      mass_fractions: [0.2, 0.8]
+
+time:
+  cfl: 0.35
+  dt: 0.0
+  nsteps: 20
+
+numerics:
+  convective_scheme: rusanov1
+  boundary_condition: periodic
+  time_integration: ssprk3
+
+solver:
+  profile: {{solver_profile}}
+  use_mpi: {{use_mpi}}
+  use_openmp: {{use_openmp}}
+  use_cuda: {{use_cuda}}
+  mpi_processes: {{mpi_processes}}
+  omp_threads: {{omp_threads}}
+
+output:
+  write_final: true
+  filename: multicomponent_euler_final.csv
+
+storage:
+  raw_data_location: {{raw_data_location}}
+
+outputs:
+  used_in:

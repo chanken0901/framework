@@ -59,6 +59,11 @@ options:
       description: 圧縮性Navier-Stokes方程式を解く。CPU/GPUとMPIはparallelで選択する。
       values:
         name: nse
+    nse_multicomponent:
+      label: 多成分NSE基盤
+      description: 多成分・反応流拡張の基盤からstage-2非粘性多成分流までを提供する。
+      values:
+        name: nse_multicomponent
     gpe:
       label: GPE
       description: Gross-Pitaevskii方程式を解く。CPU/GPUとMPIはparallelで選択する。
@@ -98,6 +103,45 @@ options:
         label: nse_baseline
         description: NSE baseline case
         project_name: NSEResearch
+        data_root: results
+    nse_multicomponent_foundation:
+      label: 多成分NSE stage-0 case
+      description: 1成分極限と非反応provider構成を検証する開発用caseを生成する。
+      requires:
+        model.name: nse_multicomponent
+      values:
+        create: true
+        template: ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent.yaml
+        id: case0001
+        label: multicomponent_foundation
+        description: Multicomponent NSE stage-0 foundation
+        project_name: NSEMulticomponentResearch
+        data_root: results
+    nse_multicomponent_passive_scalar:
+      label: 多成分NSE stage-1パッシブスカラー
+      description: 一定速度場における保存形式の周期パッシブスカラー移流caseを生成する。
+      requires:
+        model.name: nse_multicomponent
+      values:
+        create: true
+        template: ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_passive_scalar.yaml
+        id: case0001
+        label: passive_scalar
+        description: Periodic conservative passive-scalar advection
+        project_name: NSEMulticomponentResearch
+        data_root: results
+    nse_multicomponent_inviscid:
+      label: 多成分NSE stage-2非粘性流
+      description: 非反応・非粘性多成分Euler方程式のSod問題caseを生成する。
+      requires:
+        model.name: nse_multicomponent
+      values:
+        create: true
+        template: ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_inviscid.yaml
+        id: case0001
+        label: multispecies_sod
+        description: Non-reacting inviscid multicomponent Sod problem
+        project_name: NSEMulticomponentResearch
         data_root: results
     gpe_quantum_taylor_green:
       label: GPE量子Taylor-Green

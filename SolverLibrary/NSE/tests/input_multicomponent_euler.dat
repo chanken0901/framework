@@ -1,0 +1,40 @@
+! Stage-2 non-reacting inviscid multicomponent Euler smoke test.
+&multicomponent
+  nspecies = 2
+  species_names = "species_a", "species_b"
+  simulation_mode = "inviscid_euler"
+  thermodynamics_model = "calorically_perfect"
+  transport_model = "none"
+  chemistry_model = "none"
+/
+
+&multicomponent_euler
+  nx = 24
+  ny = 4
+  nz = 4
+  x_min = 0.0
+  x_max = 1.0
+  y_min = 0.0
+  y_max = 1.0
+  z_min = 0.0
+  z_max = 1.0
+  gamma = 1.4
+  cfl = 0.35
+  dt = 0.0
+  nsteps = 5
+  initial_condition = "multispecies_sod_x"
+  interface_location = 0.5
+  left_density = 1.0
+  left_velocity = 0.0, 0.0, 0.0
+  left_pressure = 1.0
+  left_mass_fractions = 0.8, 0.2
+  right_density = 0.125
+  right_velocity = 0.0, 0.0, 0.0
+  right_pressure = 0.1
+  right_mass_fractions = 0.2, 0.8
+  riemann_solver = "rusanov1"
+  boundary_condition = "periodic"
+  time_integrator = "ssprk3"
+  write_final = .true.
+  output_file = "multicomponent_euler_final.csv"
+/
