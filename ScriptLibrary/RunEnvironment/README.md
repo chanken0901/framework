@@ -14,6 +14,12 @@ Stage 2の非反応・非粘性多成分Euler計算には
 運動量、全エネルギーをRusanov流束とSSPRK3で連成更新します。物理拡散、粘性、
 熱伝導、化学反応はまだ含みません。
 
+Stage 3の温度・組成依存熱力学には
+`environment.nse_multicomponent.thermally_perfect.yaml`を使用します。化学種ごとの
+分子量とNASA-7係数から温度、圧力、比熱比、音速を計算し、最終CSVへ温度`T`も
+出力します。物性値と流れ場は整合するSI単位で指定してください。Stage 3もCPU逐次、
+非粘性、周期境界、非反応です。
+
 > OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通のパス、Python、CMake、MPIの対応表は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 NSEの`case.yaml`では`numerics.convective_scheme`に`keep2`、`keep6`、

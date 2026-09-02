@@ -2,7 +2,8 @@ module mod_mc_euler_field
   use mod_precision, only : dp
   use mod_mc_state_layout, only : mc_state_layout
   use mod_mc_euler_config, only : mc_euler_config
-  use mod_mc_thermodynamics_provider, only : mc_mixture_density, mc_pressure
+  use mod_mc_thermodynamics_provider, only : mc_mixture_density, mc_pressure, &
+    mc_temperature, mc_total_energy_from_primitive
   implicit none
   private
 
@@ -47,7 +48,7 @@ contains
     call validate_mc_euler_state(q, layout, config)
   end subroutine initialize_mc_euler_state
 
-  pure subroutine set_mc_euler_conservative_state( &
+  subroutine set_mc_euler_conservative_state( &
       state, layout, gamma, density, velocity, pressure, mass_fractions)
     real(dp), intent(out) :: state(:)
     type(mc_state_layout), intent(in) :: layout
@@ -58,8 +59,8 @@ contains
     state(layout%first_species:layout%last_species) = &
       density*mass_fractions(1:layout%nspecies)
     state(layout%momentum) = density*velocity
-    state(layout%total_energy) = pressure/(gamma-1.0_dp) + &
-      0.5_dp*density*sum(velocity**2)
+    state(layout%total_energy) = mc_total_energy_from_primitive( &
+      layout,gamma,density,velocity,pressure,mass_fractions)
   end subroutine set_mc_euler_conservative_state
 
   subroutine validate_mc_euler_state(q, layout, config)
@@ -109,17 +110,20 @@ contains
   end subroutine compute_mc_euler_totals
 
   subroutine compute_mc_euler_minima( &
-      q, layout, config, species_density, mixture_density, pressure)
+      q, layout, config, species_density, mixture_density, pressure, &
+      temperature)
     real(dp), intent(in) :: q(:,:,:,:)
     type(mc_state_layout), intent(in) :: layout
     type(mc_euler_config), intent(in) :: config
     real(dp), intent(out) :: species_density, mixture_density, pressure
+    real(dp), intent(out), optional :: temperature
     integer :: i, j, k
 
     species_density = minval( &
       q(:,:,:,layout%first_species:layout%last_species))
     mixture_density = huge(1.0_dp)
     pressure = huge(1.0_dp)
+    if (present(temperature)) temperature = huge(1.0_dp)
     do k = 1, size(q,3)
       do j = 1, size(q,2)
         do i = 1, size(q,1)
@@ -127,6 +131,10 @@ contains
             mc_mixture_density(q(i,j,k,:),layout))
           pressure = min(pressure, &
             mc_pressure(q(i,j,k,:),layout,config%gamma))
+          if (present(temperature)) then
+            temperature = min(temperature, &
+              mc_temperature(q(i,j,k,:),layout,config%gamma))
+          end if
         end do
       end do
     end do

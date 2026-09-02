@@ -21,12 +21,13 @@ option(NSE_USE_MPI "Build the MPI domain-decomposition backend" ON)
 set(
   NSE_TEST_SUITE "legacy"
   CACHE STRING
-  "CTest suite: legacy, multicomponent_foundation, multicomponent_passive_scalar, multicomponent_euler, or none"
+  "CTest suite: legacy, multicomponent_foundation, multicomponent_passive_scalar, multicomponent_euler, multicomponent_thermally_perfect, or none"
 )
 set_property(
   CACHE NSE_TEST_SUITE
   PROPERTY STRINGS legacy multicomponent_foundation
-    multicomponent_passive_scalar multicomponent_euler none
+    multicomponent_passive_scalar multicomponent_euler
+    multicomponent_thermally_perfect none
 )
 option(
   NSE_ENABLE_MULTI_GPU_TESTS
@@ -125,11 +126,13 @@ if(NOT NSE_TEST_SUITE STREQUAL "legacy" AND
    NOT NSE_TEST_SUITE STREQUAL "multicomponent_foundation" AND
    NOT NSE_TEST_SUITE STREQUAL "multicomponent_passive_scalar" AND
    NOT NSE_TEST_SUITE STREQUAL "multicomponent_euler" AND
+   NOT NSE_TEST_SUITE STREQUAL "multicomponent_thermally_perfect" AND
    NOT NSE_TEST_SUITE STREQUAL "none")
   message(FATAL_ERROR
     "Unsupported NSE_TEST_SUITE='${NSE_TEST_SUITE}'. "
     "Available suites: legacy, multicomponent_foundation, "
-    "multicomponent_passive_scalar, multicomponent_euler, none"
+    "multicomponent_passive_scalar, multicomponent_euler, "
+    "multicomponent_thermally_perfect, none"
   )
 endif()
 
@@ -625,7 +628,8 @@ include(CTest)
 if(BUILD_TESTING AND
    (NSE_TEST_SUITE STREQUAL "multicomponent_foundation" OR
     NSE_TEST_SUITE STREQUAL "multicomponent_passive_scalar" OR
-    NSE_TEST_SUITE STREQUAL "multicomponent_euler"))
+    NSE_TEST_SUITE STREQUAL "multicomponent_euler" OR
+    NSE_TEST_SUITE STREQUAL "multicomponent_thermally_perfect"))
   add_executable(
     nse_test_multicomponent_foundation
     tests/test_multicomponent_foundation.f90
@@ -692,6 +696,51 @@ if(BUILD_TESTING AND NSE_TEST_SUITE STREQUAL "multicomponent_euler")
   )
   set_tests_properties(
     nse_multicomponent_euler_input
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION
+        "Multicomponent Euler calculation completed successfully"
+      FAIL_REGULAR_EXPRESSION
+        "floating-point exceptions are signalling;ERROR STOP"
+  )
+endif()
+
+if(BUILD_TESTING AND
+   NSE_TEST_SUITE STREQUAL "multicomponent_thermally_perfect")
+  add_executable(
+    nse_test_multicomponent_thermally_perfect
+    tests/test_multicomponent_thermally_perfect.f90
+  )
+  set_target_properties(
+    nse_test_multicomponent_thermally_perfect
+    PROPERTIES
+      Fortran_MODULE_DIRECTORY
+        "${NSE_MODULE_DIR}/multicomponent_thermally_perfect_test"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+  )
+  target_link_libraries(
+    nse_test_multicomponent_thermally_perfect PRIVATE NSE::core
+  )
+  nse_apply_fortran_options(nse_test_multicomponent_thermally_perfect)
+  add_test(
+    NAME nse_multicomponent_thermally_perfect
+    COMMAND $<TARGET_FILE:nse_test_multicomponent_thermally_perfect>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_multicomponent_thermally_perfect.dat"
+  )
+  set_tests_properties(
+    nse_multicomponent_thermally_perfect
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION
+        "Thermally-perfect multicomponent tests passed"
+      FAIL_REGULAR_EXPRESSION
+        "floating-point exceptions are signalling;ERROR STOP"
+  )
+  add_test(
+    NAME nse_multicomponent_thermally_perfect_input
+    COMMAND $<TARGET_FILE:nse_solver>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_multicomponent_thermally_perfect.dat"
+  )
+  set_tests_properties(
+    nse_multicomponent_thermally_perfect_input
     PROPERTIES
       PASS_REGULAR_EXPRESSION
         "Multicomponent Euler calculation completed successfully"

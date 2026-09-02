@@ -7,7 +7,8 @@ module mod_mc_euler_solver
     compute_mc_euler_totals, compute_mc_euler_minima
   use mod_mc_euler_flux, only : compute_mc_euler_timestep, &
     advance_mc_euler_ssprk3
-  use mod_mc_thermodynamics_provider, only : mc_mixture_density, mc_pressure
+  use mod_mc_thermodynamics_provider, only : mc_mixture_density, mc_pressure, &
+    mc_temperature, mc_thermodynamics_provider_name
   implicit none
   private
 
@@ -23,6 +24,7 @@ contains
     real(dp), allocatable :: initial_totals(:), final_totals(:)
     real(dp) :: dt, time, conservation_error, scale
     real(dp) :: minimum_species, minimum_density, minimum_pressure
+    real(dp) :: minimum_temperature
     integer :: step, variable
 
     allocate(q(euler%nx,euler%ny,euler%nz,layout%nvariables))
@@ -33,9 +35,15 @@ contains
     call compute_mc_euler_totals(q,euler,initial_totals)
 
     time = 0.0_dp
-    write(*,'(A)') '--- stage-2 multicomponent inviscid Euler ---'
+    if (trim(config%simulation_mode) == 'thermally_perfect_euler') then
+      write(*,'(A)') '--- stage-3 thermally-perfect multicomponent Euler ---'
+    else
+      write(*,'(A)') '--- stage-2 multicomponent inviscid Euler ---'
+    end if
     write(*,'(A,3(I0,1X))') 'grid = ', euler%nx, euler%ny, euler%nz
-    write(*,'(A,F8.4)') 'gamma = ', euler%gamma
+    if (mc_thermodynamics_provider_name == 'calorically_perfect') then
+      write(*,'(A,F8.4)') 'gamma = ', euler%gamma
+    end if
     write(*,'(A,I0)') 'nsteps = ', euler%nsteps
     do step = 1, euler%nsteps
       dt = compute_mc_euler_timestep(q,layout,euler)
@@ -51,7 +59,8 @@ contains
         abs(final_totals(variable)-initial_totals(variable))/scale)
     end do
     call compute_mc_euler_minima( &
-      q,layout,euler,minimum_species,minimum_density,minimum_pressure)
+      q,layout,euler,minimum_species,minimum_density,minimum_pressure, &
+      minimum_temperature)
     if (conservation_error > 1.0e-10_dp) then
       error stop 'multicomponent Euler conservation check failed'
     end if
@@ -70,6 +79,9 @@ contains
       minimum_species
     write(*,'(A,ES12.4)') 'minimum mixture density = ', minimum_density
     write(*,'(A,ES12.4)') 'minimum pressure = ', minimum_pressure
+    if (mc_thermodynamics_provider_name == 'thermally_perfect') then
+      write(*,'(A,ES12.4)') 'minimum temperature = ', minimum_temperature
+    end if
     write(*,'(A)') 'Multicomponent Euler calculation completed successfully.'
 
     deallocate(q,q0,rhs,initial_totals,final_totals)
@@ -83,6 +95,7 @@ contains
     type(mc_euler_config), intent(in) :: euler
     integer :: unit, ios, i, j, k, species, variable
     real(dp) :: x, y, z, dx, dy, dz, density, velocity(3), pressure
+    real(dp) :: temperature
     character(len=512) :: message
 
     open(newunit=unit,file=trim(path),status='replace',action='write', &
@@ -98,7 +111,11 @@ contains
       write(unit,'(A,A)',advance='no') ',rho_', &
         trim(config%species_names(species))
     end do
-    write(unit,'(A)') ',rho,u,v,w,p,rhoE'
+    if (mc_thermodynamics_provider_name == 'thermally_perfect') then
+      write(unit,'(A)') ',rho,u,v,w,p,T,rhoE'
+    else
+      write(unit,'(A)') ',rho,u,v,w,p,rhoE'
+    end if
 
     dx = (euler%x_max-euler%x_min)/real(euler%nx,dp)
     dy = (euler%y_max-euler%y_min)/real(euler%ny,dp)
@@ -112,6 +129,9 @@ contains
           density = mc_mixture_density(q(i,j,k,:),layout)
           velocity = q(i,j,k,layout%momentum)/density
           pressure = mc_pressure(q(i,j,k,:),layout,euler%gamma)
+          if (mc_thermodynamics_provider_name == 'thermally_perfect') then
+            temperature = mc_temperature(q(i,j,k,:),layout,euler%gamma)
+          end if
           write(unit,'(ES24.16)',advance='no') x
           write(unit,'(A,ES24.16)',advance='no') ',', y
           write(unit,'(A,ES24.16)',advance='no') ',', z
@@ -124,6 +144,9 @@ contains
           write(unit,'(A,ES24.16)',advance='no') ',', velocity(2)
           write(unit,'(A,ES24.16)',advance='no') ',', velocity(3)
           write(unit,'(A,ES24.16)',advance='no') ',', pressure
+          if (mc_thermodynamics_provider_name == 'thermally_perfect') then
+            write(unit,'(A,ES24.16)',advance='no') ',', temperature
+          end if
           write(unit,'(A,ES24.16)') ',', q(i,j,k,layout%total_energy)
         end do
       end do

@@ -1,0 +1,51 @@
+! Stage-3 thermally-perfect, non-reacting multicomponent Euler smoke test.
+&multicomponent
+  nspecies = 2
+  species_names = "N2", "O2"
+  simulation_mode = "thermally_perfect_euler"
+  thermodynamics_model = "thermally_perfect"
+  transport_model = "none"
+  chemistry_model = "none"
+/
+
+&thermally_perfect
+  thermo_species_names = "N2", "O2"
+  universal_gas_constant = 8314.46261815324
+  temperature_min = 200.0
+  temperature_max = 6000.0
+  temperature_tolerance = 1.0e-10
+  molecular_weights = 28.0134, 31.9988
+  temperature_midpoints = 1000.0, 1000.0
+  nasa_low_coefficients = 3.53100528, -1.23660987e-4, -5.02999433e-7, 2.43530612e-9, -1.40881235e-12, -1046.97628, 2.96747468, 3.78245636, -2.99673416e-3, 9.84730201e-6, -9.68129509e-9, 3.24372837e-12, -1063.94356, 3.65767573
+  nasa_high_coefficients = 2.95257626, 1.39690040e-3, -4.92631603e-7, 7.86010367e-11, -4.60755321e-15, -923.948645, 5.87188762, 3.28253784, 1.48308754e-3, -7.57966669e-7, 2.09470555e-10, -2.16717794e-14, -1088.45772, 5.45323129
+/
+
+&multicomponent_euler
+  nx = 24
+  ny = 4
+  nz = 4
+  x_min = 0.0
+  x_max = 1.0
+  y_min = 0.0
+  y_max = 1.0
+  z_min = 0.0
+  z_max = 1.0
+  cfl = 0.20
+  dt = 0.0
+  nsteps = 5
+  initial_condition = "multispecies_sod_x"
+  interface_location = 0.5
+  left_density = 1.17197031944841
+  left_velocity = 0.0, 0.0, 0.0
+  left_pressure = 101325.0
+  left_mass_fractions = 0.767, 0.233
+  right_density = 0.126389266436632
+  right_velocity = 0.0, 0.0, 0.0
+  right_pressure = 10132.5
+  right_mass_fractions = 0.2, 0.8
+  riemann_solver = "rusanov1"
+  boundary_condition = "periodic"
+  time_integrator = "ssprk3"
+  write_final = .true.
+  output_file = "multicomponent_thermally_perfect_final.csv"
+/

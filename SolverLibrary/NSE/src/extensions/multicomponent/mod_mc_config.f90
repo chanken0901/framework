@@ -98,7 +98,8 @@ contains
     end if
     if (trim(config%simulation_mode) /= 'foundation' .and. &
         trim(config%simulation_mode) /= 'passive_scalar' .and. &
-        trim(config%simulation_mode) /= 'inviscid_euler') then
+        trim(config%simulation_mode) /= 'inviscid_euler' .and. &
+        trim(config%simulation_mode) /= 'thermally_perfect_euler') then
       error stop 'unsupported multicomponent simulation mode'
     end if
     if (len_trim(config%transport_model) == 0) then

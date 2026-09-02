@@ -190,7 +190,7 @@ contains
       error stop 'multicomponent Euler time settings are invalid'
     end if
     if (trim(config%initial_condition) /= 'multispecies_sod_x') then
-      error stop 'stage-2 supports initial_condition=multispecies_sod_x'
+      error stop 'multicomponent Euler supports initial_condition=multispecies_sod_x'
     end if
     if (config%interface_location <= config%x_min .or. &
         config%interface_location >= config%x_max) then
@@ -211,13 +211,13 @@ contains
       error stop 'Euler initial mass fractions must sum to one'
     end if
     if (trim(config%riemann_solver) /= 'rusanov1') then
-      error stop 'stage-2 supports riemann_solver=rusanov1'
+      error stop 'multicomponent Euler supports riemann_solver=rusanov1'
     end if
     if (trim(config%boundary_condition) /= 'periodic') then
-      error stop 'stage-2 supports periodic boundaries only'
+      error stop 'multicomponent Euler supports periodic boundaries only'
     end if
     if (trim(config%time_integrator) /= 'ssprk3') then
-      error stop 'stage-2 supports time_integrator=ssprk3'
+      error stop 'multicomponent Euler supports time_integrator=ssprk3'
     end if
     if (config%write_final .and. len_trim(config%output_file) == 0) then
       error stop 'multicomponent Euler output file must not be empty'

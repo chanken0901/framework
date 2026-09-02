@@ -1,4 +1,4 @@
-# Additive multicomponent foundation through stage-2 inviscid flow.
+# Additive multicomponent foundation through stage-3 thermodynamics.
 # The production single-component NSE remains in solver_manifest.yaml.
 schema_version: 1
 solver_id: nse_multicomponent
@@ -6,7 +6,7 @@ solver_api_version: 1
 model: nse_multicomponent
 runtime_profile_selection: false
 default_profiles:
-  serial: cpu_serial_inviscid
+  serial: cpu_serial_thermally_perfect
 build_adapter: nse_cmake_v1
 cmake_file: CMakeLists.txt
 
@@ -32,6 +32,11 @@ components:
     cmake_role: library
     files:
       - src/extensions/multicomponent/providers/mod_mc_thermodynamics_calorically_perfect.f90
+
+  thermodynamics_thermally_perfect:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/providers/mod_mc_thermodynamics_thermally_perfect.f90
 
   transport_none:
     cmake_role: library
@@ -88,6 +93,11 @@ components:
     files:
       - tests/test_multicomponent_euler.f90
       - tests/input_multicomponent_euler.dat
+
+  thermally_perfect_tests:
+    files:
+      - tests/test_multicomponent_thermally_perfect.f90
+      - tests/input_multicomponent_thermally_perfect.dat
 
   foundation_docs:
     files:
@@ -190,3 +200,40 @@ profiles:
       NSE_INIT_FFT_BACKEND: none
       NSE_FORCING_FFT_BACKEND: none
       NSE_TEST_SUITE: multicomponent_euler
+
+  cpu_serial_thermally_perfect:
+    description: Stage-3 thermally-perfect non-reacting multicomponent Euler solver
+    capabilities:
+      - multicomponent_foundation
+      - nonreacting_multicomponent_euler
+      - thermally_perfect_ideal_gas_mixture
+      - nasa7_thermodynamics
+      - temperature_recovery
+      - periodic_boundary
+      - rusanov1
+      - ssprk3
+    components:
+      - foundation_core
+      - thermodynamics_thermally_perfect
+      - transport_none
+      - chemistry_none
+      - euler_core
+      - foundation_docs
+      - main_inviscid
+    test_components:
+      - foundation_tests
+      - thermally_perfect_tests
+    executable: nse_multicomponent
+    execution:
+      use_mpi: false
+      use_openmp: false
+    cmake:
+      NSE_USE_MPI: false
+      NSE_ENABLE_OPENMP: false
+      NSE_GPU_BACKEND: none
+      NSE_CONVECTIVE_BACKEND: runtime
+      NSE_VISCOUS_SCHEME: none
+      NSE_BOUNDARY_SCHEME: periodic
+      NSE_INIT_FFT_BACKEND: none
+      NSE_FORCING_FFT_BACKEND: none
+      NSE_TEST_SUITE: multicomponent_thermally_perfect

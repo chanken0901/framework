@@ -1,0 +1,29 @@
+schema_version: 1
+environment_id: nse_multicomponent_thermally_perfect
+
+option_catalogs: []
+
+select:
+  source: local_framework
+  destination: windows_research_runs
+  model: nse_multicomponent
+  target: windows_gnu_msmpi
+  case: nse_multicomponent_thermally_perfect
+  execution: release
+  scheduler: disabled
+  archive: none
+
+parallel:
+  use_mpi: false
+  use_openmp: false
+  use_cuda: false
+
+case:
+  id: case0001
+  label: thermally_perfect_sod
+  description: Thermally-perfect non-reacting multicomponent Sod problem
+  project_name: NSEMulticomponentResearch
+
+solver:
+  profile: cpu_serial_thermally_perfect
+  include_tests: true

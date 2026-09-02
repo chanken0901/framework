@@ -14,6 +14,7 @@
 | `nse_multicomponent` | `cpu_serial_foundation` | Stage 0基盤 |
 | `nse_multicomponent` | `cpu_serial_passive_scalar` | Stage 1パッシブスカラー |
 | `nse_multicomponent` | `cpu_serial_inviscid` | Stage 2非反応・非粘性多成分流 |
+| `nse_multicomponent` | `cpu_serial_thermally_perfect` | Stage 3温度・組成依存熱力学 |
 
 多成分profileの実行ファイル名はすべて`nse_multicomponent`である。profileごとに
 main programとコンパイル対象を切り替えるため、各Stageの実行内容は混在しない。
@@ -104,7 +105,41 @@ dt = CFL / max_cells[
 
 最終CSVには座標、全species部分密度、混合密度、速度、圧力、全エネルギーを出力する。
 
-## 5. 保存変数
+## 5. Stage 3: 温度・組成依存熱力学
+
+Stage 3はStage 2と同じ非反応・非粘性Euler方程式を解き、熱力学providerを
+`thermally_perfect`へ交換する。各speciesについて分子量とNASA-7係数の低温・高温域を
+`case.yaml`へ指定する。係数配列は`physics.multicomponent.species`の名前をキーにするため、
+化学種の並び順を変更しても別speciesの物性を誤って割り当てない。
+
+```text
+R_s       = R_u / W_s
+R_mix     = sum_s Y_s R_s
+p         = rho R_mix T
+cp_mix(T) = sum_s Y_s cp_s(T)
+gamma_mix = cp_mix / (cp_mix - R_mix)
+c         = sqrt(gamma_mix p / rho)
+```
+
+NASA-7の`a1`～`a5`から`cp_s(T)`、`a1`～`a6`から基準生成エンタルピーを含む
+内部エネルギーを評価する。`a7`も将来の反応平衡・可逆反応に備えて保持する。
+保存変数の内部エネルギーから温度を求める際は、設定温度範囲内の単調な二分法を使う。
+範囲外エネルギー、`cv <= 0`、中間温度で不連続な係数は計算開始前に拒否する。
+
+Stage 3のSI単位規約は次のとおり。
+
+- 分子量: kg/kmol
+- 普遍気体定数: J/(kmol K)
+- 温度: K
+- 密度、速度、圧力、全エネルギーも整合するSI単位系
+
+最終CSVにはStage 2の変数に加えて温度`T`を出力する。Stage 2の共通`gamma`モデルと
+既存出力形式は`cpu_serial_inviscid`で引き続き利用できる。
+NASA-7の`a6`が定める生成エンタルピーの基準によっては`rhoE`が負になり得るが、
+温度・圧力が正で設定範囲内なら異常ではない。Stage 3の正値性判定も`rhoE`の符号ではなく、
+部分密度、混合密度、温度、圧力に対して行う。
+
+## 6. 保存変数
 
 全Stageで状態レイアウトを共有する。
 
@@ -116,7 +151,7 @@ nvar = Ns + 4
 
 `Ns=1`では5保存変数になる。変数番号は`mod_mc_state_layout`だけが決定する。
 
-## 6. Provider境界
+## 7. Provider境界
 
 熱力学、輸送、化学反応は同一APIを持つ代替Fortran moduleとして実装し、manifestが
 ビルド時に各1個を選択する。
@@ -127,10 +162,12 @@ mod_mc_transport_provider
 mod_mc_chemistry_provider
 ```
 
-Stage 2では熱力学providerが混合密度、圧力、音速を提供する。輸送と化学反応providerは
-引き続き`none`である。入力名とコンパイル済みproviderが異なる場合は開始前に停止する。
+Stage 2では熱力学providerが混合密度、圧力、音速を提供する。Stage 3では同じAPIに
+温度、混合気体定数、混合比熱比、primitive状態からの全エネルギー生成を追加した。
+輸送と化学反応providerは引き続き`none`である。入力名とコンパイル済みproviderが
+異なる場合は開始前に停止する。
 
-## 7. Stage 2設計書
+## 8. 設計書
 
 完全なひな型は
 `ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_inviscid.yaml`
@@ -175,7 +212,29 @@ numerics:
   time_integration: ssprk3
 ```
 
-## 8. ビルドと実行環境
+Stage 3では`case_templates/nse_multicomponent_thermally_perfect.yaml`をひな型にする。
+物性はspecies名をキーにして指定する。
+
+```yaml
+physics:
+  multicomponent:
+    mode: thermally_perfect_euler
+    species: [N2, O2]
+
+thermodynamics:
+  model: thermally_perfect
+  universal_gas_constant: 8314.46261815324
+  temperature_min: 200.0
+  temperature_max: 6000.0
+  species_data:
+    N2:
+      molecular_weight: 28.0134
+      temperature_midpoint: 1000.0
+      nasa7_low: [3.53100528, -1.23660987e-4, -5.02999433e-7, 2.43530612e-9, -1.40881235e-12, -1046.97628, 2.96747468]
+      nasa7_high: [2.95257626, 1.39690040e-3, -4.92631603e-7, 7.86010367e-11, -4.60755321e-15, -923.948645, 5.87188762]
+```
+
+## 9. ビルドと実行環境
 
 Windows（PowerShell）:
 
@@ -183,7 +242,7 @@ Windows（PowerShell）:
 python .\ScriptLibrary\BuildSolver\build_model.py `
   .\ScriptLibrary\BuildSolver\build.yaml `
   --model nse_multicomponent `
-  --profile cpu_serial_inviscid `
+  --profile cpu_serial_thermally_perfect `
   --test
 ```
 
@@ -193,30 +252,30 @@ Linux（bash）:
 python3 ./ScriptLibrary/BuildSolver/build_model.py \
   ./ScriptLibrary/BuildSolver/build.yaml \
   --model nse_multicomponent \
-  --profile cpu_serial_inviscid \
+  --profile cpu_serial_thermally_perfect \
   --test
 ```
 
 実行環境設計書は
-`ScriptLibrary/RunEnvironment/environment.nse_multicomponent.inviscid.yaml`
+`ScriptLibrary/RunEnvironment/environment.nse_multicomponent.thermally_perfect.yaml`
 を使用する。
 
-## 9. Stage 2の制約
+## 10. Stage 3の制約
 
 - CPU逐次実行のみ
 - 三次元直交等間隔格子
 - 全方向周期境界のみ
 - 一次Rusanov流束のみ
-- 共通かつ一定の`gamma`
+- 理想混合気体のみ（実在気体効果なし）
+- NASA-7係数の設定温度範囲内のみ
 - 化学反応、species拡散、粘性、熱伝導なし
 - x方向の多成分Sod初期条件のみ
 - CSVは最終時刻だけ出力
 
 未実装の選択肢は黙って別方式として扱わず、入力生成時または計算開始前に拒否する。
 
-## 10. 後続Stage
+## 11. 後続Stage
 
-3. 温度・組成依存熱力学
 4. 混合平均拡散、粘性、熱伝導
 5. 0次元有限反応速度化学
 6. Strang分割による流体・反応結合
@@ -225,7 +284,7 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 9. 一般座標
 10. CUDA
 
-## 11. 必須回帰条件
+## 12. 必須回帰条件
 
 - 現行`nse`のmanifest、実行ファイル名、既定profileを維持する。
 - Stage 0/1 profileを独立してビルド・実行できる。
@@ -235,5 +294,8 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 - 一様周期場の離散右辺がゼロになる。
 - 周期計算で全species質量、運動量、全エネルギーを保存する。
 - 部分密度、混合密度、圧力の正値性を維持する。
+- primitive状態から生成した全エネルギーから温度と圧力を復元できる。
+- 混合比熱比が温度と組成に応じて変化する。
+- NASA-7の温度範囲外やspecies物性の不一致を開始前に拒否する。
 - 反応追加後も成分生成速度の総和をゼロにする。
 - 拡散追加後も成分拡散流束の総和をゼロにする。

@@ -16,7 +16,7 @@ module mod_mc_euler_flux
 
 contains
 
-  pure subroutine compute_mc_euler_physical_flux( &
+  subroutine compute_mc_euler_physical_flux( &
       state, layout, gamma, direction, flux)
     real(dp), intent(in) :: state(:)
     type(mc_state_layout), intent(in) :: layout
@@ -39,7 +39,7 @@ contains
       (state(layout%total_energy)+pressure)*normal_velocity
   end subroutine compute_mc_euler_physical_flux
 
-  pure subroutine compute_mc_euler_rusanov_flux( &
+  subroutine compute_mc_euler_rusanov_flux( &
       left, right, layout, gamma, direction, flux)
     real(dp), intent(in) :: left(:), right(:)
     type(mc_state_layout), intent(in) :: layout

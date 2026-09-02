@@ -1917,6 +1917,131 @@ def _mass_fraction_vector(value: Any, label: str, nspecies: int) -> list[float]:
     return fractions
 
 
+def _nasa7_coefficients(value: Any, label: str) -> list[float]:
+    if not isinstance(value, (list, tuple)) or len(value) != 7:
+        raise CaseInputError(f"{label} must contain exactly seven coefficients")
+    return [
+        _finite_float(coefficient, f"{label}[{index}]")
+        for index, coefficient in enumerate(value)
+    ]
+
+
+def _thermally_perfect_settings(
+    thermodynamics: dict[str, Any], species: list[str]
+) -> dict[str, Any]:
+    universal_gas_constant = _positive_float(
+        thermodynamics.get("universal_gas_constant", 8314.46261815324),
+        "thermodynamics.universal_gas_constant",
+    )
+    temperature_min = _positive_float(
+        thermodynamics.get("temperature_min", 200.0),
+        "thermodynamics.temperature_min",
+    )
+    temperature_max = _positive_float(
+        thermodynamics.get("temperature_max", 6000.0),
+        "thermodynamics.temperature_max",
+    )
+    if temperature_max <= temperature_min:
+        raise CaseInputError(
+            "thermodynamics.temperature_max must exceed temperature_min"
+        )
+    temperature_tolerance = _positive_float(
+        thermodynamics.get("temperature_tolerance", 1.0e-10),
+        "thermodynamics.temperature_tolerance",
+    )
+    if temperature_tolerance >= 1.0e-3:
+        raise CaseInputError(
+            "thermodynamics.temperature_tolerance must be less than 1e-3"
+        )
+
+    species_data = _mapping(
+        thermodynamics.get("species_data"),
+        "thermodynamics.species_data",
+    )
+    missing = [name for name in species if name not in species_data]
+    extra = [str(name) for name in species_data if name not in species]
+    if missing or extra:
+        details = []
+        if missing:
+            details.append(f"missing={missing}")
+        if extra:
+            details.append(f"extra={extra}")
+        raise CaseInputError(
+            "thermodynamics.species_data keys must exactly match "
+            f"physics.multicomponent.species ({', '.join(details)})"
+        )
+
+    molecular_weights: list[float] = []
+    temperature_midpoints: list[float] = []
+    nasa_low: list[float] = []
+    nasa_high: list[float] = []
+    for name in species:
+        label = f"thermodynamics.species_data.{name}"
+        properties = _mapping(species_data[name], label)
+        molecular_weight = _positive_float(
+            properties.get("molecular_weight"), f"{label}.molecular_weight"
+        )
+        midpoint = _positive_float(
+            properties.get("temperature_midpoint", 1000.0),
+            f"{label}.temperature_midpoint",
+        )
+        if not temperature_min < midpoint < temperature_max:
+            raise CaseInputError(
+                f"{label}.temperature_midpoint must lie inside the "
+                "thermodynamics temperature range"
+            )
+        low = _nasa7_coefficients(properties.get("nasa7_low"), f"{label}.nasa7_low")
+        high = _nasa7_coefficients(
+            properties.get("nasa7_high"), f"{label}.nasa7_high"
+        )
+
+        species_gas_constant = universal_gas_constant / molecular_weight
+        for range_name, coefficients, samples in (
+            (
+                "nasa7_low",
+                low,
+                (temperature_min, 0.5 * (temperature_min + midpoint), midpoint),
+            ),
+            (
+                "nasa7_high",
+                high,
+                (midpoint, 0.5 * (midpoint + temperature_max), temperature_max),
+            ),
+        ):
+            for temperature in samples:
+                cp_over_r = sum(
+                    coefficients[index] * temperature**index
+                    for index in range(5)
+                )
+                if not math.isfinite(cp_over_r) or cp_over_r <= 1.0:
+                    raise CaseInputError(
+                        f"{label}.{range_name} produces non-positive cv "
+                        f"at T={temperature:g}"
+                    )
+                cp_value = species_gas_constant * cp_over_r
+                if not math.isfinite(cp_value):
+                    raise CaseInputError(
+                        f"{label}.{range_name} produces non-finite cp"
+                    )
+
+        molecular_weights.append(molecular_weight)
+        temperature_midpoints.append(midpoint)
+        nasa_low.extend(low)
+        nasa_high.extend(high)
+
+    return {
+        "thermo_species_names": species,
+        "universal_gas_constant": universal_gas_constant,
+        "temperature_min": temperature_min,
+        "temperature_max": temperature_max,
+        "temperature_tolerance": temperature_tolerance,
+        "molecular_weights": molecular_weights,
+        "temperature_midpoints": temperature_midpoints,
+        "nasa_low_coefficients": nasa_low,
+        "nasa_high_coefficients": nasa_high,
+    }
+
+
 def render_nse_multicomponent(
     case: dict[str, Any], profile_name: str | None = None
 ) -> str:
@@ -1940,10 +2065,15 @@ def render_nse_multicomponent(
         raise CaseInputError("multicomponent species names must be unique")
 
     simulation_mode = _canonical_selector(str(physics.get("mode", "foundation")))
-    if simulation_mode not in {"foundation", "passive_scalar", "inviscid_euler"}:
+    if simulation_mode not in {
+        "foundation",
+        "passive_scalar",
+        "inviscid_euler",
+        "thermally_perfect_euler",
+    }:
         raise CaseInputError(
             "physics.multicomponent.mode must be foundation, passive_scalar, "
-            "or inviscid_euler"
+            "inviscid_euler, or thermally_perfect_euler"
         )
     if simulation_mode == "passive_scalar" and len(species) < 2:
         raise CaseInputError(
@@ -1953,6 +2083,7 @@ def render_nse_multicomponent(
         "cpu_serial_foundation": "foundation",
         "cpu_serial_passive_scalar": "passive_scalar",
         "cpu_serial_inviscid": "inviscid_euler",
+        "cpu_serial_thermally_perfect": "thermally_perfect_euler",
     }
     if profile_name in expected_modes and simulation_mode != expected_modes[profile_name]:
         raise CaseInputError(
@@ -1972,8 +2103,13 @@ def render_nse_multicomponent(
         "transport": _canonical_selector(str(transport.get("model", "none"))),
         "chemistry": _canonical_selector(str(chemistry.get("model", "none"))),
     }
+    expected_thermodynamics = (
+        "thermally_perfect"
+        if simulation_mode == "thermally_perfect_euler"
+        else "calorically_perfect"
+    )
     supported = {
-        "thermodynamics": "calorically_perfect",
+        "thermodynamics": expected_thermodynamics,
         "transport": "none",
         "chemistry": "none",
     }
@@ -1988,6 +2124,9 @@ def render_nse_multicomponent(
         "foundation": "Stage-0 foundation",
         "passive_scalar": "Stage-1 passive-scalar advection",
         "inviscid_euler": "Stage-2 non-reacting inviscid multicomponent Euler",
+        "thermally_perfect_euler": (
+            "Stage-3 thermally-perfect non-reacting multicomponent Euler"
+        ),
     }
     lines = [
         "! Automatically generated from case.yaml.",
@@ -2007,6 +2146,15 @@ def render_nse_multicomponent(
         ],
     )
     lines.extend(["/", ""])
+
+    thermally_perfect: dict[str, Any] | None = None
+    if simulation_mode == "thermally_perfect_euler":
+        thermally_perfect = _thermally_perfect_settings(
+            thermodynamics, species
+        )
+        lines.append("&thermally_perfect")
+        _append(lines, list(thermally_perfect.items()))
+        lines.extend(["/", ""])
 
     if simulation_mode == "passive_scalar":
         flow = _mapping(nested(case, "flow", {}), "flow")
@@ -2138,11 +2286,14 @@ def render_nse_multicomponent(
             ],
         )
         lines.extend(["/", ""])
-    elif simulation_mode == "inviscid_euler":
+    elif simulation_mode in {"inviscid_euler", "thermally_perfect_euler"}:
+        stage_number = 3 if simulation_mode == "thermally_perfect_euler" else 2
         flow = _mapping(nested(case, "flow", {}), "flow")
         flow_type = _canonical_selector(str(flow.get("type", "")))
         if flow_type != "multispecies_sod":
-            raise CaseInputError("stage-2 requires flow.type='multispecies_sod'")
+            raise CaseInputError(
+                f"stage-{stage_number} requires flow.type='multispecies_sod'"
+            )
         initial = _mapping(
             nested(case, "flow.multispecies_sod", {}),
             "flow.multispecies_sod",
@@ -2156,11 +2307,13 @@ def render_nse_multicomponent(
             case, "multicomponent Euler"
         )
 
-        gamma = _positive_float(
-            thermodynamics.get("gamma", 1.4), "thermodynamics.gamma"
-        )
-        if gamma <= 1.0:
-            raise CaseInputError("thermodynamics.gamma must exceed one")
+        gamma = 1.4
+        if simulation_mode == "inviscid_euler":
+            gamma = _positive_float(
+                thermodynamics.get("gamma", 1.4), "thermodynamics.gamma"
+            )
+            if gamma <= 1.0:
+                raise CaseInputError("thermodynamics.gamma must exceed one")
         interface_location = _finite_float(
             initial.get("interface_location", 0.5),
             "flow.multispecies_sod.interface_location",
@@ -2197,13 +2350,40 @@ def render_nse_multicomponent(
             "flow.multispecies_sod.right.mass_fractions",
             len(species),
         )
+        if thermally_perfect is not None:
+            for side_name, density, pressure_value, fractions in (
+                ("left", left_density, left_pressure, left_fractions),
+                ("right", right_density, right_pressure, right_fractions),
+            ):
+                mixture_gas_constant = thermally_perfect[
+                    "universal_gas_constant"
+                ] * sum(
+                    fractions[index]
+                    / thermally_perfect["molecular_weights"][index]
+                    for index in range(len(species))
+                )
+                initial_temperature = pressure_value / (
+                    density * mixture_gas_constant
+                )
+                if not (
+                    thermally_perfect["temperature_min"]
+                    <= initial_temperature
+                    <= thermally_perfect["temperature_max"]
+                ):
+                    raise CaseInputError(
+                        f"flow.multispecies_sod.{side_name} gives "
+                        f"T={initial_temperature:g}, outside the configured "
+                        "thermodynamics temperature range"
+                    )
 
         nsteps = time.get("nsteps")
         if isinstance(nsteps, bool) or not isinstance(nsteps, int) or nsteps < 0:
             raise CaseInputError("time.nsteps must be a non-negative integer")
         cfl = _positive_float(time.get("cfl",0.35), "time.cfl")
         if cfl > 1.0:
-            raise CaseInputError("stage-2 multicomponent Euler CFL must not exceed 1")
+            raise CaseInputError(
+                f"stage-{stage_number} multicomponent Euler CFL must not exceed 1"
+            )
         fixed_dt = _positive_float(
             time.get("dt",0.0), "time.dt", allow_zero=True
         )
@@ -2230,7 +2410,8 @@ def render_nse_multicomponent(
         for label, (actual, expected) in supported_values.items():
             if actual != expected:
                 raise CaseInputError(
-                    f"stage-2 requires {label}={expected!r}, got {actual!r}"
+                    f"stage-{stage_number} requires {label}={expected!r}, "
+                    f"got {actual!r}"
                 )
         write_final = output.get("write_final",True)
         if not isinstance(write_final,bool):
@@ -2254,7 +2435,7 @@ def render_nse_multicomponent(
                 ("y_max",extents[3]),
                 ("z_min",extents[4]),
                 ("z_max",extents[5]),
-                ("gamma",gamma),
+                ("gamma",gamma if simulation_mode == "inviscid_euler" else None),
                 ("cfl",cfl),
                 ("dt",fixed_dt),
                 ("nsteps",nsteps),

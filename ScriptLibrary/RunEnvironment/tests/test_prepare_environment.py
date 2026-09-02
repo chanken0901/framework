@@ -412,7 +412,9 @@ class MulticomponentFoundationManifestTests(unittest.TestCase):
             model["manifest"], "solver_manifest_multicomponent.yaml"
         )
         self.assertEqual(self.manifest["model"], "nse_multicomponent")
-        self.assertEqual(model["default_profile"], "cpu_serial_inviscid")
+        self.assertEqual(
+            model["default_profile"], "cpu_serial_thermally_perfect"
+        )
         self.assertEqual(
             self.manifest["profiles"]["cpu_serial_foundation"]["executable"],
             "nse_multicomponent",
@@ -492,6 +494,33 @@ class MulticomponentFoundationManifestTests(unittest.TestCase):
         )
         self.assertIn("tests/test_multicomponent_foundation.f90", dependencies)
 
+    def test_stage_three_profile_has_complete_fortran_dependencies(self) -> None:
+        files, components = _selected_solver_files(
+            self.solver_root,
+            self.manifest,
+            "cpu_serial_thermally_perfect",
+            True,
+        )
+
+        dependencies = _inspect_dependencies(
+            self.solver_root,
+            self.manifest,
+            files,
+            _profile_preprocessor_defines(
+                self.manifest, "cpu_serial_thermally_perfect"
+            ),
+        )
+
+        self.assertIn("thermodynamics_thermally_perfect", components)
+        self.assertIn(
+            "src/extensions/multicomponent/providers/"
+            "mod_mc_thermodynamics_thermally_perfect.f90",
+            dependencies,
+        )
+        self.assertIn(
+            "tests/test_multicomponent_thermally_perfect.f90", dependencies
+        )
+
 
 class NseCaseTemplateTests(unittest.TestCase):
     def test_multicomponent_template_exposes_stage_zero_contract(self) -> None:
@@ -531,6 +560,20 @@ class NseCaseTemplateTests(unittest.TestCase):
         self.assertIn("mass_fractions: [0.8, 0.2]", template)
         self.assertIn("convective_scheme: rusanov1", template)
         self.assertIn("boundary_condition: periodic", template)
+
+    def test_thermally_perfect_template_exposes_stage_three(self) -> None:
+        template = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "nse_multicomponent_thermally_perfect.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("mode: thermally_perfect_euler", template)
+        self.assertIn("model: thermally_perfect", template)
+        self.assertIn("species_data:", template)
+        self.assertIn("molecular_weight: 28.0134", template)
+        self.assertIn("nasa7_low:", template)
+        self.assertIn("temperature_min: 200.0", template)
 
     def test_parallel_features_and_runtime_counts_are_template_fields(self) -> None:
         template = (

@@ -173,6 +173,82 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
         }
         return case
 
+    @classmethod
+    def thermally_perfect_case(cls) -> dict:
+        case = cls.euler_case()
+        case["physics"]["multicomponent"] = {
+            "mode": "thermally_perfect_euler",
+            "species": ["N2", "O2"],
+        }
+        case["thermodynamics"] = {
+            "model": "thermally_perfect",
+            "universal_gas_constant": 8314.46261815324,
+            "temperature_min": 200.0,
+            "temperature_max": 6000.0,
+            "species_data": {
+                "N2": {
+                    "molecular_weight": 28.0134,
+                    "temperature_midpoint": 1000.0,
+                    "nasa7_low": [
+                        3.53100528,
+                        -1.23660987e-4,
+                        -5.02999433e-7,
+                        2.43530612e-9,
+                        -1.40881235e-12,
+                        -1046.97628,
+                        2.96747468,
+                    ],
+                    "nasa7_high": [
+                        2.95257626,
+                        1.39690040e-3,
+                        -4.92631603e-7,
+                        7.86010367e-11,
+                        -4.60755321e-15,
+                        -923.948645,
+                        5.87188762,
+                    ],
+                },
+                "O2": {
+                    "molecular_weight": 31.9988,
+                    "temperature_midpoint": 1000.0,
+                    "nasa7_low": [
+                        3.78245636,
+                        -2.99673416e-3,
+                        9.84730201e-6,
+                        -9.68129509e-9,
+                        3.24372837e-12,
+                        -1063.94356,
+                        3.65767573,
+                    ],
+                    "nasa7_high": [
+                        3.28253784,
+                        1.48308754e-3,
+                        -7.57966669e-7,
+                        2.09470555e-10,
+                        -2.16717794e-14,
+                        -1088.45772,
+                        5.45323129,
+                    ],
+                },
+            },
+        }
+        case["flow"]["multispecies_sod"]["left"] = {
+            "density": 1.17197031944841,
+            "velocity": [0.0, 0.0, 0.0],
+            "pressure": 101325.0,
+            "mass_fractions": [0.767, 0.233],
+        }
+        case["flow"]["multispecies_sod"]["right"] = {
+            "density": 0.126389266436632,
+            "velocity": [0.0, 0.0, 0.0],
+            "pressure": 10132.5,
+            "mass_fractions": [0.2, 0.8],
+        }
+        case["output"]["filename"] = (
+            "multicomponent_thermally_perfect_final.csv"
+        )
+        return case
+
     def test_renders_one_species_stage_zero_contract(self) -> None:
         text = render_nse_multicomponent(self.case())
 
@@ -295,6 +371,42 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
     def test_euler_profile_rejects_foundation_mode(self) -> None:
         with self.assertRaisesRegex(CaseInputError, "requires.*inviscid_euler"):
             render_nse_multicomponent(self.case(), "cpu_serial_inviscid")
+
+    def test_renders_stage_three_thermally_perfect_contract(self) -> None:
+        text = render_nse_multicomponent(
+            self.thermally_perfect_case(),
+            "cpu_serial_thermally_perfect",
+        )
+
+        self.assertIn('simulation_mode = "thermally_perfect_euler"', text)
+        self.assertIn('thermodynamics_model = "thermally_perfect"', text)
+        self.assertIn("&thermally_perfect", text)
+        self.assertIn('thermo_species_names = "N2", "O2"', text)
+        self.assertIn("molecular_weights = 28.0134", text)
+        self.assertIn("nasa_low_coefficients = 3.53100528", text)
+        self.assertIn("&multicomponent_euler", text)
+
+    def test_stage_three_requires_exact_species_property_keys(self) -> None:
+        case = self.thermally_perfect_case()
+        del case["thermodynamics"]["species_data"]["O2"]
+
+        with self.assertRaisesRegex(CaseInputError, "must exactly match"):
+            render_nse_multicomponent(case)
+
+    def test_stage_three_rejects_initial_temperature_outside_range(self) -> None:
+        case = self.thermally_perfect_case()
+        case["flow"]["multispecies_sod"]["left"]["density"] = 0.01
+
+        with self.assertRaisesRegex(CaseInputError, "outside.*temperature range"):
+            render_nse_multicomponent(case)
+
+    def test_stage_three_profile_rejects_stage_two_mode(self) -> None:
+        with self.assertRaisesRegex(
+            CaseInputError, "requires.*thermally_perfect_euler"
+        ):
+            render_nse_multicomponent(
+                self.euler_case(), "cpu_serial_thermally_perfect"
+            )
 
     def test_passive_scalar_rejects_unimplemented_scheme(self) -> None:
         case = self.case()

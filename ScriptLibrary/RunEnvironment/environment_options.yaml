@@ -61,7 +61,7 @@ options:
         name: nse
     nse_multicomponent:
       label: 多成分NSE基盤
-      description: 多成分・反応流拡張の基盤からstage-2非粘性多成分流までを提供する。
+      description: 多成分・反応流拡張の基盤からstage-3温度・組成依存熱力学までを提供する。
       values:
         name: nse_multicomponent
     gpe:
@@ -141,6 +141,19 @@ options:
         id: case0001
         label: multispecies_sod
         description: Non-reacting inviscid multicomponent Sod problem
+        project_name: NSEMulticomponentResearch
+        data_root: results
+    nse_multicomponent_thermally_perfect:
+      label: 多成分NSE stage-3熱的完全気体
+      description: NASA-7物性による温度・組成依存の非反応多成分Euler計算を生成する。
+      requires:
+        model.name: nse_multicomponent
+      values:
+        create: true
+        template: ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_thermally_perfect.yaml
+        id: case0001
+        label: thermally_perfect_sod
+        description: Thermally-perfect non-reacting multicomponent Sod problem
         project_name: NSEMulticomponentResearch
         data_root: results
     gpe_quantum_taylor_green:

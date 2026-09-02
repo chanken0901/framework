@@ -6,6 +6,8 @@ program main_nse_multicomponent_inviscid
     print_mc_providers
   use mod_mc_euler_config, only : mc_euler_config, read_mc_euler_config
   use mod_mc_euler_solver, only : run_mc_euler
+  use mod_mc_thermodynamics_provider, only : &
+    configure_mc_thermodynamics, mc_thermodynamics_provider_name
   implicit none
 
   type(mc_config) :: config
@@ -24,12 +26,20 @@ program main_nse_multicomponent_inviscid
   end if
 
   call read_mc_config(trim(input_path),config)
-  if (trim(config%simulation_mode) /= 'inviscid_euler') then
-    error stop 'stage-2 executable requires simulation_mode=inviscid_euler'
+  if (trim(config%simulation_mode) /= 'inviscid_euler' .and. &
+      trim(config%simulation_mode) /= 'thermally_perfect_euler') then
+    error stop 'Euler executable requires an Euler simulation mode'
   end if
   call read_mc_euler_config(trim(input_path),config%nspecies,euler)
   call initialize_mc_state_layout(layout,config%nspecies)
   call validate_mc_providers(config)
+  call configure_mc_thermodynamics( &
+    trim(input_path),config%nspecies, &
+    config%species_names(1:config%nspecies))
+  if (trim(config%simulation_mode) == 'thermally_perfect_euler' .and. &
+      mc_thermodynamics_provider_name /= 'thermally_perfect') then
+    error stop 'stage-3 mode requires thermally-perfect thermodynamics'
+  end if
   call print_mc_config(config)
   call print_mc_providers()
   write(*,'(A,I0)') 'conservative variables = ', layout%nvariables

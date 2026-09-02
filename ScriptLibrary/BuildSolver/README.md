@@ -78,13 +78,15 @@ python3 ./build_model.py ./build.yaml \
 
 `nse_multicomponent`は現行`nse`と別manifest、別実行ファイルで管理します。
 Stage 0は状態レイアウトとprovider契約、Stage 1は一定速度場による保存形式の
-周期パッシブスカラー移流、Stage 2は非反応・非粘性多成分Euler方程式を検証します。
+周期パッシブスカラー移流、Stage 2は共通γの非反応・非粘性多成分Euler方程式、
+Stage 3はNASA-7物性による温度・組成依存熱力学を検証します。
 
 | プロファイル | 内容 |
 |---|---|
 | `cpu_serial_foundation` | 1成分極限、熱力学・輸送・反応provider契約 |
 | `cpu_serial_passive_scalar` | 一次風上法、SSPRK3、周期パッシブスカラー移流 |
 | `cpu_serial_inviscid` | 共通γ理想気体、Rusanov流束、非粘性多成分Sod問題 |
+| `cpu_serial_thermally_perfect` | NASA-7熱力学、温度反転、温度・組成依存の混合比熱比 |
 
 ```powershell
 python .\build_model.py .\build.yaml `
@@ -129,6 +131,22 @@ python .\build_model.py .\build.yaml `
 python3 ./build_model.py ./build.yaml \
   --model nse_multicomponent \
   --profile cpu_serial_inviscid \
+  --test
+```
+
+Stage 3のビルドと回帰試験:
+
+```powershell
+python .\build_model.py .\build.yaml `
+  --model nse_multicomponent `
+  --profile cpu_serial_thermally_perfect `
+  --test
+```
+
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model nse_multicomponent \
+  --profile cpu_serial_thermally_perfect \
   --test
 ```
 
