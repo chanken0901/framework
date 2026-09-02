@@ -11,13 +11,17 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from prepare_environment import (  # noqa: E402
     EnvironmentError,
+    _active_fortran_source,
     _compatible_profile_names,
     _global_case_index_path,
+    _inspect_dependencies,
     _numbered_case_destination,
     _parallel_features,
+    _profile_preprocessor_defines,
     _profile_is_explicit,
     _resolve_solver_profile,
     _requested_case_destination,
+    _selected_solver_files,
     _slurm_script,
 )
 from yaml_support import load_yaml  # noqa: E402
@@ -313,6 +317,70 @@ class ParallelFeatureTests(unittest.TestCase):
             _resolve_solver_profile(design, self.gpe_manifest)[0],
             "cpu_mpi_dft",
         )
+
+
+class FortranDependencyInspectionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.framework_root = SCRIPT_DIR.parents[1]
+        cls.solver_root = cls.framework_root / "SolverLibrary" / "NSE"
+        cls.manifest = load_yaml(cls.solver_root / "solver_manifest.yaml")
+
+    def test_preprocessor_selects_only_the_active_use_branch(self) -> None:
+        source = """\
+#ifdef USE_GPU
+  use mod_gpu
+#else
+  use mod_cpu
+#endif
+#if defined(USE_EXTRA)
+  use mod_extra
+#endif
+"""
+
+        cpu = _active_fortran_source(source, set(), "conditional.f90")
+        gpu = _active_fortran_source(
+            source, {"USE_GPU", "USE_EXTRA"}, "conditional.f90"
+        )
+
+        self.assertIn("use mod_cpu", cpu)
+        self.assertNotIn("use mod_gpu", cpu)
+        self.assertNotIn("use mod_extra", cpu)
+        self.assertIn("use mod_gpu", gpu)
+        self.assertIn("use mod_extra", gpu)
+        self.assertNotIn("use mod_cpu", gpu)
+
+    def test_real_nse_fft_profiles_pass_dependency_inspection(self) -> None:
+        for profile_name in ("cpu_mpi_2decomp_fftw", "cuda_mpi_cufftmp"):
+            with self.subTest(profile=profile_name):
+                files, _ = _selected_solver_files(
+                    self.solver_root, self.manifest, profile_name, False
+                )
+                dependencies = _inspect_dependencies(
+                    self.solver_root,
+                    self.manifest,
+                    files,
+                    _profile_preprocessor_defines(self.manifest, profile_name),
+                )
+                self.assertIn(
+                    "src/init/mod_init_hit_spectral_2decomp.f90", dependencies
+                )
+
+    def test_active_cufftmp_use_still_requires_its_provider(self) -> None:
+        files, _ = _selected_solver_files(
+            self.solver_root,
+            self.manifest,
+            "cpu_mpi_2decomp_fftw",
+            False,
+        )
+
+        with self.assertRaisesRegex(EnvironmentError, "mod_nse_cufftmp_fft"):
+            _inspect_dependencies(
+                self.solver_root,
+                self.manifest,
+                files,
+                {"NSE_INIT_CUFFTMP"},
+            )
 
 
 class NseCaseTemplateTests(unittest.TestCase):

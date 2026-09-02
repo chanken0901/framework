@@ -1,5 +1,7 @@
 # NSE SolverLibrary
 
+> Windows（PowerShell）とLinux（bash）の共通コマンド対応は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+
 MPI＋CUDAで分散HIT初期化またはPetersen–Livescu forcingを使う場合は、
 [`docs/NSE_CUFFTMP.md`](docs/NSE_CUFFTMP.md)の`cuda_mpi_cufftmp`手順を参照してください。
 
@@ -33,10 +35,20 @@ Navier-Stokesソルバーです。全backendの面別周期／特性無反射／
 | `cuda_mpi` | MPI + CUDA | 1 rank＝1 GPUのy-z分割時間発展 |
 | `cuda_mpi_cufftmp` | MPI + CUDA + cuFFTMp | 分散HIT初期化、分散FFT Forcing |
 
-新規cloneでは`2decomp-fft`サブモジュールも取得します。
+新規cloneではFrameWorkモノレポと`2decomp-fft`サブモジュールをまとめて取得します。
+
+Windows（PowerShell）:
 
 ```powershell
-git clone --recurse-submodules <SolverLibrary URL>
+git clone --recurse-submodules https://github.com/chanken0901/framework.git FrameWork
+Set-Location .\FrameWork
+```
+
+Linux（bash）:
+
+```bash
+git clone --recurse-submodules https://github.com/chanken0901/framework.git FrameWork
+cd FrameWork
 ```
 
 ## 対流流束
@@ -111,6 +123,15 @@ python .\tools\run_case.py --build
 python .\tools\run_case.py --run
 ```
 
+Linux（bash）:
+
+```bash
+python3 ./tools/run_case.py --prepare
+python3 ./tools/run_case.py --validate-only
+python3 ./tools/run_case.py --build
+python3 ./tools/run_case.py --run
+```
+
 最終出力後に次が表示されれば正常終了です。
 
 ```text
@@ -121,6 +142,12 @@ SLFをParaView用に変換する場合:
 
 ```powershell
 python .\tools\postprocess_case.py
+```
+
+Linux（bash）:
+
+```bash
+python3 ./tools/postprocess_case.py
 ```
 
 ## ソース構成

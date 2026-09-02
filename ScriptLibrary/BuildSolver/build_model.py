@@ -36,10 +36,102 @@ USE_PATTERN = re.compile(
     r"^\s*use(?:\s*,\s*[^:]*)?\s*(?:::\s*)?([a-z][a-z0-9_]*)",
     re.IGNORECASE | re.MULTILINE,
 )
+CPP_DIRECTIVE_PATTERN = re.compile(
+    r"^\s*#\s*(ifdef|ifndef|if|elif|else|endif)\b(.*)$",
+    re.IGNORECASE,
+)
+CPP_DEFINED_PATTERN = re.compile(
+    r"\bdefined\s*(?:\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)|"
+    r"([A-Za-z_][A-Za-z0-9_]*))"
+)
+CPP_IDENTIFIER_PATTERN = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 
 
 class ModelBuildError(RuntimeError):
     """Raised when the unified build design cannot be resolved safely."""
+
+
+def _cpp_condition(expression: str, defines: set[str], label: str) -> bool:
+    def replace_defined(match: re.Match[str]) -> str:
+        name = match.group(1) or match.group(2)
+        return "1" if name in defines else "0"
+
+    resolved = CPP_DEFINED_PATTERN.sub(replace_defined, expression.strip())
+    resolved = CPP_IDENTIFIER_PATTERN.sub(
+        lambda match: "1" if match.group(0) in defines else "0", resolved
+    )
+    resolved = resolved.replace("&&", " and ").replace("||", " or ")
+    resolved = re.sub(r"!(?!=)", " not ", resolved)
+    tokens = re.findall(r"\d+|and|or|not|\(|\)|\S+", resolved)
+    if not tokens or any(
+        token not in {"0", "1", "and", "or", "not", "(", ")"}
+        for token in tokens
+    ):
+        raise ModelBuildError(
+            f"unsupported Fortran preprocessor condition in {label}: {expression.strip()}"
+        )
+    return bool(eval(" ".join(tokens), {"__builtins__": {}}, {}))
+
+
+def _active_fortran_source(
+    text: str, defines: set[str], label: str
+) -> str:
+    active = True
+    stack: list[tuple[bool, bool, bool]] = []
+    output: list[str] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        match = CPP_DIRECTIVE_PATTERN.match(line)
+        if match is None:
+            if active:
+                output.append(line)
+            continue
+
+        directive = match.group(1).lower()
+        argument = match.group(2).strip()
+        if directive in {"ifdef", "ifndef", "if"}:
+            if directive == "ifdef":
+                condition = argument in defines
+            elif directive == "ifndef":
+                condition = argument not in defines
+            else:
+                condition = _cpp_condition(argument, defines, label)
+            stack.append((active, condition, False))
+            active = active and condition
+        elif directive == "elif":
+            if not stack:
+                raise ModelBuildError(
+                    f"unmatched #elif in {label}:{line_number}"
+                )
+            parent_active, branch_taken, else_seen = stack[-1]
+            if else_seen:
+                raise ModelBuildError(f"#elif after #else in {label}:{line_number}")
+            condition = False if branch_taken else _cpp_condition(
+                argument, defines, label
+            )
+            stack[-1] = (parent_active, branch_taken or condition, False)
+            active = parent_active and condition
+        elif directive == "else":
+            if not stack:
+                raise ModelBuildError(
+                    f"unmatched #else in {label}:{line_number}"
+                )
+            parent_active, branch_taken, else_seen = stack[-1]
+            if else_seen:
+                raise ModelBuildError(f"duplicate #else in {label}:{line_number}")
+            condition = not branch_taken
+            stack[-1] = (parent_active, True, True)
+            active = parent_active and condition
+        else:
+            if not stack:
+                raise ModelBuildError(
+                    f"unmatched #endif in {label}:{line_number}"
+                )
+            parent_active, _, _ = stack.pop()
+            active = parent_active
+
+    if stack:
+        raise ModelBuildError(f"unterminated preprocessor condition in {label}")
+    return "\n".join(output)
 
 
 @dataclass(frozen=True)
@@ -198,8 +290,12 @@ def _resolve_components(
 
 
 def _inspect_fortran_dependencies(
-    solver_root: Path, manifest: dict[str, Any], selected_files: list[str]
+    solver_root: Path,
+    manifest: dict[str, Any],
+    selected_files: list[str],
+    preprocessor_defines: set[str] | None = None,
 ) -> None:
+    defines = preprocessor_defines or set()
     all_provider_names: set[str] = set()
     components = _mapping(manifest.get("components"), "solver manifest.components")
     for component in components.values():
@@ -223,7 +319,8 @@ def _inspect_fortran_dependencies(
         if path.suffix.lower() not in FORTRAN_SUFFIXES:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
-        for provided in MODULE_PATTERN.findall(text):
+        active_text = _active_fortran_source(text, defines, relative)
+        for provided in MODULE_PATTERN.findall(active_text):
             key = provided.lower()
             if key in providers and providers[key] != relative:
                 raise ModelBuildError(
@@ -231,7 +328,9 @@ def _inspect_fortran_dependencies(
                     f"{providers[key]} and {relative}"
                 )
             providers[key] = relative
-        uses.extend((relative, used.lower()) for used in USE_PATTERN.findall(text))
+        uses.extend(
+            (relative, used.lower()) for used in USE_PATTERN.findall(active_text)
+        )
 
     missing = [
         f"{relative} uses {used}"
@@ -498,13 +597,26 @@ def _resolve(args: argparse.Namespace) -> ResolvedBuild:
     )
     build = _mapping(design.get("build"), "build design.build")
     include_tests = bool(build.get("tests", False) or args.test or args.all)
+    profiles = _mapping(manifest.get("profiles"), "manifest.profiles")
+    if solver_profile not in profiles:
+        raise ModelBuildError(
+            f"unknown solver profile {solver_profile!r}; available: {sorted(profiles)}"
+        )
+    profile = _mapping(
+        profiles[solver_profile], f"solver profile {solver_profile}"
+    )
     components, selected_files, library_sources, executable_sources = _resolve_components(
         solver_root, manifest, solver_profile, include_tests
     )
-    _inspect_fortran_dependencies(solver_root, manifest, selected_files)
-    profile = _mapping(
-        _mapping(manifest.get("profiles"), "manifest.profiles")[solver_profile],
-        f"solver profile {solver_profile}",
+    preprocessor_defines = {
+        str(value)
+        for value in _list(
+            profile.get("fortran_preprocessor_defines"),
+            f"solver profile {solver_profile}.fortran_preprocessor_defines",
+        )
+    }
+    _inspect_fortran_dependencies(
+        solver_root, manifest, selected_files, preprocessor_defines
     )
     executable = _safe_name(profile.get("executable"), "solver profile.executable")
 

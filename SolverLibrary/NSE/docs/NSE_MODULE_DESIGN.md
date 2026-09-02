@@ -1,5 +1,7 @@
 # NSEモジュール設計
 
+> テスト・生成コマンドのWindows（PowerShell）／Linux（bash）対応は[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+
 実装済みのKEEP/WENOハイブリッド流束と、ハイブリッド／非ハイブリッドの
 入力設定は[`NSE_HYBRID_FLUX.md`](NSE_HYBRID_FLUX.md)に定義する。
 面別周期／無反射／鏡像境界の仕様は
@@ -194,19 +196,21 @@ cmake -S . -B build `
   -DNSE_BOUNDARY_SCHEME=runtime
 ```
 
+Linux（bash）:
+
+```bash
+cmake -S . -B build \
+  -DNSE_CONVECTIVE_BACKEND=runtime \
+  -DNSE_VISCOUS_SCHEME=central6 \
+  -DNSE_BOUNDARY_SCHEME=runtime
+```
+
 入力とコンパイル済みバックエンドが一致しない場合、実行開始時に停止する。
 
 case YAMLの`boundary.faces`と`reference_states`を
 `case_input.py`が検証し、名前付き基準状態を各面の具体的な密度、速度、圧力へ解決して
 Fortran入力へ渡す。Fortran側は面ごとの種別・密度・速度・圧力配列として保持し、YAMLの名前解決を
-重複実装しない。ビルド時の境界backendは次へ統一する。
-
-```powershell
-cmake -S . -B build `
-  -DNSE_CONVECTIVE_BACKEND=runtime `
-  -DNSE_VISCOUS_SCHEME=central6 `
-  -DNSE_BOUNDARY_SCHEME=runtime
-```
+重複実装しない。ビルド時の境界backendは上記の`runtime`へ統一する。
 
 移行期間は旧`boundary_condition = 'periodic'`を6面周期へ展開する。面別指定と旧指定の
 同時使用は入力エラーとし、暗黙の優先順位を設けない。CPUおよびCUDA profileはともに

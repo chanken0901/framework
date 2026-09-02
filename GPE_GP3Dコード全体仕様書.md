@@ -2,9 +2,11 @@
 
 **版:** 1.1
 
-**更新日:** 2026-08-21
+**更新日:** 2026-09-02
 **対象:** SolverLibrary GPE/gp3d  
 **正本:** `C:\Users\Owner\Documents\Codex\FrameWork`
+
+> コマンド表記: OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通の対応表は[`docs/WINDOWS_LINUX_COMMANDS.md`](docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 ---
 
@@ -874,6 +876,12 @@ CUDA eventを使って次を測定します。
 gp3d_sequential.exe input.nml
 ```
 
+Linux（bash）:
+
+```bash
+./gp3d_sequential input.nml
+```
+
 引数を省略すると `input.nml` を使用します。
 
 ### 15.1 `&simulation`
@@ -1342,6 +1350,16 @@ python .\tools\run_case.py --test
 python .\tools\run_case.py --run
 ```
 
+Linux（bash）:
+
+```bash
+python3 ./tools/run_case.py --prepare
+python3 ./tools/run_case.py --validate-only
+python3 ./tools/run_case.py --build
+python3 ./tools/run_case.py --test
+python3 ./tools/run_case.py --run
+```
+
 `--run` は既存実行ファイルを使い、毎回ビルドしません。`--all` はprepareを除き、構成に応じてビルド・テスト・実行をまとめるため、反復実行では使い分けます。
 
 ### 21.3 直接CMake
@@ -1361,6 +1379,23 @@ cmake --fresh `
 
 cmake --build build\cpu-serial-dft --parallel 8
 ctest --test-dir build\cpu-serial-dft --output-on-failure
+```
+
+Linux（bash）:
+
+```bash
+cmake --fresh \
+  -S . \
+  -B build/cpu-serial-dft \
+  -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DUSE_MPI=OFF \
+  -DFFT_BACKEND=dft \
+  -DGPU_BACKEND=none \
+  -DBUILD_TESTING=ON
+
+cmake --build build/cpu-serial-dft --parallel "$(nproc)"
+ctest --test-dir build/cpu-serial-dft --output-on-failure
 ```
 
 通常はフレームワークの設計書を正本とし、直接CMakeは移植・デバッグ時に使用します。

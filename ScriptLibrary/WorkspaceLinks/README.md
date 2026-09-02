@@ -1,5 +1,7 @@
 # ResearchRuns統合・リンク作成ツール
 
+> このツールの既存リンク移行機能はWindows向けです。Linuxでの標準配置とbashコマンドは[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。Linuxでは通常、`$HOME/ResearchRuns`と`$HOME/Research/FrameWork`を直接使用し、Windows互換ジャンクションは作成しません。
+
 `C:\ResearchDesigns`に置いていた設計書を実行環境のルートへ統合し、
 実行環境からローカルFrameWorkを参照できるようにします。
 
@@ -97,4 +99,30 @@ python "$tool\setup_workspace_links.py" --apply --replace-links
 ```powershell
 python "$tool\setup_workspace_links.py" --remove --dry-run
 python "$tool\setup_workspace_links.py" --remove
+```
+
+## Linux（bash）の標準配置
+
+`setup_workspace_links.py`の旧`C:\ResearchDesigns`移行処理はWindows専用なので、
+Linuxでは実行しません。次のように実体ディレクトリを作成し、必要な場合だけ
+FrameWorkへのシンボリックリンクを追加します。
+
+```bash
+mkdir -p "$HOME/ResearchRuns/Designs"
+mkdir -p "$HOME/Research"
+
+# FrameWorkは事前に$HOME/Research/FrameWorkへcloneしておく
+if [ ! -e "$HOME/ResearchRuns/FrameWork" ]; then
+  ln -s "$HOME/Research/FrameWork" "$HOME/ResearchRuns/FrameWork"
+fi
+
+ls -ld "$HOME/ResearchRuns/Designs" "$HOME/ResearchRuns/FrameWork"
+readlink -f "$HOME/ResearchRuns/FrameWork"
+```
+
+リンクだけを解除する場合は、対象がシンボリックリンクであることを確認してから
+次を実行します。リンク先のFrameWork本体は削除されません。
+
+```bash
+test -L "$HOME/ResearchRuns/FrameWork" && rm "$HOME/ResearchRuns/FrameWork"
 ```

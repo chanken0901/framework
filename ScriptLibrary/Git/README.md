@@ -1,5 +1,7 @@
 # FrameWork Git関連ツール
 
+> GitコマンドはWindows／Linux共通です。PowerShellとbashのディレクトリ移動・パス表記は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+
 > 現在のFrameWorkは`ScriptLibrary`と`SolverLibrary`を統合したモノレポです。日常のGit操作はFrameWorkルートで標準Gitコマンドを使用してください。
 
 現行の手順書:
@@ -13,6 +15,14 @@ FrameWorkルートへ移動します。
 
 ```powershell
 Set-Location C:\Research\FrameWork
+git rev-parse --show-toplevel
+git status
+```
+
+Linux（bash）:
+
+```bash
+cd "$HOME/Research/FrameWork"
 git rev-parse --show-toplevel
 git status
 ```
@@ -35,6 +45,18 @@ git diff --cached
 git commit -m "具体的な変更内容"
 $branch = git branch --show-current
 git push -u origin $branch
+```
+
+Linux（bash）:
+
+```bash
+git status --short
+git diff
+git add -- path/to/changed-file
+git diff --cached
+git commit -m "具体的な変更内容"
+branch="$(git branch --show-current)"
+git push -u origin "$branch"
 ```
 
 push後はGitHubで`main`宛てのPull Requestを作成します。

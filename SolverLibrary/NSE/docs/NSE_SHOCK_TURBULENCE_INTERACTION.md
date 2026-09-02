@@ -1,6 +1,8 @@
 # 平面衝撃波–乱流干渉の初期条件と流入境界
 
-更新日: 2026-08-31  
+> Windows（PowerShell）とLinux（bash）の実行コマンド対応は[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+
+更新日: 2026-09-02
 対応: CPU/MPI/OpenMP、単一 GPU CUDA、MPI＋CUDA
 
 ## 1. 概要
@@ -175,6 +177,15 @@ python .\SolverLibrary\NSE\tools\nse_prepare_imported_turbulence.py `
   --output .\cases\caseNNNN\initial_data\turbulence.slf
 ```
 
+Linux（bash）:
+
+```bash
+python3 ./SolverLibrary/NSE/tools/nse_prepare_imported_turbulence.py \
+  ./previous_case/output \
+  --step latest \
+  --output ./cases/caseNNNN/initial_data/turbulence.slf
+```
+
 生成済み実行環境では `case.yaml` を編集した後、次の順で再生成・検証・ビルド・実行します。
 
 ```powershell
@@ -182,6 +193,15 @@ python .\tools\run_case.py --prepare
 python .\tools\run_case.py --validate-only
 python .\tools\run_case.py --build
 python .\tools\run_case.py --run
+```
+
+Linux（bash）:
+
+```bash
+python3 ./tools/run_case.py --prepare
+python3 ./tools/run_case.py --validate-only
+python3 ./tools/run_case.py --build
+python3 ./tools/run_case.py --run
 ```
 
 正常終了時は最終 step の出力後に次のメッセージが表示されます。

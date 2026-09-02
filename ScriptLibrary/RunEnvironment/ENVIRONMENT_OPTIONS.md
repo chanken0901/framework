@@ -1,7 +1,9 @@
 # 実行環境設計書の選択肢一覧
 
+> Windows／Linuxのコマンドとパスの対応は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。Linuxでは`linux_gnu_mpi`または`linux_hpc_slurm`など、実行機に対応する選択肢を使用します。
+
 **版:** 1.3
-**更新日:** 2026-08-19
+**更新日:** 2026-09-02
 **機械可読の正本:** `environment_options.yaml`
 
 ## NSE CUDA
@@ -30,6 +32,18 @@ $design = "$env:USERPROFILE\ResearchRuns\Designs\nse_cuda.yaml"
 Copy-Item "$tool\environment.nse.yaml" $design
 ```
 
+Linux（bash）:
+
+```bash
+tool="$HOME/Research/FrameWork/ScriptLibrary/RunEnvironment"
+design="$HOME/ResearchRuns/Designs/nse_cuda.yaml"
+mkdir -p "$(dirname "$design")"
+cp "$tool/environment.nse.yaml" "$design"
+```
+
+Linuxではコピー後に`source.framework_root`、`destination`、`select.target`も
+Linux用へ変更します。
+
 コピーした設計書を次のように変更します。
 
 ```yaml
@@ -46,6 +60,13 @@ parallel:
 ```powershell
 python "$tool\prepare_environment.py" $design --dry-run
 python "$tool\prepare_environment.py" $design
+```
+
+Linux（bash）:
+
+```bash
+python3 "$tool/prepare_environment.py" "$design" --dry-run
+python3 "$tool/prepare_environment.py" "$design"
 ```
 
 生成後は`run_case.py --prepare`、`--validate-only`、`--build`、`--run`の順に
@@ -70,6 +91,10 @@ python "$tool\prepare_environment.py" $design
 python .\prepare_environment.py .\environment.gpe.yaml --list-options
 ```
 
+```bash
+python3 ./prepare_environment.py ./environment.gpe.yaml --list-options
+```
+
 特定の分類だけを表示できます。
 
 ```powershell
@@ -78,10 +103,21 @@ python .\prepare_environment.py .\environment.gpe.yaml --list-options model
 python .\prepare_environment.py .\environment.gpe.yaml --list-options destination
 ```
 
+```bash
+python3 ./prepare_environment.py ./environment.gpe.yaml --list-options source
+python3 ./prepare_environment.py ./environment.gpe.yaml --list-options model
+python3 ./prepare_environment.py ./environment.gpe.yaml --list-options destination
+```
+
 外部ツールで処理するときはJSONで出力できます。
 
 ```powershell
 python .\prepare_environment.py .\environment.gpe.yaml `
+  --list-options model --options-format json
+```
+
+```bash
+python3 ./prepare_environment.py ./environment.gpe.yaml \
   --list-options model --options-format json
 ```
 

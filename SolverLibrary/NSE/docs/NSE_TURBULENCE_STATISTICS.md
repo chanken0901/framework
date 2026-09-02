@@ -1,5 +1,7 @@
 # NSE乱流統計後処理
 
+> Windows（PowerShell）とLinux（bash）の後処理コマンドを併記します。共通の読み替えは[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+
 ## 目的
 
 `tools/nse_turbulence_statistics.py`は、NSEが保存したrank別または全領域SLFを
@@ -15,16 +17,28 @@
 python .\tools\postprocess_case.py --task statistics
 ```
 
+```bash
+python3 ./tools/postprocess_case.py --task statistics
+```
+
 保存ステップを限定する。
 
 ```powershell
 python .\tools\postprocess_case.py --task statistics --steps 0:1000:100
 ```
 
+```bash
+python3 ./tools/postprocess_case.py --task statistics --steps 0:1000:100
+```
+
 ParaView変換も続けて行う。
 
 ```powershell
 python .\tools\postprocess_case.py --task all
+```
+
+```bash
+python3 ./tools/postprocess_case.py --task all
 ```
 
 出力先は既定で次の2ファイルになる。

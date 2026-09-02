@@ -1,10 +1,12 @@
 # FrameWork Git運用マニュアル
 
-更新日: 2026年8月19日  
+更新日: 2026年9月2日
 対象: `chanken0901/framework`の管理者、教員、共同開発者、学生開発者  
 運用形態: ScriptLibrary・SolverLibrary統合モノレポ
 
 > 本書は2026年8月19日のモノレポ移行後の運用を定義します。旧版に記載されていた`ScriptLibrary`と`SolverLibrary`の個別clone、個別sync、個別snapshotは現行運用では使用しません。
+
+> コマンド表記: GitコマンドはWindowsとLinuxで共通です。ディレクトリ移動、Python、パス表記などOS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通の対応表は[`docs/WINDOWS_LINUX_COMMANDS.md`](docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 ## 1. 目的
 
@@ -169,6 +171,15 @@ git remote add upstream https://github.com/chanken0901/framework.git
 git remote -v
 ```
 
+Linux（bash）:
+
+```bash
+git clone https://github.com/YOUR_GITHUB_ID/framework.git FrameWork
+cd FrameWork
+git remote add upstream https://github.com/chanken0901/framework.git
+git remote -v
+```
+
 ### 6.2 公式リポジトリ直接方式
 
 管理者が書き込み権限を付与した共同開発者だけが使用します。
@@ -194,10 +205,30 @@ git merge --ff-only upstream/main
 git push origin main
 ```
 
+Linux（bash）:
+
+```bash
+cd "$HOME/Research/FrameWork"
+git status
+git fetch upstream --prune
+git switch main
+git merge --ff-only upstream/main
+git push origin main
+```
+
 公式リポジトリ直接方式:
 
 ```powershell
 Set-Location C:\Research\FrameWork
+git status
+git switch main
+git pull --ff-only origin main
+```
+
+Linux（bash）:
+
+```bash
+cd "$HOME/Research/FrameWork"
 git status
 git switch main
 git pull --ff-only origin main
@@ -234,6 +265,14 @@ python -m unittest discover `
   -p "test_*.py"
 ```
 
+Linux（bash）:
+
+```bash
+python3 -m unittest discover \
+  -s ./ScriptLibrary/RunEnvironment/tests \
+  -p "test_*.py"
+```
+
 NSE、GPE、CUDA、MPI、OpenMPの変更では、使用したプロファイル、コンパイラ、並列数、入力ファイル、結果をPull Requestへ記録します。
 
 ### 7.5 ステージ
@@ -265,6 +304,13 @@ git commit -m "KEEP6の周期境界精度テストを追加"
 ```powershell
 $branch = git branch --show-current
 git push -u origin $branch
+```
+
+Linux（bash）:
+
+```bash
+branch="$(git branch --show-current)"
+git push -u origin "$branch"
 ```
 
 Pull Requestのbaseは`chanken0901/framework`の`main`です。本文に次を記載します。
@@ -494,6 +540,12 @@ git rev-parse --show-toplevel
 git config --global --add safe.directory C:/Research/FrameWork
 ```
 
+Linux（bash）:
+
+```bash
+git config --global --add safe.directory "$HOME/Research/FrameWork"
+```
+
 `safe.directory "*"`は使用しません。
 
 ## 17. 開発終了時チェックリスト
@@ -558,6 +610,28 @@ $branch = git branch --show-current
 git push -u origin $branch
 ```
 
+Linux（bash）:
+
+```bash
+cd "$HOME/Research/FrameWork"
+git status
+git fetch upstream --prune
+git switch main
+git merge --ff-only upstream/main
+git push origin main
+git switch -c feature/github-id-topic
+
+# 編集・テスト
+
+git status --short
+git diff
+git add -- path/to/file
+git diff --cached
+git commit -m "具体的な変更内容"
+branch="$(git branch --show-current)"
+git push -u origin "$branch"
+```
+
 公式リポジトリ直接開発者:
 
 ```powershell
@@ -570,6 +644,21 @@ git switch -c fix/github-id-topic
 
 $branch = git branch --show-current
 git push -u origin $branch
+```
+
+Linux（bash）:
+
+```bash
+cd "$HOME/Research/FrameWork"
+git status
+git switch main
+git pull --ff-only origin main
+git switch -c fix/github-id-topic
+
+# 編集・テスト・コミット
+
+branch="$(git branch --show-current)"
+git push -u origin "$branch"
 ```
 
 マージ後:

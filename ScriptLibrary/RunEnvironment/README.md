@@ -1,5 +1,7 @@
 # 外部実行環境ジェネレーター
 
+> OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通のパス、Python、CMake、MPIの対応表は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+
 NSEの`case.yaml`では`numerics.convective_scheme`に`keep2`、`keep6`、
 `weno5z_roe`、`hybrid`を指定できる。ハイブリッド構成例は次のとおり。
 
@@ -36,6 +38,21 @@ $design = "$designs\nse_cuda.yaml"
 New-Item -ItemType Directory -Force $designs | Out-Null
 Copy-Item "$tool\environment.nse.yaml" $design
 ```
+
+Linux（bash）:
+
+```bash
+tool="$HOME/Research/FrameWork/ScriptLibrary/RunEnvironment"
+designs="$HOME/ResearchRuns/Designs"
+design="$designs/nse_cuda.yaml"
+
+mkdir -p "$designs"
+cp "$tool/environment.nse.yaml" "$design"
+```
+
+Linuxでは、下記のmodel／parallel設定に加えて`select.source`、
+`select.destination`、`select.target`をそれぞれLinux用へ変更します。具体例は
+[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)の第6章を参照してください。
 
 コピーした設計書を次のように変更します。
 
@@ -94,6 +111,20 @@ python .\tools\run_case.py --build
 python .\tools\run_case.py --run
 ```
 
+Linux（bash）:
+
+```bash
+python3 "$tool/prepare_environment.py" "$design" --dry-run
+python3 "$tool/prepare_environment.py" "$design"
+
+# 生成ログに表示されたnse_caseNNNNへ移動する
+cd "$HOME/ResearchRuns/nse_caseNNNN"
+python3 ./tools/run_case.py --prepare
+python3 ./tools/run_case.py --validate-only
+python3 ./tools/run_case.py --build
+python3 ./tools/run_case.py --run
+```
+
 実行前に`cases\caseNNNN\case.yaml`で並列数を指定します。
 
 ```yaml
@@ -138,6 +169,19 @@ Copy-Item "$tool\environment.gpe.yaml" "$designs\gpe_qtgv.yaml"
 python "$tool\prepare_environment.py" "$designs\gpe_qtgv.yaml"
 ```
 
+Linux（bash）:
+
+```bash
+framework="$HOME/Research/FrameWork"
+tool="$framework/ScriptLibrary/RunEnvironment"
+designs="$HOME/ResearchRuns/Designs"
+
+mkdir -p "$designs"
+cp "$tool/environment.gpe.yaml" "$designs/gpe_qtgv.yaml"
+# コピー後、source/destination/targetをLinux用へ変更する
+python3 "$tool/prepare_environment.py" "$designs/gpe_qtgv.yaml"
+```
+
 ### NSE
 
 ```powershell
@@ -157,6 +201,26 @@ python .\tools\run_case.py --prepare
 python .\tools\run_case.py --validate-only
 python .\tools\run_case.py --build
 python .\tools\run_case.py --run
+```
+
+Linux（bash）:
+
+```bash
+framework="$HOME/Research/FrameWork"
+tool="$framework/ScriptLibrary/RunEnvironment"
+designs="$HOME/ResearchRuns/Designs"
+
+mkdir -p "$designs"
+cp "$tool/environment.nse.yaml" "$designs/nse_tgv.yaml"
+# コピー後、source/destination/targetをLinux用へ変更する
+python3 "$tool/prepare_environment.py" "$designs/nse_tgv.yaml"
+
+# 生成ログに表示された自動採番後のディレクトリへ移動する
+cd "$HOME/ResearchRuns/nse_caseNNNN"
+python3 ./tools/run_case.py --prepare
+python3 ./tools/run_case.py --validate-only
+python3 ./tools/run_case.py --build
+python3 ./tools/run_case.py --run
 ```
 
 計算条件は`cases\caseNNNN\case.yaml`を編集します。編集後の`input.dat`は

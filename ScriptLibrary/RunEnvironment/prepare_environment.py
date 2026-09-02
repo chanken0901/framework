@@ -44,10 +44,102 @@ USE_PATTERN = re.compile(
     r"^\s*use(?:\s*,\s*[^:]*)?\s*(?:::\s*)?([a-z][a-z0-9_]*)",
     re.IGNORECASE | re.MULTILINE,
 )
+CPP_DIRECTIVE_PATTERN = re.compile(
+    r"^\s*#\s*(ifdef|ifndef|if|elif|else|endif)\b(.*)$",
+    re.IGNORECASE,
+)
+CPP_DEFINED_PATTERN = re.compile(
+    r"\bdefined\s*(?:\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)|"
+    r"([A-Za-z_][A-Za-z0-9_]*))"
+)
+CPP_IDENTIFIER_PATTERN = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 
 
 class EnvironmentError(RuntimeError):
     """Raised when an execution environment cannot be generated safely."""
+
+
+def _cpp_condition(expression: str, defines: set[str], label: str) -> bool:
+    def replace_defined(match: re.Match[str]) -> str:
+        name = match.group(1) or match.group(2)
+        return "1" if name in defines else "0"
+
+    resolved = CPP_DEFINED_PATTERN.sub(replace_defined, expression.strip())
+    resolved = CPP_IDENTIFIER_PATTERN.sub(
+        lambda match: "1" if match.group(0) in defines else "0", resolved
+    )
+    resolved = resolved.replace("&&", " and ").replace("||", " or ")
+    resolved = re.sub(r"!(?!=)", " not ", resolved)
+    tokens = re.findall(r"\d+|and|or|not|\(|\)|\S+", resolved)
+    if not tokens or any(
+        token not in {"0", "1", "and", "or", "not", "(", ")"}
+        for token in tokens
+    ):
+        raise EnvironmentError(
+            f"unsupported Fortran preprocessor condition in {label}: {expression.strip()}"
+        )
+    return bool(eval(" ".join(tokens), {"__builtins__": {}}, {}))
+
+
+def _active_fortran_source(
+    text: str, defines: set[str], label: str
+) -> str:
+    active = True
+    stack: list[tuple[bool, bool, bool]] = []
+    output: list[str] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        match = CPP_DIRECTIVE_PATTERN.match(line)
+        if match is None:
+            if active:
+                output.append(line)
+            continue
+
+        directive = match.group(1).lower()
+        argument = match.group(2).strip()
+        if directive in {"ifdef", "ifndef", "if"}:
+            if directive == "ifdef":
+                condition = argument in defines
+            elif directive == "ifndef":
+                condition = argument not in defines
+            else:
+                condition = _cpp_condition(argument, defines, label)
+            stack.append((active, condition, False))
+            active = active and condition
+        elif directive == "elif":
+            if not stack:
+                raise EnvironmentError(
+                    f"unmatched #elif in {label}:{line_number}"
+                )
+            parent_active, branch_taken, else_seen = stack[-1]
+            if else_seen:
+                raise EnvironmentError(f"#elif after #else in {label}:{line_number}")
+            condition = False if branch_taken else _cpp_condition(
+                argument, defines, label
+            )
+            stack[-1] = (parent_active, branch_taken or condition, False)
+            active = parent_active and condition
+        elif directive == "else":
+            if not stack:
+                raise EnvironmentError(
+                    f"unmatched #else in {label}:{line_number}"
+                )
+            parent_active, branch_taken, else_seen = stack[-1]
+            if else_seen:
+                raise EnvironmentError(f"duplicate #else in {label}:{line_number}")
+            condition = not branch_taken
+            stack[-1] = (parent_active, True, True)
+            active = parent_active and condition
+        else:
+            if not stack:
+                raise EnvironmentError(
+                    f"unmatched #endif in {label}:{line_number}"
+                )
+            parent_active, _, _ = stack.pop()
+            active = parent_active
+
+    if stack:
+        raise EnvironmentError(f"unterminated preprocessor condition in {label}")
+    return "\n".join(output)
 
 
 def _mapping(value: Any, label: str) -> dict[str, Any]:
@@ -306,11 +398,31 @@ def _selected_solver_files(
     return selected, component_names
 
 
+def _profile_preprocessor_defines(
+    manifest: dict[str, Any], profile_name: str
+) -> set[str]:
+    profiles = _mapping(manifest.get("profiles"), "solver manifest.profiles")
+    if profile_name not in profiles:
+        raise EnvironmentError(
+            f"unknown profile {profile_name!r}; available: {sorted(profiles)}"
+        )
+    profile = _mapping(profiles[profile_name], f"solver profile {profile_name}")
+    return {
+        str(value)
+        for value in _sequence(
+            profile.get("fortran_preprocessor_defines"),
+            f"solver profile {profile_name}.fortran_preprocessor_defines",
+        )
+    }
+
+
 def _inspect_dependencies(
     solver_root: Path,
     manifest: dict[str, Any],
     selected_files: list[str],
+    preprocessor_defines: set[str] | None = None,
 ) -> dict[str, dict[str, list[str]]]:
+    defines = preprocessor_defines or set()
     components = _mapping(manifest.get("components"), "solver manifest.components")
     all_providers: set[str] = set()
     for component in components.values():
@@ -328,8 +440,11 @@ def _inspect_dependencies(
         if path.suffix.lower() not in FORTRAN_SUFFIXES:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
-        modules = sorted({name.lower() for name in MODULE_PATTERN.findall(text)})
-        uses = sorted({name.lower() for name in USE_PATTERN.findall(text)})
+        active_text = _active_fortran_source(text, defines, relative)
+        modules = sorted(
+            {name.lower() for name in MODULE_PATTERN.findall(active_text)}
+        )
+        uses = sorted({name.lower() for name in USE_PATTERN.findall(active_text)})
         records[relative] = {"modules": modules, "uses": uses}
         for module in modules:
             if module in providers and providers[module] != relative:
@@ -989,7 +1104,12 @@ def prepare(args: argparse.Namespace) -> Path:
         # profiles may provide mutually exclusive implementations of the same
         # Fortran module (for example HIT stub and 2DECOMP backends).
         dependencies.update(
-            _inspect_dependencies(solver_root, manifest, profile_files)
+            _inspect_dependencies(
+                solver_root,
+                manifest,
+                profile_files,
+                _profile_preprocessor_defines(manifest, staged_profile),
+            )
         )
         for relative in profile_files:
             if relative not in seen_files:

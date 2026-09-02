@@ -8,6 +8,7 @@ NSE（Navier-Stokes equations）およびGPE（Gross-Pitaevskii equation）の�
 
 - [学生向け FrameWork導入・Git開発手順書](学生向け_FrameWork導入・Git開発手順書.md)
 - [外部実行環境の生成・ビルド・実行](外部実行環境_生成・ビルド・実行手順書.md)
+- [Windows／Linuxコマンド対応表](docs/WINDOWS_LINUX_COMMANDS.md)
 
 ### 開発者・管理者
 
@@ -37,9 +38,19 @@ FrameWork/
 
 ## 安定版を取得する
 
+### Windows（PowerShell）
+
 ```powershell
 git clone https://github.com/chanken0901/framework.git FrameWork
 Set-Location .\FrameWork
+git switch --detach v1.0.0-student
+```
+
+### Linux（bash）
+
+```bash
+git clone https://github.com/chanken0901/framework.git FrameWork
+cd FrameWork
 git switch --detach v1.0.0-student
 ```
 

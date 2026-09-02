@@ -1,5 +1,7 @@
 # 分散FFTによる一様等方性乱流初期条件
 
+> Windows（PowerShell）とLinux（bash）のコマンド対応は[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+
 ## 概要
 
 `initial_condition = 'hit_spectral'`を指定すると、一様等方性乱流（HIT）の
@@ -68,7 +70,27 @@ cmake --fresh `
 cmake --build build\hit-2decomp --parallel 8
 ```
 
-YAMLビルドでは`config/build.hit.yaml`を使用する。
+Linux（bash）では、システムMPIとLinux向け2DECOMP&FFTを指定する。
+
+```bash
+export DECOMP2D_ROOT="$HOME/opt/2decomp-fft"
+
+cmake --fresh \
+  -S . \
+  -B build/hit-2decomp \
+  -G Ninja \
+  -DCMAKE_Fortran_COMPILER=mpifort \
+  -DNSE_USE_MPI=ON \
+  -DNSE_MPI_PROVIDER=SYSTEM \
+  -DNSE_INIT_FFT_BACKEND=2decomp_fftw \
+  -DNSE_2DECOMP_ROOT="$DECOMP2D_ROOT"
+
+cmake --build build/hit-2decomp --parallel "$(nproc)"
+```
+
+WindowsのYAMLビルドでは`config/build.hit.yaml`を使用する。このファイルは
+`windows_msmpi.yaml`を参照するため、Linuxでは上のCMake例またはLinux machine
+profileを指定したBuildSolverを使用する。
 
 ```powershell
 python .\tools\build_from_yaml.py .\config\build.hit.yaml --build
@@ -205,6 +227,14 @@ eta       = L Re_L^(-3/4)
 mpiexec -n 4 `
   .\build\hit-2decomp\bin\solver.exe `
   .\tests\input_hit_targets_small.dat
+```
+
+Linux（bash）:
+
+```bash
+mpirun -np 4 \
+  ./build/hit-2decomp/bin/solver \
+  ./tests/input_hit_targets_small.dat
 ```
 
 正常なら、標準出力に次の診断値が表示される。

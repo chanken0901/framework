@@ -1,5 +1,7 @@
 # 統計的定常乱流のForcing
 
+> Windows（PowerShell）とLinux（bash）のコマンド対応は[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+
 ## 実装範囲
 
 Petersen and Livescu (2010) の線形Forcingを実装している。密度重み付き速度
@@ -79,7 +81,8 @@ environment設計書ではMPI/CUDAの使用有無だけを選ぶ。生成環境�
 `cpu_mpi_2decomp_fftw`、単一GPUでは`cuda_single`を自動選択する。
 `solver.profile`を重複指定する必要はない。
 
-`python .\tools\run_case.py --prepare`で`input.dat`へ展開される。MPIプロセス数と
+Windowsでは`python .\tools\run_case.py --prepare`、Linuxでは
+`python3 ./tools/run_case.py --prepare`で`input.dat`へ展開される。MPIプロセス数と
 OpenMPスレッド数は従来どおり`case.yaml`または実行時オプションで指定する。
 
 ## cuFFTMp実装

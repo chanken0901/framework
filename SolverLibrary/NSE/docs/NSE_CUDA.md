@@ -1,5 +1,7 @@
 # NSE CUDA版（単一GPU／MPI＋マルチGPU）
 
+> Windows（PowerShell）とLinux（bash）の共通コマンド対応は[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。cuFFTMpはLinux専用です。
+
 ## 対応範囲
 
 `cuda_single` profileと`cuda_mpi` profileは、CPU版と同じ保存変数
@@ -84,6 +86,21 @@ Copy-Item `
   "$designs\nse_tgv_cuda.yaml"
 ```
 
+Linux（bash）:
+
+```bash
+framework="$HOME/Research/FrameWork"
+tool="$framework/ScriptLibrary/RunEnvironment"
+designs="$HOME/ResearchRuns/Designs"
+
+mkdir -p "$designs"
+cp "$tool/environment.nse.yaml" "$designs/nse_tgv_cuda.yaml"
+```
+
+LinuxではCUDAのparallel設定に加えて、`source.framework_root`、`destination`、
+`select.target`をLinux用へ変更します。cuFFTMpを使う場合は
+[`NSE_CUFFTMP.md`](NSE_CUFFTMP.md)の専用profileと要件も確認してください。
+
 コピーした`nse_tgv_cuda.yaml`の選択を次のように変更します。
 
 ```yaml
@@ -117,6 +134,15 @@ python "$tool\prepare_environment.py" `
   "$designs\nse_tgv_cuda.yaml"
 ```
 
+Linux（bash）:
+
+```bash
+python3 "$tool/prepare_environment.py" \
+  "$designs/nse_tgv_cuda.yaml" --dry-run
+python3 "$tool/prepare_environment.py" \
+  "$designs/nse_tgv_cuda.yaml"
+```
+
 生成された`nse_caseNNNN`へ移動し、通常の共通フローを実行します。
 
 ```powershell
@@ -124,6 +150,15 @@ python .\tools\run_case.py --prepare
 python .\tools\run_case.py --validate-only
 python .\tools\run_case.py --build
 python .\tools\run_case.py --run
+```
+
+Linux（bash）:
+
+```bash
+python3 ./tools/run_case.py --prepare
+python3 ./tools/run_case.py --validate-only
+python3 ./tools/run_case.py --build
+python3 ./tools/run_case.py --run
 ```
 
 単一GPU版ではMPIとOpenMPを無効にし、マルチGPU版ではMPIだけを有効にします。
@@ -202,12 +237,31 @@ python .\build_model.py .\build.yaml `
   --build
 ```
 
+Linux（bash）:
+
+```bash
+cd "$HOME/Research/FrameWork/ScriptLibrary/BuildSolver"
+python3 ./build_model.py ./build.yaml \
+  --model nse \
+  --profile cuda_single \
+  --build
+```
+
 テストも含める場合:
 
 ```powershell
 python .\build_model.py .\build.yaml `
   --model nse `
   --profile cuda_single `
+  --test
+```
+
+Linux（bash）:
+
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model nse \
+  --profile cuda_single \
   --test
 ```
 
@@ -222,11 +276,28 @@ python .\build_model.py .\build.yaml `
   --build
 ```
 
+Linux（bash）:
+
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model nse \
+  --profile cuda_mpi \
+  --build
+```
+
 実行ファイル名は`nse_mpi_cuda.exe`です。例えば4 GPUでは次のように実行します。
 
 ```powershell
 mpiexec -n 4 .\nse_mpi_cuda.exe .\input.dat
 ```
+
+Linux（bash）:
+
+```bash
+mpirun -np 4 ./nse_mpi_cuda ./input.dat
+```
+
+Slurmでは施設のMPI構成に従い、`mpirun`の代わりに`srun`を使う場合があります。
 
 ## GPUアーキテクチャ
 
@@ -265,6 +336,12 @@ CUDA版もCPU版と同じSLF形式を出力します。
 
 ```powershell
 python .\tools\postprocess_case.py
+```
+
+Linux（bash）:
+
+```bash
+python3 ./tools/postprocess_case.py
 ```
 
 生成された`cases\<case_id>\paraview\collection.pvd`をParaViewで開きます。

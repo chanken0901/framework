@@ -1,10 +1,12 @@
 # 学生向け FrameWork導入・Git開発手順書
 
-更新日: 2026年8月19日  
+更新日: 2026年9月2日
 対象リポジトリ: `https://github.com/chanken0901/framework.git`  
 対象: FrameWorkを用いて計算する学生、およびソースコード・設定・文書の開発に参加する学生
 
 > 重要: 現在のFrameWorkはモノレポです。`ScriptLibrary`と`SolverLibrary`は、同じ`framework`リポジトリの中にあります。旧`ScriptLibrary.git`と旧`SolverLibrary.git`はクローンしません。
+
+> コマンド表記: OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。Gitコマンドだけのブロックは両OS共通です。パスやシェル操作の読み替えは[`docs/WINDOWS_LINUX_COMMANDS.md`](docs/WINDOWS_LINUX_COMMANDS.md)も参照してください。
 
 ## 1. この手順書でできること
 
@@ -84,9 +86,11 @@ https://git-scm.com/downloads/win
 
 Gitが使えるか確認します。
 
-```powershell
+```console
 git --version
 ```
+
+この確認コマンドはWindows／Linux共通です。
 
 バージョン番号が表示されればGitは利用できます。`git: command not found`または「認識されていません」と表示された場合は、Gitをインストールして端末を開き直してください。
 
@@ -114,7 +118,9 @@ git switch --detach v1.0.0-student
 
 ### 5.4 取得結果を確認する
 
-```powershell
+次のコマンドはWindows／Linux共通です。
+
+```console
 git status
 git describe --tags --always
 git remote -v
@@ -134,6 +140,14 @@ git remote -v
 Test-Path .\ScriptLibrary\BuildSolver\build_model.py
 Test-Path .\SolverLibrary\NSE\CMakeLists.txt
 Test-Path .\SolverLibrary\GPE\gp3d\CMakeLists.txt
+```
+
+Linux（bash）:
+
+```bash
+test -f ./ScriptLibrary/BuildSolver/build_model.py && echo "BuildSolver: OK"
+test -f ./SolverLibrary/NSE/CMakeLists.txt && echo "NSE: OK"
+test -f ./SolverLibrary/GPE/gp3d/CMakeLists.txt && echo "GPE: OK"
 ```
 
 3行とも`True`なら基本ファイルは取得できています。具体的なビルド・実行方法は次を参照してください。
@@ -174,6 +188,15 @@ New-Item -ItemType Directory -Path C:\Research -Force
 Set-Location C:\Research
 git clone https://github.com/YOUR_GITHUB_ID/framework.git FrameWork
 Set-Location C:\Research\FrameWork
+```
+
+Linux（bash）:
+
+```bash
+mkdir -p "$HOME/Research"
+cd "$HOME/Research"
+git clone https://github.com/YOUR_GITHUB_ID/framework.git FrameWork
+cd FrameWork
 ```
 
 すでに`C:\Research\FrameWork`が存在する場合、上書きせず、まずそのフォルダの`git status`と`git remote -v`を確認してください。
@@ -230,6 +253,16 @@ Set-Location C:\Research\FrameWork
 git remote -v
 ```
 
+Linux（bash）:
+
+```bash
+mkdir -p "$HOME/Research"
+cd "$HOME/Research"
+git clone https://github.com/chanken0901/framework.git FrameWork
+cd FrameWork
+git remote -v
+```
+
 この場合、`origin`が公式リポジトリです。権限があっても`main`へ直接pushしません。必ず次章の作業ブランチを使用します。
 
 ## 8. 日常の標準開発手順
@@ -240,6 +273,17 @@ git remote -v
 
 ```powershell
 Set-Location C:\Research\FrameWork
+git status
+git fetch upstream --prune
+git switch main
+git merge --ff-only upstream/main
+git push origin main
+```
+
+Linux（bash）:
+
+```bash
+cd "$HOME/Research/FrameWork"
 git status
 git fetch upstream --prune
 git switch main
@@ -299,6 +343,14 @@ python -m unittest discover `
   -p "test_*.py"
 ```
 
+Linux（bash）:
+
+```bash
+python3 -m unittest discover \
+  -s ./ScriptLibrary/RunEnvironment/tests \
+  -p "test_*.py"
+```
+
 NSE・GPEのビルドやテストは、各READMEと`外部実行環境_生成・ビルド・実行手順書.md`に従います。実行したコマンドと結果はPull Requestへ記載します。
 
 ### 8.5 変更ファイルを明示してステージする
@@ -308,6 +360,15 @@ NSE・GPEのビルドやテストは、各READMEと`外部実行環境_生成・
 ```powershell
 git add -- .\SolverLibrary\NSE\src\変更したファイル.f90
 git add -- .\SolverLibrary\NSE\tests\追加したテスト.f90
+git diff --cached --stat
+git diff --cached
+```
+
+Linux（bash）:
+
+```bash
+git add -- ./SolverLibrary/NSE/src/変更したファイル.f90
+git add -- ./SolverLibrary/NSE/tests/追加したテスト.f90
 git diff --cached --stat
 git diff --cached
 ```
@@ -333,6 +394,13 @@ git commit -m "NSE境界条件のコーナー処理を修正"
 ```powershell
 $branch = git branch --show-current
 git push -u origin $branch
+```
+
+Linux（bash）:
+
+```bash
+branch="$(git branch --show-current)"
+git push -u origin "$branch"
 ```
 
 初回pushではブラウザ認証を求められる場合があります。GitHubのパスワードを端末へ直接入力する方式は使用できません。Git Credential Manager、SSH、またはGitHub CLIの認証を使用します。
@@ -463,6 +531,14 @@ git -C C:\Research\FrameWork status
 git -C C:\Research\FrameWork remote -v
 ```
 
+Linux（bash）:
+
+```bash
+ls -la "$HOME/Research/FrameWork"
+git -C "$HOME/Research/FrameWork" status
+git -C "$HOME/Research/FrameWork" remote -v
+```
+
 既存フォルダが必要か分からない場合は、教員または管理者へ確認してください。
 
 ### 13.2 `not a git repository`
@@ -471,6 +547,13 @@ git -C C:\Research\FrameWork remote -v
 
 ```powershell
 Set-Location C:\Research\FrameWork
+git rev-parse --show-toplevel
+```
+
+Linux（bash）:
+
+```bash
+cd "$HOME/Research/FrameWork"
 git rev-parse --show-toplevel
 ```
 
@@ -539,6 +622,12 @@ NASや別ユーザー所有のコピーを操作していないか確認しま�
 
 ```powershell
 git config --global --add safe.directory C:/Research/FrameWork
+```
+
+Linux（bash）:
+
+```bash
+git config --global --add safe.directory "$HOME/Research/FrameWork"
 ```
 
 `safe.directory "*"`は使用しません。
@@ -618,6 +707,28 @@ git diff --cached
 git commit -m "具体的な変更内容"
 $branch = git branch --show-current
 git push -u origin $branch
+```
+
+Linux（bash）:
+
+```bash
+cd "$HOME/Research/FrameWork"
+git status
+git fetch upstream --prune
+git switch main
+git merge --ff-only upstream/main
+git push origin main
+git switch -c feature/github-id-short-description
+
+# 編集とテスト
+
+git status --short
+git diff
+git add -- path/to/changed-file
+git diff --cached
+git commit -m "具体的な変更内容"
+branch="$(git branch --show-current)"
+git push -u origin "$branch"
 ```
 
 push後、GitHubで公式`main`宛てのPull Requestを作成してください。

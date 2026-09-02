@@ -1,5 +1,7 @@
 # NSE・GPE共通ビルドランナー
 
+> Windows（PowerShell）とLinux（bash）のコマンド対応は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。本書のGit/CMakeオプションは、OS固有のパスを除いて両環境で共通です。
+
 `build.yaml`の`selected_model`でNSEまたはGPEを選び、同じコマンドで検証、CMake設定生成、
 ビルド、テスト、実行を行います。SolverLibrary内の各`solver_manifest.yaml`が、使用可能な
 ソルバープロファイルとCMake設定を公開します。
@@ -36,6 +38,13 @@ python .\build_model.py .\build.yaml --list-models
 python .\build_model.py .\build.yaml --model gpe --list-profiles
 ```
 
+Linux（bash）:
+
+```bash
+python3 ./build_model.py ./build.yaml --list-models
+python3 ./build_model.py ./build.yaml --model gpe --list-profiles
+```
+
 ## 2. 対応プロファイル
 
 ### NSE
@@ -55,6 +64,13 @@ CUDA版のビルドとテスト:
 
 ```powershell
 python .\build_model.py .\build.yaml `
+  --model nse --profile cuda_single --test
+```
+
+Linux（bash）:
+
+```bash
+python3 ./build_model.py ./build.yaml \
   --model nse --profile cuda_single --test
 ```
 
@@ -79,6 +95,12 @@ WindowsではローカルFrameWorkのBuildSolverから実行します。
 Set-Location "$env:USERPROFILE\Documents\Codex\FrameWork\ScriptLibrary\BuildSolver"
 ```
 
+Linux（bash）:
+
+```bash
+cd "$HOME/Research/FrameWork/ScriptLibrary/BuildSolver"
+```
+
 NASの`\\Mozart\share\FrameWork`は同期ミラーであり、BuildSolverの直接実行場所には
 しません。通常の計算では、RunEnvironmentで生成した外部実行環境内の
 `ScriptLibrary\BuildSolver`を`run_case.py`から呼び出します。
@@ -89,10 +111,18 @@ NASの`\\Mozart\share\FrameWork`は同期ミラーであり、BuildSolverの直�
 python .\build_model.py .\build.yaml --validate-only
 ```
 
+```bash
+python3 ./build_model.py ./build.yaml --validate-only
+```
+
 検証、CMake configure、buildをまとめて実行します。
 
 ```powershell
 python .\build_model.py .\build.yaml
+```
+
+```bash
+python3 ./build_model.py ./build.yaml
 ```
 
 コマンドラインで一時的にモデルとプロファイルを変更することもできます。
@@ -101,6 +131,13 @@ python .\build_model.py .\build.yaml
 python .\build_model.py .\build.yaml `
   --model gpe `
   --profile cpu_mpi_dft `
+  --build
+```
+
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model gpe \
+  --profile cpu_mpi_dft \
   --build
 ```
 
@@ -123,12 +160,25 @@ python .\build_model.py .\build.yaml `
   --input-file "C:\path\to\case\input.nml"
 ```
 
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model gpe --profile cuda_single --run \
+  --input-file "$HOME/path/to/case/input.nml"
+```
+
 ### NSE
 
 ```powershell
 python .\build_model.py .\build.yaml `
   --model nse --build --run `
   --input-file "C:\path\to\case\input.dat" `
+  --processes 4 --omp-threads 8
+```
+
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model nse --build --run \
+  --input-file "$HOME/path/to/case/input.dat" \
   --processes 4 --omp-threads 8
 ```
 
@@ -144,6 +194,13 @@ python .\build_model.py .\build.yaml `
   --input-file "C:\path\to\case\input.nml"
 ```
 
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model gpe --profile cpu_serial_dft \
+  --build --run \
+  --input-file "$HOME/path/to/case/input.nml"
+```
+
 ### GPE MPI
 
 ```powershell
@@ -151,6 +208,14 @@ python .\build_model.py .\build.yaml `
   --model gpe --profile cpu_mpi_dft `
   --build --run `
   --input-file "C:\path\to\case\input.nml" `
+  --processes 4
+```
+
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model gpe --profile cpu_mpi_dft \
+  --build --run \
+  --input-file "$HOME/path/to/case/input.nml" \
   --processes 4
 ```
 
@@ -200,11 +265,23 @@ python .\build_model.py .\build.yaml `
   --configuration Debug --build
 ```
 
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model gpe --profile cpu_serial_dft \
+  --configuration Debug --build
+```
+
 CTestを含めて実行します。
 
 ```powershell
 python .\build_model.py .\build.yaml `
   --model gpe --profile cpu_serial_dft `
+  --test
+```
+
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model gpe --profile cpu_serial_dft \
   --test
 ```
 
@@ -222,6 +299,22 @@ python .\build_model.py .\build.yaml `
 
 ビルド設計と物理条件を分離するため、流れ場や原子種などの条件を`build.yaml`へは
 記述しません。
+
+### 条件付きFortran依存関係
+
+Fortranソースの`#if`、`#ifdef`、`#ifndef`で有効になる`use`文がある場合は、
+そのプロファイルでCMakeが定義するマクロを`solver_manifest.yaml`にも登録します。
+
+```yaml
+profiles:
+  cuda_mpi_cufftmp:
+    fortran_preprocessor_defines:
+      - NSE_INIT_CUFFTMP
+```
+
+依存関係検査はこの一覧に従って有効な分岐だけを解析します。値はCMakeの
+`target_compile_definitions`と一致させてください。未指定のプロファイルでは
+マクロなしとして検査します。
 
 ## 8. 再現性情報
 

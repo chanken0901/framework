@@ -1,5 +1,7 @@
 # 保存済み乱流場の読込みとx方向配置
 
+> 本書ではWindows（PowerShell）とLinux（bash）のコマンドを併記します。共通の読み替えは[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+
 ## 概要
 
 `flow.type: imported_turbulence`は、NSEのrank別SLF出力を一つの可搬SLFへ
@@ -33,7 +35,7 @@ MPI並列数は一致しなくてもよい。
 
 ## 2. 最短実行手順
 
-以下は、読込み先の実行環境がすでに生成されている場合のPowerShell手順である。
+以下は、読込み先の実行環境がすでに生成されている場合のWindows／Linux手順である。
 `nse_case0001`などの番号は実際の元ケースと読込み先ケースへ置き換える。
 
 読込み先環境がまだない場合は、先に設計書をコピーしてCPU用またはCUDA用の
@@ -52,6 +54,22 @@ python "$tool\prepare_environment.py" $design --dry-run
 python "$tool\prepare_environment.py" $design
 ```
 
+Linux（bash）:
+
+```bash
+framework="$HOME/Research/FrameWork"
+tool="$framework/ScriptLibrary/RunEnvironment"
+design="$HOME/ResearchRuns/Designs/nse_imported_target.yaml"
+
+mkdir -p "$(dirname "$design")"
+cp "$tool/environment.nse.yaml" "$design"
+${EDITOR:-vi} "$design"
+
+# source/destination/targetもLinux用へ変更してから実行する
+python3 "$tool/prepare_environment.py" "$design" --dry-run
+python3 "$tool/prepare_environment.py" "$design"
+```
+
 生成ログに表示された`nse_caseNNNN`を、以下の`$targetRoot`へ指定する。
 
 ### 2.1 パスを設定する
@@ -64,6 +82,18 @@ $portableSlf = Join-Path $targetRoot "cases\$targetCase\initial_data\turbulence.
 
 Set-Location $targetRoot
 New-Item -ItemType Directory -Force (Split-Path $portableSlf) | Out-Null
+```
+
+Linux（bash）:
+
+```bash
+source_output="$HOME/ResearchRuns/nse_case0001/cases/case0001/output"
+target_root="$HOME/ResearchRuns/nse_case0002"
+target_case="case0002"
+portable_slf="$target_root/cases/$target_case/initial_data/turbulence.slf"
+
+cd "$target_root"
+mkdir -p "$(dirname "$portable_slf")"
 ```
 
 元計算がCPU MPIでもCUDAでも、`$sourceOutput`には元ケースの`output`ディレクトリを
@@ -84,6 +114,22 @@ if ($slfFiles.Count -eq 0) {
 $slfFiles | Select-Object Name, Length, LastWriteTime
 ```
 
+Linux（bash）:
+
+```bash
+test -f "$source_output/meta.json" || {
+  echo "meta.jsonがありません: $source_output" >&2
+  exit 1
+}
+
+find "$source_output" -maxdepth 1 -type f -name '*.slf' -print -quit | grep -q . || {
+  echo "SLFファイルがありません: $source_output" >&2
+  exit 1
+}
+
+find "$source_output" -maxdepth 1 -type f -name '*.slf' -printf '%f %s bytes\n'
+```
+
 元ケースでは`output.write_meta: true`を使用する。CPU MPI／MPI＋CUDA出力では指定stepの
 全rankファイルが必要であり、単一GPU出力では単一rankファイルと`meta.json`が必要である。
 
@@ -101,6 +147,19 @@ if ($LASTEXITCODE -ne 0) {
 }
 ```
 
+Linux（bash）:
+
+```bash
+python3 ./SolverLibrary/NSE/tools/nse_prepare_imported_turbulence.py \
+  "$source_output" \
+  --meta "$source_output/meta.json" \
+  --step latest \
+  --output "$portable_slf" || {
+    echo "乱流SLFの変換に失敗しました" >&2
+    exit 1
+  }
+```
+
 成功時には次の形式で表示される。
 
 ```text
@@ -113,7 +172,8 @@ CPU/CUDAの判別とCPU側の元MPI並列数は`meta.json`から自動取得さ�
 
 ### 2.4 読込み先のcase.yamlを編集する
 
-`$targetRoot\cases\$targetCase\case.yaml`の`flow`を次のように設定する。
+Windowsでは`$targetRoot\cases\$targetCase\case.yaml`、Linuxでは
+`$target_root/cases/$target_case/case.yaml`の`flow`を次のように設定する。
 
 ```yaml
 flow:
@@ -163,6 +223,15 @@ python .\tools\run_case.py --build
 python .\tools\run_case.py --run
 ```
 
+Linux（bash）:
+
+```bash
+python3 ./tools/run_case.py --prepare
+python3 ./tools/run_case.py --validate-only
+python3 ./tools/run_case.py --build
+python3 ./tools/run_case.py --run
+```
+
 元計算がCUDAまたは別のMPIプロセス数でも、`mpi_processes`は読込み先CPU計算で
 使用したい値を指定する。ただし、NSE CPU版が要求するy-z領域分割条件を満たすこと。
 
@@ -194,6 +263,15 @@ python .\tools\run_case.py --prepare
 python .\tools\run_case.py --validate-only
 python .\tools\run_case.py --build
 python .\tools\run_case.py --run
+```
+
+Linux（bash）:
+
+```bash
+python3 ./tools/run_case.py --prepare
+python3 ./tools/run_case.py --validate-only
+python3 ./tools/run_case.py --build
+python3 ./tools/run_case.py --run
 ```
 
 CUDA版はCPU上で可搬SLFを読み、初期場を完成させてから単一GPUへ転送する。
@@ -238,8 +316,18 @@ python .\SolverLibrary\NSE\tools\nse_prepare_imported_turbulence.py `
   --output .\cases\caseNNNN\initial_data\turbulence.slf
 ```
 
+Linux（bash）:
+
+```bash
+python3 ./SolverLibrary/NSE/tools/nse_prepare_imported_turbulence.py \
+  ./previous_case/output \
+  --step latest \
+  --output ./cases/caseNNNN/initial_data/turbulence.slf
+```
+
 上記は生成された実行環境のルートで実行する例である。`SolverLibrary/NSE`を
-カレントディレクトリにしている場合は`python .\tools\...`としてもよい。
+カレントディレクトリにしている場合は、Windowsでは`python .\tools\...`、
+Linuxでは`python3 ./tools/...`としてもよい。
 
 特定stepを使用する場合は`--step 1000`のように指定する。ツールは次を実行する。
 

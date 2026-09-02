@@ -377,6 +377,8 @@ profiles:
 
   cuda_mpi_cufftmp:
     description: One MPI rank per GPU with cuFFTMp HIT and Petersen-Livescu forcing
+    fortran_preprocessor_defines:
+      - NSE_INIT_CUFFTMP
     capabilities:
       - nse_basic
       - multi_gpu

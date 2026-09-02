@@ -1,9 +1,11 @@
 # 後処理・ParaView可視化手順書
 
-**版:** 2.1  
-**更新日:** 2026-08-18  
+**版:** 2.2
+**更新日:** 2026-09-02
 **対象:** 研究フレームワークから生成したGPE/NSE実行環境  
 **正本:** `C:\Users\Owner\Documents\Codex\FrameWork`
+
+> コマンド表記: OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通の読み替えは[`docs/WINDOWS_LINUX_COMMANDS.md`](docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 ---
 
@@ -71,7 +73,9 @@ ParaViewでは個々のVTIではなく、通常は`collection.pvd`を開きま�
 
 ### 3.1 実行環境ルートへ移動する
 
-PowerShellで、対象の実行環境ルートへ移動します。以下では`nse_case0012`を例にします。
+対象の実行環境ルートへ移動します。以下では`nse_case0012`を例にします。
+
+Windows（PowerShell）:
 
 ```powershell
 Set-Location "$env:USERPROFILE\ResearchRuns\nse_case0012"
@@ -88,10 +92,25 @@ Test-Path .\tools\postprocess_case.py
 後ろの二つがどちらも`True`である必要があります。`environment.lock.json`がない
 ディレクトリから実行すると、modelとcaseを正しく特定できません。
 
+Linux（bash）:
+
+```bash
+cd "$HOME/ResearchRuns/nse_case0012"
+pwd
+test -f ./environment.lock.json && echo "environment.lock.json: OK"
+test -f ./tools/postprocess_case.py && echo "postprocess_case.py: OK"
+```
+
 ### 3.2 ツールの版を確認する
 
 ```powershell
 python .\tools\postprocess_case.py --version
+```
+
+Linux（bash）:
+
+```bash
+python3 ./tools/postprocess_case.py --version
 ```
 
 現行版では次のように表示されます。
@@ -109,6 +128,12 @@ postprocess_case.py 2.0.0
 python .\tools\postprocess_case.py --dry-run
 ```
 
+Linux（bash）:
+
+```bash
+python3 ./tools/postprocess_case.py --dry-run
+```
+
 `--dry-run`は、内部で呼び出すモデル別変換器のコマンドを`[CMD]`行に表示します。
 SLFは読み込まず、出力ファイルも作りません。case、入力、出力、モデルの解決結果を
 確認したいときに使用します。
@@ -117,6 +142,12 @@ SLFは読み込まず、出力ファイルも作りません。case、入力、�
 
 ```powershell
 python .\tools\postprocess_case.py --inspect-only --steps latest
+```
+
+Linux（bash）:
+
+```bash
+python3 ./tools/postprocess_case.py --inspect-only --steps latest
 ```
 
 `--inspect-only`はSLFヘッダーと`meta.json`を読み、次を表示します。
@@ -137,6 +168,12 @@ VTI/PVDはまだ生成しません。`--dry-run`はコマンド確認、`--inspe
 
 ```powershell
 python .\tools\postprocess_case.py
+```
+
+Linux（bash）:
+
+```bash
+python3 ./tools/postprocess_case.py
 ```
 
 引数を省略した場合は次の条件です。
@@ -166,6 +203,13 @@ Invoke-Item $pvd
 
 ```text
 cases\<case_id>\paraview\collection.pvd
+```
+
+LinuxでParaViewを直接起動できる場合は次のように開きます。
+
+```bash
+case_id=case0012
+paraview "./cases/$case_id/paraview/collection.pvd"
 ```
 
 ParaViewのPropertiesで`Apply`を押し、上部の時刻操作ボタンまたはTime欄で
@@ -213,6 +257,15 @@ python .\tools\postprocess_case.py `
   --steps 0:1000:100 `
   --stride 1 `
   --output-dir .\cases\case0012\postprocess\paraview\full
+```
+
+Linux（bash）:
+
+```bash
+python3 ./tools/postprocess_case.py \
+  --steps 0:1000:100 \
+  --stride 1 \
+  --output-dir ./cases/case0012/postprocess/paraview/full
 ```
 
 既存プレビューを残したまま別条件で変換したい場合に使用します。
@@ -390,6 +443,20 @@ python .\SolverLibrary\GPE\gp3d\tools\slf_to_paraview_merged_cropghost.py `
   --stride 2
 ```
 
+Linux（bash）:
+
+```bash
+python3 ./SolverLibrary/GPE/gp3d/tools/slf_to_paraview_merged_cropghost.py \
+  ./cases/case0001/output \
+  --output-dir ./cases/case0001/paraview \
+  --meta ./cases/case0001/output/meta.json \
+  --derive gpe \
+  --layout auto \
+  --fields density,phase \
+  --steps latest \
+  --stride 2
+```
+
 NSEの例です。
 
 ```powershell
@@ -401,6 +468,20 @@ python .\SolverLibrary\NSE\tools\slf_to_paraview_merged_cropghost.py `
   --layout auto `
   --fields rho,u,v,w,p `
   --steps latest `
+  --stride 2
+```
+
+Linux（bash）:
+
+```bash
+python3 ./SolverLibrary/NSE/tools/slf_to_paraview_merged_cropghost.py \
+  ./cases/case0012/output \
+  --output-dir ./cases/case0012/paraview \
+  --meta ./cases/case0012/output/meta.json \
+  --derive nse \
+  --layout auto \
+  --fields rho,u,v,w,p \
+  --steps latest \
   --stride 2
 ```
 
@@ -417,6 +498,14 @@ $lock = Get-Content .\environment.lock.json | ConvertFrom-Json
 $output = Join-Path $lock.case_directory "output"
 Get-ChildItem $output -Filter *.slf | Select-Object -First 10 Name,Length
 Test-Path (Join-Path $output "meta.json")
+```
+
+Linux（bash）:
+
+```bash
+output="$(python3 -c 'import json; p=json.load(open("environment.lock.json")); print(p["case_directory"] + "/output")')"
+find "$output" -maxdepth 1 -type f -name '*.slf' -printf '%f %s bytes\n' | head
+test -f "$output/meta.json" && echo "meta.json: OK"
 ```
 
 SLFの実際の出力先と`environment.lock.json`の`case_directory`を確認します。
@@ -440,6 +529,16 @@ MPI rank分割SLFには正しい`output\meta.json`が必要です。`--meta`で�
 Get-ChildItem .\cases\<case_id>\output -Filter *rank*.slf |
   Group-Object { $_.BaseName -replace '_rank\d+$','' } |
   Select-Object Name,Count
+```
+
+Linux（bash）:
+
+```bash
+case_id=case0012
+find "./cases/$case_id/output" -maxdepth 1 -type f -name '*rank*.slf' -printf '%f\n' |
+  sed -E 's/_rank[0-9]+\.slf$//' |
+  sort |
+  uniq -c
 ```
 
 ### 12.5 `Requested steps are not available`
@@ -468,8 +567,16 @@ SLFと`meta.json`の格子、rank分割、ghost幅が一致していません。
 
 ### 12.9 NumPyがない
 
+Windows（PowerShell）:
+
 ```powershell
 python -m pip install numpy
+```
+
+Linux（bash）:
+
+```bash
+python3 -m pip install --user numpy
 ```
 
 スパコンではシステムPython、venv、module環境のいずれを使用するか運用方針に合わせます。
@@ -482,6 +589,7 @@ python -m pip install numpy
 
 ```bash
 python3 tools/postprocess_case.py --version
+python3 tools/postprocess_case.py --dry-run
 python3 tools/postprocess_case.py --inspect-only --steps latest
 python3 tools/postprocess_case.py --steps 0:1000:100 --stride 1
 ```
@@ -504,6 +612,10 @@ python3 tools/postprocess_case.py --steps 0:1000:100 --stride 1
 python .\tools\postprocess_case.py --version
 ```
 
+```bash
+python3 ./tools/postprocess_case.py --version
+```
+
 古い場合は、編集元FrameWorkの`ScriptLibrary\RunEnvironment`から、使用している
 `environment.nse.yaml`または`environment.gpe.yaml`に従って実行環境を再生成します。
 caseの`case.yaml`と生データ`output`は、再生成前に退避または保持方法を確認してください。
@@ -515,6 +627,14 @@ caseの`case.yaml`と生データ`output`は、再生成前に退避または保
 Test-Path .\environment.lock.json
 python .\tools\postprocess_case.py --version
 python .\tools\postprocess_case.py --inspect-only --steps latest
+```
+
+Linux（bash）:
+
+```bash
+test -f ./environment.lock.json && echo "environment.lock.json: OK"
+python3 ./tools/postprocess_case.py --version
+python3 ./tools/postprocess_case.py --inspect-only --steps latest
 ```
 
 ---
@@ -544,6 +664,8 @@ python .\tools\postprocess_case.py --inspect-only --steps latest
 
 ## 16. コマンド早見表
 
+### Windows（PowerShell）
+
 ```powershell
 # 版確認
 python .\tools\postprocess_case.py --version
@@ -568,4 +690,32 @@ python .\tools\postprocess_case.py --fields density,phase --stride 1
 
 # NSEの密度、速度、圧力
 python .\tools\postprocess_case.py --fields rho,u,v,w,p --stride 1
+```
+
+### Linux（bash）
+
+```bash
+# 版確認
+python3 ./tools/postprocess_case.py --version
+
+# 子コマンドだけ確認
+python3 ./tools/postprocess_case.py --dry-run
+
+# 入力と最新ステップを検査
+python3 ./tools/postprocess_case.py --inspect-only --steps latest
+
+# 最新の軽量プレビュー
+python3 ./tools/postprocess_case.py
+
+# 最新の全解像度
+python3 ./tools/postprocess_case.py --steps latest --stride 1
+
+# 0から1000まで100刻み、全解像度
+python3 ./tools/postprocess_case.py --steps 0:1000:100 --stride 1
+
+# GPEの密度と位相
+python3 ./tools/postprocess_case.py --fields density,phase --stride 1
+
+# NSEの密度、速度、圧力
+python3 ./tools/postprocess_case.py --fields rho,u,v,w,p --stride 1
 ```

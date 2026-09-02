@@ -1,5 +1,7 @@
 # GP3Dソルバーパッケージ
 
+> Windows（PowerShell）とLinux（bash）の共通コマンド対応は[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。cuFFTMp節のbashコマンドはLinux専用です。
+
 このディレクトリは、SolverLibraryで管理するGP3Dパッケージの原本です。
 数値計算モジュールと、薄い実行プログラムから構成されています。
 ケースごとに生成される実行環境には、選択したプロファイルで必要なファイルだけがコピーされます。
@@ -106,6 +108,13 @@ MPIの使用有無と通常のprofileはenvironment設計書から決まり、`c
 ```powershell
 python .\tools\run_case.py --prepare
 python .\tools\run_case.py --run
+```
+
+Linux（bash）:
+
+```bash
+python3 ./tools/run_case.py --prepare
+python3 ./tools/run_case.py --run
 ```
 
 起動時の`# OpenMP compiled=... active=... threads_per_rank=...`で実際の設定を確認できます。

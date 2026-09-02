@@ -1,6 +1,8 @@
 # NSE 生成・ビルド・実行手順
 
-更新日: 2026-09-01
+> OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通のパス、Python、CMake、MPIの対応表は[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+
+更新日: 2026-09-02
 
 ## 1. 推奨フロー
 
@@ -45,19 +47,38 @@ nvcc --version
 Linux/スパコンでは、同等のPython、CMake、Fortranコンパイラ、
 MPI、選択したFFT/CUDAバックエンドをmoduleなどで読み込む。
 
+```bash
+python3 --version
+cmake --version
+ninja --version
+gfortran --version
+mpirun --version
+nvcc --version
+```
+
 ## 3. 新規clone
 
-`2decomp-fft`はGitサブモジュールである。新規取得時は次を使う。
+`2decomp-fft`はGitサブモジュールである。FrameWorkモノレポの新規取得時は次を使う。
+
+Windows（PowerShell）:
 
 ```powershell
-git clone --recurse-submodules <SolverLibrary URL>
+git clone --recurse-submodules https://github.com/chanken0901/framework.git FrameWork
+```
+
+Linux（bash）:
+
+```bash
+git clone --recurse-submodules https://github.com/chanken0901/framework.git FrameWork
 ```
 
 既存cloneへ取得する場合:
 
-```powershell
+```console
 git submodule update --init --recursive
 ```
+
+このサブモジュール更新コマンドはWindows／Linux共通である。
 
 ## 4. 外部実行環境を生成する
 
@@ -72,6 +93,22 @@ $design = "$designs\nse.yaml"
 New-Item -ItemType Directory -Force $designs | Out-Null
 Copy-Item "$tool\environment.nse.yaml" $design
 ```
+
+Linux（bash）では次のようにコピーする。
+
+```bash
+framework="$HOME/Research/FrameWork"
+tool="$framework/ScriptLibrary/RunEnvironment"
+designs="$HOME/ResearchRuns/Designs"
+design="$designs/nse.yaml"
+
+mkdir -p "$designs"
+cp "$tool/environment.nse.yaml" "$design"
+```
+
+Linuxではコピーした設計書の`source.framework_root`、`destination`、
+`select.target`をLinux用へ変更する。具体例は
+[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)の第6章を参照する。
 
 CPU MPI + OpenMP:
 
@@ -131,10 +168,24 @@ python "$tool\prepare_environment.py" $design --dry-run
 python "$tool\prepare_environment.py" $design
 ```
 
+Linux（bash）:
+
+```bash
+python3 "$tool/prepare_environment.py" "$design" --list-options model
+python3 "$tool/prepare_environment.py" "$design" --dry-run
+python3 "$tool/prepare_environment.py" "$design"
+```
+
 生成ログに表示された`nse_caseNNNN`へ移動する。
 
 ```powershell
 Set-Location "$env:USERPROFILE\ResearchRuns\nse_caseNNNN"
+```
+
+Linux（bash）:
+
+```bash
+cd "$HOME/ResearchRuns/nse_caseNNNN"
 ```
 
 ## 5. case設計書
@@ -225,8 +276,17 @@ python .\SolverLibrary\NSE\tools\nse_prepare_imported_turbulence.py `
   --output .\cases\caseNNNN\initial_data\turbulence.slf
 ```
 
+Linux（bash）:
+
+```bash
+python3 ./SolverLibrary/NSE/tools/nse_prepare_imported_turbulence.py \
+  ./previous_case/output \
+  --step latest \
+  --output ./cases/caseNNNN/initial_data/turbulence.slf
+```
+
 続いて`case.yaml`の`flow.type`を`imported_turbulence`へ変更する。`embed`と`tile`の
-入力例、CPU/CUDA別の実行可能なPowerShell手順、格子互換条件、平均速度の追加方法は
+入力例、CPU/CUDA別のWindows／Linux実行手順、格子互換条件、平均速度の追加方法は
 [`NSE_IMPORTED_TURBULENCE.md`](NSE_IMPORTED_TURBULENCE.md)を参照する。
 
 全領域でWENO5-Z/Roeを使う場合は`convective_scheme: weno5z_roe`、全領域で
@@ -251,16 +311,40 @@ python .\tools\run_case.py --build
 python .\tools\run_case.py --run
 ```
 
+Linux（bash）:
+
+```bash
+# case.yamlからinput.datを生成
+python3 ./tools/run_case.py --prepare
+
+# 設計書、プロファイル、バックエンドの組合せを検証
+python3 ./tools/run_case.py --validate-only
+
+# CMake configureとビルド
+python3 ./tools/run_case.py --build
+
+# 既存実行ファイルで計算
+python3 ./tools/run_case.py --run
+```
+
 一時的にMPIランク数とOpenMPスレッド数を上書きする場合:
 
 ```powershell
 python .\tools\run_case.py --run --processes 8 --omp-threads 2
 ```
 
+```bash
+python3 ./tools/run_case.py --run --processes 8 --omp-threads 2
+```
+
 テストを含む実行環境では次を使う。
 
 ```powershell
 python .\tools\run_case.py --test
+```
+
+```bash
+python3 ./tools/run_case.py --test
 ```
 
 `--run`はconfigureやbuildを行わない。再ビルドが必要な場合は先に`--build`を実行する。
@@ -284,6 +368,10 @@ ParaView変換:
 python .\tools\postprocess_case.py
 ```
 
+```bash
+python3 ./tools/postprocess_case.py
+```
+
 最新の完全な保存ステップが変換され、
 `cases\caseNNNN\paraview\collection.pvd`が生成される。
 
@@ -300,6 +388,20 @@ python .\build_model.py .\build.yaml `
 python .\build_model.py .\build.yaml `
   --model nse --profile cuda_single --test
 python .\build_model.py .\build.yaml `
+  --model nse --profile cuda_mpi --build
+```
+
+Linux（bash）:
+
+```bash
+cd "$HOME/Research/FrameWork/ScriptLibrary/BuildSolver"
+
+python3 ./build_model.py ./build.yaml --model nse --list-profiles
+python3 ./build_model.py ./build.yaml \
+  --model nse --profile cpu_mpi --test
+python3 ./build_model.py ./build.yaml \
+  --model nse --profile cuda_single --test
+python3 ./build_model.py ./build.yaml \
   --model nse --profile cuda_mpi --build
 ```
 
@@ -326,6 +428,14 @@ NSE単体の`config/build.yaml`を読む互換ランナー:
 Set-Location "$env:USERPROFILE\Documents\Codex\FrameWork\SolverLibrary\NSE"
 python .\tools\build_from_yaml.py .\config\build.yaml --validate-only
 python .\tools\build_from_yaml.py .\config\build.yaml
+```
+
+Linux（bash）:
+
+```bash
+cd "$HOME/Research/FrameWork/SolverLibrary/NSE"
+python3 ./tools/build_from_yaml.py ./config/build.yaml --validate-only
+python3 ./tools/build_from_yaml.py ./config/build.yaml
 ```
 
 CMakeを直接操作する必要がある場合:
@@ -364,6 +474,25 @@ python .\build_model.py .\build.yaml `
 
 # 外部実行環境ツール
 python -m unittest discover ..\RunEnvironment\tests
+```
+
+Linux（bash）:
+
+```bash
+# CPU/MPI全テスト
+python3 ./build_model.py ./build.yaml \
+  --model nse --profile cpu_mpi --test
+
+# 単一GPU全テスト
+python3 ./build_model.py ./build.yaml \
+  --model nse --profile cuda_single --test
+
+# MPI＋CUDAビルド（実機smoke testは複数GPUノードで実行）
+python3 ./build_model.py ./build.yaml \
+  --model nse --profile cuda_mpi --build
+
+# 外部実行環境ツール
+python3 -m unittest discover ../RunEnvironment/tests
 ```
 
 ハイブリッド流束を変更した場合は、CPUの保存性・切替えテストと
