@@ -2,9 +2,30 @@
 
 > Windows／Linuxのコマンドとパスの対応は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。Linuxでは`linux_gnu_mpi`または`linux_hpc_slurm`など、実行機に対応する選択肢を使用します。
 
-**版:** 1.3
-**更新日:** 2026-09-02
+**版:** 1.5
+**更新日:** 2026-09-03
 **機械可読の正本:** `environment_options.yaml`
+
+## ケース拡張テンプレート
+
+多成分ケースの選択肢は、共通の`case.template`に加えて、計算に必要なものだけを
+`case.extension_templates`へ登録する。
+
+```yaml
+case:
+  template: ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_viscous.yaml
+  extension_templates:
+    multicomponent: ScriptLibrary/RunEnvironment/case_templates/extensions/multicomponent_viscous.yaml
+    thermodynamics: ScriptLibrary/RunEnvironment/case_templates/extensions/thermodynamics_thermally_perfect.yaml
+    transport: ScriptLibrary/RunEnvironment/case_templates/extensions/transport_mixture_averaged.yaml
+```
+
+生成先では各ファイルが`config/<拡張名>.yaml`になり、`case.yaml`から相対パスで
+参照される。空の拡張ファイルは生成しない。形式と互換性の詳細は
+[`CASE_CONFIGURATION.md`](CASE_CONFIGURATION.md)を参照する。
+
+Stage 5の`nse_multicomponent_reactor`は`multicomponent`、`thermodynamics`、
+`chemistry`だけを生成する。格子輸送を行わないため`transport`は生成しない。
 
 ## NSE CUDA
 

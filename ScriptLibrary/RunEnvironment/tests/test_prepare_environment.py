@@ -3,7 +3,9 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from argparse import Namespace
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
@@ -23,6 +25,7 @@ from prepare_environment import (  # noqa: E402
     _requested_case_destination,
     _selected_solver_files,
     _slurm_script,
+    prepare,
 )
 from yaml_support import load_yaml  # noqa: E402
 
@@ -383,6 +386,80 @@ class FortranDependencyInspectionTests(unittest.TestCase):
             )
 
 
+class ModularCaseEnvironmentTests(unittest.TestCase):
+    def test_stage_four_generates_only_referenced_extension_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            framework_root = SCRIPT_DIR.parents[1]
+            output = Path(temporary) / "nse_multicomponent_case0001"
+            args = Namespace(
+                design=str(
+                    SCRIPT_DIR / "environment.nse_multicomponent.viscous.yaml"
+                ),
+                framework_root=str(framework_root),
+                output=str(output),
+                model=None,
+                profile=None,
+                case_id=None,
+                overwrite=False,
+                archive=False,
+                archive_format=None,
+                dry_run=False,
+            )
+
+            with patch("prepare_environment.sync_environment_case"):
+                generated = prepare(args)
+
+            case_dir = generated / "cases" / "case0001"
+            self.assertEqual(
+                {path.name for path in (case_dir / "config").iterdir()},
+                {
+                    "multicomponent.yaml",
+                    "thermodynamics.yaml",
+                    "transport.yaml",
+                },
+            )
+            self.assertTrue((case_dir / "resolved_case.yaml").is_file())
+            self.assertTrue((case_dir / "input.dat").is_file())
+            self.assertTrue((generated / "tools" / "case_configuration.py").is_file())
+
+    def test_stage_five_generates_chemistry_extension_and_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            framework_root = SCRIPT_DIR.parents[1]
+            output = Path(temporary) / "nse_multicomponent_reactor_case0001"
+            args = Namespace(
+                design=str(
+                    SCRIPT_DIR / "environment.nse_multicomponent.reactor.yaml"
+                ),
+                framework_root=str(framework_root),
+                output=str(output),
+                model=None,
+                profile=None,
+                case_id=None,
+                overwrite=False,
+                archive=False,
+                archive_format=None,
+                dry_run=False,
+            )
+
+            with patch("prepare_environment.sync_environment_case"):
+                generated = prepare(args)
+
+            case_dir = generated / "cases" / "case0001"
+            self.assertEqual(
+                {path.name for path in (case_dir / "config").iterdir()},
+                {
+                    "multicomponent.yaml",
+                    "thermodynamics.yaml",
+                    "chemistry.yaml",
+                },
+            )
+            generated_input = (case_dir / "input.dat").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("&one_step_arrhenius", generated_input)
+            self.assertIn("&homogeneous_reactor", generated_input)
+
+
 class MulticomponentFoundationManifestTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -546,18 +623,57 @@ class MulticomponentFoundationManifestTests(unittest.TestCase):
         )
         self.assertIn("tests/test_multicomponent_viscous.f90", dependencies)
 
+    def test_stage_five_profile_has_complete_fortran_dependencies(self) -> None:
+        files, components = _selected_solver_files(
+            self.solver_root,
+            self.manifest,
+            "cpu_serial_reactor",
+            True,
+        )
+
+        dependencies = _inspect_dependencies(
+            self.solver_root,
+            self.manifest,
+            files,
+            _profile_preprocessor_defines(
+                self.manifest, "cpu_serial_reactor"
+            ),
+        )
+
+        self.assertIn("chemistry_one_step_arrhenius", components)
+        self.assertIn("reactor_core", components)
+        self.assertIn(
+            "src/extensions/multicomponent/providers/"
+            "mod_mc_chemistry_one_step_arrhenius.f90",
+            dependencies,
+        )
+        self.assertIn(
+            "src/extensions/multicomponent/mod_mc_reactor_solver.f90",
+            dependencies,
+        )
+        self.assertIn("tests/test_multicomponent_reactor.f90", dependencies)
+
 
 class NseCaseTemplateTests(unittest.TestCase):
     def test_multicomponent_template_exposes_stage_zero_contract(self) -> None:
         template = (
             SCRIPT_DIR / "case_templates" / "nse_multicomponent.yaml"
         ).read_text(encoding="utf-8")
+        extension = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "extensions"
+            / "multicomponent_foundation.yaml"
+        ).read_text(encoding="utf-8")
 
+        self.assertIn("schema_version: 2", template)
         self.assertIn("model: {{physics_model}}", template)
-        self.assertIn("species:\n      - mixture", template)
-        self.assertIn("model: calorically_perfect", template)
-        self.assertIn("transport:\n  model: none", template)
-        self.assertIn("chemistry:\n  model: none", template)
+        self.assertIn("multicomponent: config/multicomponent.yaml", template)
+        self.assertIn("mode: foundation", extension)
+        self.assertIn("species:\n    - mixture", extension)
+        self.assertNotIn("thermodynamics:", template)
+        self.assertNotIn("transport:", template)
+        self.assertNotIn("chemistry:", template)
 
     def test_multicomponent_passive_scalar_template_exposes_stage_one(self) -> None:
         template = (
@@ -565,9 +681,16 @@ class NseCaseTemplateTests(unittest.TestCase):
             / "case_templates"
             / "nse_multicomponent_passive_scalar.yaml"
         ).read_text(encoding="utf-8")
+        extension = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "extensions"
+            / "multicomponent_passive_scalar.yaml"
+        ).read_text(encoding="utf-8")
 
-        self.assertIn("mode: passive_scalar", template)
-        self.assertIn("- tracer\n      - carrier", template)
+        self.assertIn("multicomponent: config/multicomponent.yaml", template)
+        self.assertIn("mode: passive_scalar", extension)
+        self.assertIn("- tracer\n    - carrier", extension)
         self.assertIn("type: passive_scalar_advection", template)
         self.assertIn("convective_scheme: upwind1", template)
         self.assertIn("boundary_condition: periodic", template)
@@ -579,8 +702,15 @@ class NseCaseTemplateTests(unittest.TestCase):
             / "case_templates"
             / "nse_multicomponent_inviscid.yaml"
         ).read_text(encoding="utf-8")
+        extension = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "extensions"
+            / "multicomponent_inviscid.yaml"
+        ).read_text(encoding="utf-8")
 
-        self.assertIn("mode: inviscid_euler", template)
+        self.assertIn("thermodynamics: config/thermodynamics.yaml", template)
+        self.assertIn("mode: inviscid_euler", extension)
         self.assertIn("type: multispecies_sod", template)
         self.assertIn("mass_fractions: [0.8, 0.2]", template)
         self.assertIn("convective_scheme: rusanov1", template)
@@ -592,13 +722,27 @@ class NseCaseTemplateTests(unittest.TestCase):
             / "case_templates"
             / "nse_multicomponent_thermally_perfect.yaml"
         ).read_text(encoding="utf-8")
+        multicomponent = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "extensions"
+            / "multicomponent_thermally_perfect.yaml"
+        ).read_text(encoding="utf-8")
+        thermodynamics = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "extensions"
+            / "thermodynamics_thermally_perfect.yaml"
+        ).read_text(encoding="utf-8")
 
-        self.assertIn("mode: thermally_perfect_euler", template)
-        self.assertIn("model: thermally_perfect", template)
-        self.assertIn("species_data:", template)
-        self.assertIn("molecular_weight: 28.0134", template)
-        self.assertIn("nasa7_low:", template)
-        self.assertIn("temperature_min: 200.0", template)
+        self.assertIn("multicomponent: config/multicomponent.yaml", template)
+        self.assertIn("thermodynamics: config/thermodynamics.yaml", template)
+        self.assertIn("mode: thermally_perfect_euler", multicomponent)
+        self.assertIn("model: thermally_perfect", thermodynamics)
+        self.assertIn("species_data:", thermodynamics)
+        self.assertIn("molecular_weight: 28.0134", thermodynamics)
+        self.assertIn("nasa7_low:", thermodynamics)
+        self.assertIn("temperature_min: 200.0", thermodynamics)
 
     def test_viscous_template_exposes_stage_four(self) -> None:
         template = (
@@ -606,12 +750,51 @@ class NseCaseTemplateTests(unittest.TestCase):
             / "case_templates"
             / "nse_multicomponent_viscous.yaml"
         ).read_text(encoding="utf-8")
+        multicomponent = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "extensions"
+            / "multicomponent_viscous.yaml"
+        ).read_text(encoding="utf-8")
+        transport = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "extensions"
+            / "transport_mixture_averaged.yaml"
+        ).read_text(encoding="utf-8")
 
-        self.assertIn("mode: viscous_navier_stokes", template)
-        self.assertIn("model: mixture_averaged", template)
-        self.assertIn("reference_dynamic_viscosity: 1.8e-5", template)
+        self.assertIn("transport: config/transport.yaml", template)
+        self.assertIn("mode: viscous_navier_stokes", multicomponent)
+        self.assertIn("model: mixture_averaged", transport)
+        self.assertIn("reference_dynamic_viscosity: 1.8e-5", transport)
         self.assertIn("type: periodic_species_wave", template)
         self.assertIn("diffusion_cfl: 0.40", template)
+
+    def test_reactor_template_exposes_stage_five(self) -> None:
+        template = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "nse_multicomponent_reactor.yaml"
+        ).read_text(encoding="utf-8")
+        multicomponent = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "extensions"
+            / "multicomponent_reactor.yaml"
+        ).read_text(encoding="utf-8")
+        chemistry = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "extensions"
+            / "chemistry_one_step_arrhenius.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("chemistry: config/chemistry.yaml", template)
+        self.assertIn("mode: homogeneous_reactor", multicomponent)
+        self.assertIn("model: one_step_arrhenius", chemistry)
+        self.assertIn("pre_exponential_factor: 1000.0", chemistry)
+        self.assertIn("type: homogeneous_reactor", template)
+        self.assertIn("chemistry_cfl: 0.1", template)
 
     def test_parallel_features_and_runtime_counts_are_template_fields(self) -> None:
         template = (

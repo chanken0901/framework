@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from case_configuration import resolve_case_configuration
 from case_input import CaseInputError, derive_nse_hit_transport
 from yaml_support import YamlFormatError, load_yaml
 
@@ -165,9 +166,7 @@ def _case_context(args: argparse.Namespace) -> dict:
     case_yaml = case_root / "case.yaml"
     if not case_yaml.is_file():
         raise PostprocessError(f"case.yaml was not found: {case_yaml}")
-    case_config = load_yaml(case_yaml)
-    if not isinstance(case_config, dict):
-        raise PostprocessError(f"expected a YAML mapping: {case_yaml}")
+    case_config = resolve_case_configuration(case_yaml).document
     gamma = args.gamma
     if gamma is None:
         gamma = float(_nested(case_config, "physics.nse.gamma", 1.4))

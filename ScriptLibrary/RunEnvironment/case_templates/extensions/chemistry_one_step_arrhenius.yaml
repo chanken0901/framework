@@ -1,0 +1,15 @@
+schema_version: 1
+extension: chemistry
+config:
+  model: one_step_arrhenius
+  reaction:
+    # Irreversible synthetic validation reaction: fuel + oxidizer -> 2 product.
+    reactants:
+      fuel: 1.0
+      oxidizer: 1.0
+    products:
+      product: 2.0
+    # Omit orders to use the reactant stoichiometric coefficients.
+    pre_exponential_factor: 1000.0
+    temperature_exponent: 0.0
+    activation_temperature: 2000.0

@@ -13,7 +13,7 @@ module mod_mc_thermodynamics_provider
 
   character(len=*), parameter, public :: mc_thermodynamics_provider_name = &
     'thermally_perfect'
-  logical, parameter, public :: mc_thermodynamics_supports_reactions = .false.
+  logical, parameter, public :: mc_thermodynamics_supports_reactions = .true.
 
   integer, save :: configured_species = 0
   real(dp), save :: universal_gas_constant = default_universal_gas_constant
@@ -33,6 +33,7 @@ module mod_mc_thermodynamics_provider
   public :: mc_mixture_gas_constant
   public :: mc_mixture_cp
   public :: mc_mixture_gamma
+  public :: mc_get_species_molecular_weights
   public :: mc_species_enthalpies
   public :: mc_pressure
   public :: mc_temperature
@@ -40,6 +41,16 @@ module mod_mc_thermodynamics_provider
   public :: mc_total_energy_from_primitive
 
 contains
+
+  subroutine mc_get_species_molecular_weights(nspecies,weights)
+    integer, intent(in) :: nspecies
+    real(dp), intent(out) :: weights(:)
+
+    if (configured_species /= nspecies .or. size(weights) < nspecies) then
+      error stop 'invalid molecular-weight request for thermodynamics provider'
+    end if
+    weights(1:nspecies) = molecular_weights(1:nspecies)
+  end subroutine mc_get_species_molecular_weights
 
   subroutine validate_mc_thermodynamics_provider(requested_model)
     character(len=*), intent(in) :: requested_model

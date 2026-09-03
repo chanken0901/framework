@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from case_configuration import resolve_case_configuration
 from yaml_support import YamlFormatError, load_yaml
 
 
@@ -294,7 +295,7 @@ def sync_environment_case(
     case_path = environment_root / str(lock["case_directory"]) / "case.yaml"
     if not case_path.is_file():
         raise GlobalCaseIndexError(f"case design not found: {case_path}")
-    case = _mapping(load_yaml(case_path), "case YAML")
+    case = resolve_case_configuration(case_path).document
     try:
         mpi_processes = int(_nested(case, "solver.mpi_processes", 1))
     except (TypeError, ValueError) as exc:
@@ -359,7 +360,7 @@ def rebuild_case_index(root: Path, index_path: Path, dry_run: bool = False) -> i
 
     for environment, lock in records:
         case_path = environment / str(lock["case_directory"]) / "case.yaml"
-        case = _mapping(load_yaml(case_path), f"case YAML {case_path}")
+        case = resolve_case_configuration(case_path).document
         case_id = str(_nested(case, "case_id", "")).strip()
         model = str(lock.get("model") or _nested(case, "physics.model", "")).lower()
         key = f"{model}:{case_id}"

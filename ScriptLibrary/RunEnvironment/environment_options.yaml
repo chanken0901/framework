@@ -112,6 +112,8 @@ options:
       values:
         create: true
         template: ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent.yaml
+        extension_templates:
+          multicomponent: ScriptLibrary/RunEnvironment/case_templates/extensions/multicomponent_foundation.yaml
         id: case0001
         label: multicomponent_foundation
         description: Multicomponent NSE stage-0 foundation
@@ -125,6 +127,8 @@ options:
       values:
         create: true
         template: ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_passive_scalar.yaml
+        extension_templates:
+          multicomponent: ScriptLibrary/RunEnvironment/case_templates/extensions/multicomponent_passive_scalar.yaml
         id: case0001
         label: passive_scalar
         description: Periodic conservative passive-scalar advection
@@ -138,6 +142,9 @@ options:
       values:
         create: true
         template: ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_inviscid.yaml
+        extension_templates:
+          multicomponent: ScriptLibrary/RunEnvironment/case_templates/extensions/multicomponent_inviscid.yaml
+          thermodynamics: ScriptLibrary/RunEnvironment/case_templates/extensions/thermodynamics_calorically_perfect.yaml
         id: case0001
         label: multispecies_sod
         description: Non-reacting inviscid multicomponent Sod problem
@@ -151,6 +158,9 @@ options:
       values:
         create: true
         template: ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_thermally_perfect.yaml
+        extension_templates:
+          multicomponent: ScriptLibrary/RunEnvironment/case_templates/extensions/multicomponent_thermally_perfect.yaml
+          thermodynamics: ScriptLibrary/RunEnvironment/case_templates/extensions/thermodynamics_thermally_perfect.yaml
         id: case0001
         label: thermally_perfect_sod
         description: Thermally-perfect non-reacting multicomponent Sod problem
@@ -164,9 +174,30 @@ options:
       values:
         create: true
         template: ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_viscous.yaml
+        extension_templates:
+          multicomponent: ScriptLibrary/RunEnvironment/case_templates/extensions/multicomponent_viscous.yaml
+          thermodynamics: ScriptLibrary/RunEnvironment/case_templates/extensions/thermodynamics_thermally_perfect.yaml
+          transport: ScriptLibrary/RunEnvironment/case_templates/extensions/transport_mixture_averaged.yaml
         id: case0001
         label: viscous_species_wave
         description: Stage-4 multicomponent transport validation
+        project_name: NSEMulticomponentResearch
+        data_root: results
+    nse_multicomponent_reactor:
+      label: Multicomponent NSE stage-5 reactor
+      description: Adiabatic constant-volume homogeneous finite-rate chemistry.
+      requires:
+        model.name: nse_multicomponent
+      values:
+        create: true
+        template: ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_reactor.yaml
+        extension_templates:
+          multicomponent: ScriptLibrary/RunEnvironment/case_templates/extensions/multicomponent_reactor.yaml
+          thermodynamics: ScriptLibrary/RunEnvironment/case_templates/extensions/thermodynamics_one_step_reactor.yaml
+          chemistry: ScriptLibrary/RunEnvironment/case_templates/extensions/chemistry_one_step_arrhenius.yaml
+        id: case0001
+        label: homogeneous_reactor
+        description: Stage-5 adiabatic constant-volume finite-rate chemistry
         project_name: NSEMulticomponentResearch
         data_root: results
     gpe_quantum_taylor_green:

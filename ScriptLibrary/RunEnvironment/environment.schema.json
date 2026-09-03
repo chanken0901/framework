@@ -80,6 +80,13 @@
       "properties": {
         "create": {"type": "boolean"},
         "template": {"type": "string"},
+        "extension_templates": {
+          "type": "object",
+          "propertyNames": {
+            "enum": ["multicomponent", "thermodynamics", "transport", "chemistry"]
+          },
+          "additionalProperties": {"type": "string", "minLength": 1}
+        },
         "source": {"type": "string"},
         "id": {"type": ["string", "null"]},
         "label": {"type": "string"},

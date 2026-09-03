@@ -9,6 +9,7 @@ NSE（Navier-Stokes equations）およびGPE（Gross-Pitaevskii equation）の�
 - [学生向け FrameWork導入・Git開発手順書](学生向け_FrameWork導入・Git開発手順書.md)
 - [外部実行環境の生成・ビルド・実行](外部実行環境_生成・ビルド・実行手順書.md)
 - [Windows／Linuxコマンド対応表](docs/WINDOWS_LINUX_COMMANDS.md)
+- [case.yamlと拡張YAMLの使い方](ScriptLibrary/RunEnvironment/CASE_CONFIGURATION.md)
 
 ### 開発者・管理者
 

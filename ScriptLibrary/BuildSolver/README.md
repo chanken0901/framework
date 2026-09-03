@@ -80,7 +80,8 @@ python3 ./build_model.py ./build.yaml \
 Stage 0は状態レイアウトとprovider契約、Stage 1は一定速度場による保存形式の
 周期パッシブスカラー移流、Stage 2は共通γの非反応・非粘性多成分Euler方程式、
 Stage 3はNASA-7物性による温度・組成依存熱力学、Stage 4は混合平均拡散、
-Newton粘性、Fourier熱伝導を検証します。
+Newton粘性、Fourier熱伝導、Stage 5は断熱・定容0次元反応器の一段不可逆
+Arrhenius反応を検証します。
 
 | プロファイル | 内容 |
 |---|---|
@@ -89,6 +90,7 @@ Newton粘性、Fourier熱伝導を検証します。
 | `cpu_serial_inviscid` | 共通γ理想気体、Rusanov流束、非粘性多成分Sod問題 |
 | `cpu_serial_thermally_perfect` | NASA-7熱力学、温度反転、温度・組成依存の混合比熱比 |
 | `cpu_serial_viscous` | 混合平均species拡散、Newton粘性、Fourier熱伝導 |
+| `cpu_serial_reactor` | NASA-7生成エネルギー、一段Arrhenius反応、SSPRK3均質反応器 |
 
 ```powershell
 python .\build_model.py .\build.yaml `
@@ -165,6 +167,22 @@ python .\build_model.py .\build.yaml `
 python3 ./build_model.py ./build.yaml \
   --model nse_multicomponent \
   --profile cpu_serial_viscous \
+  --test
+```
+
+Stage 5のビルドと回帰試験:
+
+```powershell
+python .\build_model.py .\build.yaml `
+  --model nse_multicomponent `
+  --profile cpu_serial_reactor `
+  --test
+```
+
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model nse_multicomponent \
+  --profile cpu_serial_reactor \
   --test
 ```
 

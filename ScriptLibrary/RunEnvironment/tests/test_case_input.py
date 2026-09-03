@@ -287,6 +287,68 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
         case["output"]["filename"] = "multicomponent_viscous_final.csv"
         return case
 
+    @classmethod
+    def reactor_case(cls) -> dict:
+        case = cls.case()
+        case["physics"]["multicomponent"] = {
+            "mode": "homogeneous_reactor",
+            "species": ["fuel", "oxidizer", "product"],
+        }
+        species_data = {}
+        for name, formation_coefficient in (
+            ("fuel", 0.0),
+            ("oxidizer", 0.0),
+            ("product", -5000.0),
+        ):
+            coefficients = [3.5, 0.0, 0.0, 0.0, 0.0, formation_coefficient, 0.0]
+            species_data[name] = {
+                "molecular_weight": 28.0,
+                "temperature_midpoint": 1000.0,
+                "nasa7_low": coefficients,
+                "nasa7_high": coefficients,
+            }
+        case["thermodynamics"] = {
+            "model": "thermally_perfect",
+            "universal_gas_constant": 8314.46261815324,
+            "temperature_min": 200.0,
+            "temperature_max": 6000.0,
+            "species_data": species_data,
+        }
+        case["chemistry"] = {
+            "model": "one_step_arrhenius",
+            "reaction": {
+                "reactants": {"fuel": 1.0, "oxidizer": 1.0},
+                "products": {"product": 2.0},
+                "pre_exponential_factor": 1000.0,
+                "temperature_exponent": 0.0,
+                "activation_temperature": 2000.0,
+            },
+        }
+        case["flow"] = {
+            "type": "homogeneous_reactor",
+            "homogeneous_reactor": {
+                "density": 1.0,
+                "temperature": 1200.0,
+                "mass_fractions": {
+                    "fuel": 0.5,
+                    "oxidizer": 0.5,
+                    "product": 0.0,
+                },
+            },
+        }
+        case["time"] = {
+            "dt": 0.0,
+            "maximum_dt": 1.0e-3,
+            "chemistry_cfl": 0.1,
+            "nsteps": 100,
+        }
+        case["output"] = {
+            "write_history": True,
+            "output_every": 5,
+            "filename": "homogeneous_reactor.csv",
+        }
+        return case
+
     def test_renders_one_species_stage_zero_contract(self) -> None:
         text = render_nse_multicomponent(self.case())
 
@@ -481,6 +543,36 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
 
         with self.assertRaisesRegex(CaseInputError, "violates.*positivity"):
             render_nse_multicomponent(case, "cpu_serial_viscous")
+
+    def test_renders_stage_five_homogeneous_reactor_contract(self) -> None:
+        text = render_nse_multicomponent(
+            self.reactor_case(), "cpu_serial_reactor"
+        )
+
+        self.assertIn('simulation_mode = "homogeneous_reactor"', text)
+        self.assertIn('chemistry_model = "one_step_arrhenius"', text)
+        self.assertIn("&one_step_arrhenius", text)
+        self.assertIn("reactant_stoich = 1, 1, 0", text)
+        self.assertIn("product_stoich = 0, 0, 2", text)
+        self.assertIn("reaction_orders = 1, 1, 0", text)
+        self.assertIn("&homogeneous_reactor", text)
+        self.assertIn("initial_mass_fractions = 0.5, 0.5, 0", text)
+        self.assertIn("chemistry_cfl = 0.1", text)
+        self.assertIn('output_file = "homogeneous_reactor.csv"', text)
+
+    def test_stage_five_rejects_nonconservative_stoichiometry(self) -> None:
+        case = self.reactor_case()
+        case["chemistry"]["reaction"]["products"]["product"] = 1.0
+
+        with self.assertRaisesRegex(CaseInputError, "does not conserve mass"):
+            render_nse_multicomponent(case, "cpu_serial_reactor")
+
+    def test_stage_five_mass_fractions_are_named_and_complete(self) -> None:
+        case = self.reactor_case()
+        del case["flow"]["homogeneous_reactor"]["mass_fractions"]["product"]
+
+        with self.assertRaisesRegex(CaseInputError, "keys must exactly match"):
+            render_nse_multicomponent(case, "cpu_serial_reactor")
 
     def test_passive_scalar_rejects_unimplemented_scheme(self) -> None:
         case = self.case()

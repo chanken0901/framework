@@ -100,7 +100,8 @@ contains
         trim(config%simulation_mode) /= 'passive_scalar' .and. &
         trim(config%simulation_mode) /= 'inviscid_euler' .and. &
         trim(config%simulation_mode) /= 'thermally_perfect_euler' .and. &
-        trim(config%simulation_mode) /= 'viscous_navier_stokes') then
+        trim(config%simulation_mode) /= 'viscous_navier_stokes' .and. &
+        trim(config%simulation_mode) /= 'homogeneous_reactor') then
       error stop 'unsupported multicomponent simulation mode'
     end if
     if (len_trim(config%transport_model) == 0) then

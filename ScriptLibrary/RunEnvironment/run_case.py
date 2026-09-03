@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from case_configuration import CaseConfigurationError, resolve_case_configuration
 from global_case_index import (
     GlobalCaseIndexError,
     case_index_path,
@@ -69,9 +70,7 @@ def _resolve_case_profile(
     case_path = root / str(lock["case_directory"]) / "case.yaml"
     if not case_path.is_file():
         raise RunCaseError(f"case design not found: {case_path}")
-    case = load_yaml(case_path)
-    if not isinstance(case, dict):
-        raise RunCaseError(f"invalid case design: {case_path}")
+    case = resolve_case_configuration(case_path).document
     manifest_path = _model_manifest(root, str(lock["model"]))
     manifest = load_yaml(manifest_path)
     if not isinstance(manifest, dict):
@@ -114,13 +113,19 @@ def _prepare_input(
     case_dir = root / str(lock["case_directory"])
     case_path = case_dir / "case.yaml"
     input_path = case_dir / str(lock["input_name"])
+    resolved_path = case_dir / "resolved_case.yaml"
     if not case_path.is_file():
         raise RunCaseError(f"case design not found: {case_path}")
 
+    configuration = resolve_case_configuration(case_path)
     stale = (
         force
         or not input_path.is_file()
-        or case_path.stat().st_mtime_ns > input_path.stat().st_mtime_ns
+        or (bool(configuration.extension_paths) and not resolved_path.is_file())
+        or any(
+            source.stat().st_mtime_ns > input_path.stat().st_mtime_ns
+            for source in configuration.source_paths
+        )
     )
     if not stale:
         return input_path
@@ -160,9 +165,7 @@ def _case_parallel_settings(
     case_path = root / str(lock["case_directory"]) / "case.yaml"
     if not case_path.is_file():
         raise RunCaseError(f"case design not found: {case_path}")
-    case = load_yaml(case_path)
-    if not isinstance(case, dict):
-        raise RunCaseError(f"invalid case design: {case_path}")
+    case = resolve_case_configuration(case_path).document
     solver = case.get("solver", {})
     if not isinstance(solver, dict):
         raise RunCaseError("case solver section must be a YAML mapping")
@@ -378,6 +381,7 @@ def main() -> int:
         OSError,
         RunCaseError,
         GlobalCaseIndexError,
+        CaseConfigurationError,
         YamlFormatError,
         json.JSONDecodeError,
     ) as exc:

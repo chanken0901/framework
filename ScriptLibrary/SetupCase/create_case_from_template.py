@@ -240,6 +240,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cases-root", default="cases")
     parser.add_argument("--case-index", default=None)
     parser.add_argument("--template", default="templates/case_template.yaml")
+    parser.add_argument(
+        "--config-template",
+        action="append",
+        default=[],
+        metavar="SOURCE=DESTINATION",
+        help=(
+            "Render an extension template into the case directory; repeat for "
+            "each extension required by case.yaml"
+        ),
+    )
     parser.add_argument("--case-id", default=None)
     parser.add_argument("--label", default="baseline")
     parser.add_argument("--description", default="")
@@ -262,6 +272,57 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
 
     return parser.parse_args()
+
+
+def render_config_templates(
+    specifications: list[str],
+    mapping: dict[str, str],
+    case_dir: Path,
+) -> list[tuple[Path, Path, str]]:
+    """Validate and render repeatable SOURCE=DESTINATION sidecar templates."""
+
+    rendered: list[tuple[Path, Path, str]] = []
+    destinations: set[Path] = set()
+    case_root = case_dir.resolve()
+    for specification in specifications:
+        source_text, separator, destination_text = specification.partition("=")
+        if not separator or not source_text.strip() or not destination_text.strip():
+            raise ValueError(
+                "--config-template must use SOURCE=DESTINATION with non-empty paths"
+            )
+        source = Path(source_text.strip())
+        if not source.is_file():
+            raise ValueError(f"config template not found: {source}")
+        relative = Path(destination_text.strip())
+        if relative.is_absolute():
+            raise ValueError(
+                f"config template destination must be relative: {destination_text}"
+            )
+        destination = (case_root / relative).resolve()
+        try:
+            destination.relative_to(case_root)
+        except ValueError as exc:
+            raise ValueError(
+                f"config template destination escapes the case directory: "
+                f"{destination_text}"
+            ) from exc
+        if destination.name in {"case.yaml", "resolved_case.yaml", "notes.md"}:
+            raise ValueError(
+                f"config template destination is reserved: {destination_text}"
+            )
+        if destination.suffix.lower() not in {".yaml", ".yml"}:
+            raise ValueError(
+                f"config template destination must end in .yaml or .yml: "
+                f"{destination_text}"
+            )
+        if destination in destinations:
+            raise ValueError(
+                f"duplicate config template destination: {destination_text}"
+            )
+        destinations.add(destination)
+        text = replace_placeholders(source.read_text(encoding="utf-8"), mapping)
+        rendered.append((source, destination, text))
+    return rendered
 
 
 def main() -> int:
@@ -302,6 +363,13 @@ def main() -> int:
 
     template_text = template_path.read_text(encoding="utf-8")
     case_yaml_text = replace_placeholders(template_text, mapping)
+    try:
+        config_documents = render_config_templates(
+            args.config_template, mapping, case_dir
+        )
+    except (OSError, ValueError) as exc:
+        print(f"[ERROR] {exc}")
+        return 1
 
     print("[INFO] Create case from template")
     print(f"  case_id:           {case_id}")
@@ -309,11 +377,17 @@ def main() -> int:
     print(f"  template:          {template_path}")
     print(f"  case_dir:          {case_dir}")
     print(f"  raw_data_location: {raw_data_location}")
+    for source, destination, _ in config_documents:
+        print(f"  config:            {source} -> {destination}")
 
     if args.dry_run:
         print("[DRY-RUN] No files were created.")
         print("")
         print(case_yaml_text)
+        for _, destination, text in config_documents:
+            print("")
+            print(f"# {destination.relative_to(case_dir.resolve())}")
+            print(text)
         return 0
 
     if case_dir.exists() and not args.overwrite:
@@ -331,6 +405,9 @@ def main() -> int:
         return 1
 
     case_yaml_path.write_text(case_yaml_text, encoding="utf-8")
+    for _, destination, text in config_documents:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(text, encoding="utf-8")
 
     if not notes_path.exists() or args.overwrite:
         notes_path.write_text(NOTES_TEMPLATE.format(case_id=case_id), encoding="utf-8")
@@ -339,6 +416,8 @@ def main() -> int:
 
     print("[OK] Case created.")
     print(f"  case.yaml: {case_yaml_path}")
+    for _, destination, _ in config_documents:
+        print(f"  config:    {destination}")
     print(f"  notes.md:  {notes_path}")
     print(f"  index:     {case_index}")
     print("")

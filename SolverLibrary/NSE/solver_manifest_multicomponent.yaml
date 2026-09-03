@@ -1,4 +1,4 @@
-# Additive multicomponent foundation through stage-4 transport.
+# Additive multicomponent foundation through stage-5 homogeneous chemistry.
 # The production single-component NSE remains in solver_manifest.yaml.
 schema_version: 1
 solver_id: nse_multicomponent
@@ -53,6 +53,11 @@ components:
     files:
       - src/extensions/multicomponent/providers/mod_mc_chemistry_none.f90
 
+  chemistry_one_step_arrhenius:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/providers/mod_mc_chemistry_one_step_arrhenius.f90
+
   main_foundation:
     cmake_role: executable
     files:
@@ -95,6 +100,17 @@ components:
     files:
       - src/extensions/multicomponent/main_nse_multicomponent_viscous.f90
 
+  reactor_core:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/mod_mc_reactor_config.f90
+      - src/extensions/multicomponent/mod_mc_reactor_solver.f90
+
+  main_reactor:
+    cmake_role: executable
+    files:
+      - src/extensions/multicomponent/main_nse_multicomponent_reactor.f90
+
   foundation_tests:
     files:
       - tests/test_multicomponent_foundation.f90
@@ -119,6 +135,11 @@ components:
     files:
       - tests/test_multicomponent_viscous.f90
       - tests/input_multicomponent_viscous.dat
+
+  reactor_tests:
+    files:
+      - tests/test_multicomponent_reactor.f90
+      - tests/input_multicomponent_reactor.dat
 
   foundation_docs:
     files:
@@ -299,3 +320,39 @@ profiles:
       NSE_INIT_FFT_BACKEND: none
       NSE_FORCING_FFT_BACKEND: none
       NSE_TEST_SUITE: multicomponent_viscous
+
+  cpu_serial_reactor:
+    description: Stage-5 adiabatic constant-volume homogeneous finite-rate chemistry
+    capabilities:
+      - multicomponent_foundation
+      - homogeneous_constant_volume_reactor
+      - thermally_perfect_ideal_gas_mixture
+      - nasa7_thermodynamics
+      - one_step_irreversible_arrhenius
+      - conservative_mass_and_energy
+      - ssprk3
+    components:
+      - foundation_core
+      - thermodynamics_thermally_perfect
+      - transport_none
+      - chemistry_one_step_arrhenius
+      - reactor_core
+      - foundation_docs
+      - main_reactor
+    test_components:
+      - foundation_tests
+      - reactor_tests
+    executable: nse_multicomponent
+    execution:
+      use_mpi: false
+      use_openmp: false
+    cmake:
+      NSE_USE_MPI: false
+      NSE_ENABLE_OPENMP: false
+      NSE_GPU_BACKEND: none
+      NSE_CONVECTIVE_BACKEND: runtime
+      NSE_VISCOUS_SCHEME: none
+      NSE_BOUNDARY_SCHEME: periodic
+      NSE_INIT_FFT_BACKEND: none
+      NSE_FORCING_FFT_BACKEND: none
+      NSE_TEST_SUITE: multicomponent_reactor

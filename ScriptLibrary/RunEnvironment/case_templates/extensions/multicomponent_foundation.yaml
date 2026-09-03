@@ -1,0 +1,8 @@
+schema_version: 1
+extension: multicomponent
+config:
+  mode: foundation
+  # Stage 0 verifies the one-species reduction. Additional species transport
+  # is introduced in stage 1 and stage 2.
+  species:
+    - mixture

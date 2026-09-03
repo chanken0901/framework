@@ -1,0 +1,13 @@
+schema_version: 1
+extension: transport
+config:
+  model: mixture_averaged
+  # Constant reference viscosity and species diffusivities; k = mu*cp/Pr.
+  # SI units: reference_dynamic_viscosity [Pa s], diffusivity [m2/s].
+  reference_dynamic_viscosity: 1.8e-5
+  prandtl_number: 0.72
+  species_data:
+    N2:
+      diffusivity: 2.0e-5
+    O2:
+      diffusivity: 2.0e-5

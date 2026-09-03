@@ -16,6 +16,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from case_configuration import (
+    EXTENSION_TARGETS,
+    CaseConfigurationError,
+    resolve_case_configuration,
+)
 from case_input import CaseInputError, _profile_settings, render_case_input
 from environment_options import (
     OPTION_CATEGORIES,
@@ -57,6 +62,29 @@ CPP_IDENTIFIER_PATTERN = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 
 class EnvironmentError(RuntimeError):
     """Raised when an execution environment cannot be generated safely."""
+
+
+def _extension_templates(case_cfg: dict[str, Any]) -> dict[str, str]:
+    raw = case_cfg.get("extension_templates", {})
+    if raw is None:
+        return {}
+    templates = _mapping(raw, "case.extension_templates")
+    result: dict[str, str] = {}
+    for raw_name, raw_path in templates.items():
+        name = str(raw_name).strip().lower()
+        if name != raw_name or name not in EXTENSION_TARGETS:
+            choices = ", ".join(sorted(EXTENSION_TARGETS))
+            raise EnvironmentError(
+                f"unsupported case extension template {raw_name!r}; "
+                f"supported extensions: {choices}"
+            )
+        path = str(raw_path).strip()
+        if not path:
+            raise EnvironmentError(
+                f"case.extension_templates.{name} must be a source path"
+            )
+        result[name] = path
+    return result
 
 
 def _cpp_condition(expression: str, defines: set[str], label: str) -> bool:
@@ -884,6 +912,7 @@ def _create_case(
     cases_root = temporary / "cases"
     cases_root.mkdir(parents=True, exist_ok=True)
     create = bool(case_cfg.get("create", True))
+    extension_templates = _extension_templates(case_cfg)
     if create:
         generator = (
             temporary
@@ -928,6 +957,13 @@ def _create_case(
         )
         if case_cfg.get("id"):
             command.extend(["--case-id", str(case_cfg["id"])])
+        for name in extension_templates:
+            command.extend(
+                [
+                    "--config-template",
+                    f"templates/extensions/{name}.yaml=config/{name}.yaml",
+                ]
+            )
         result = subprocess.run(command, cwd=str(temporary), check=False)
         if result.returncode != 0:
             raise EnvironmentError("SetupCase/create_case_from_template.py failed")
@@ -940,17 +976,29 @@ def _create_case(
         source = _expand_path(source_text, design_path.parent, "case.source")
         if not source.is_file():
             raise EnvironmentError(f"case source not found: {source}")
-        case_document = _mapping(load_yaml(source), "source case YAML")
+        try:
+            source_configuration = resolve_case_configuration(source)
+        except CaseConfigurationError as exc:
+            raise EnvironmentError(str(exc)) from exc
+        case_document = source_configuration.document
         case_id = str(case_document.get("case_id") or case_cfg.get("id") or "")
         if not case_id:
             raise EnvironmentError("source case YAML has no case_id")
         case_dir = cases_root / case_id
         case_dir.mkdir(parents=True)
         shutil.copy2(source, case_dir / "case.yaml")
+        for extension_path in source_configuration.extension_paths.values():
+            relative = extension_path.relative_to(source.parent.resolve())
+            destination = case_dir / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(extension_path, destination)
         (case_dir / "notes.md").write_text(f"# Notes for {case_id}\n", encoding="utf-8")
 
     case_path = cases_root / case_id / "case.yaml"
-    case_document = _mapping(load_yaml(case_path), "generated case YAML")
+    try:
+        case_document = resolve_case_configuration(case_path).document
+    except CaseConfigurationError as exc:
+        raise EnvironmentError(str(exc)) from exc
     local_manifest = _mapping(load_yaml(manifest_path), "solver manifest")
     try:
         effective_profile, _ = select_case_profile(
@@ -966,7 +1014,11 @@ def _create_case(
     except ProfileSelectionError as exc:
         raise EnvironmentError(str(exc)) from exc
     input_name, input_text = render_case_input(
-        case_path, manifest_path, model, effective_profile
+        case_path,
+        manifest_path,
+        model,
+        effective_profile,
+        write_resolved=True,
     )
     (case_path.parent / input_name).write_text(input_text, encoding="ascii")
     return case_id, input_name
@@ -1180,6 +1232,11 @@ def prepare(args: argparse.Namespace) -> Path:
     template_relative = str(case_cfg.get("template") or "")
     if bool(case_cfg.get("create", True)) and not template_relative:
         raise EnvironmentError("case.template is required when case.create is true")
+    extension_template_paths = _extension_templates(case_cfg)
+    if not bool(case_cfg.get("create", True)) and extension_template_paths:
+        raise EnvironmentError(
+            "case.extension_templates is only valid when case.create is true"
+        )
 
     execution = _mapping(design.get("execution", {}), "execution")
     parallel_jobs = int(execution.get("parallel_jobs", 8))
@@ -1270,6 +1327,7 @@ def prepare(args: argparse.Namespace) -> Path:
             "run_case.py",
             "postprocess_case.py",
             "case_input.py",
+            "case_configuration.py",
             "global_case_index.py",
             "profile_selection.py",
             "yaml_support.py",
@@ -1300,6 +1358,24 @@ def prepare(args: argparse.Namespace) -> Path:
                 framework_root,
                 "case_template",
             )
+            for extension_name, extension_relative in (
+                extension_template_paths.items()
+            ):
+                extension_path = _safe_source(
+                    framework_root,
+                    extension_relative,
+                    f"case.extension_templates.{extension_name}",
+                )
+                _copy_file(
+                    extension_path,
+                    temporary
+                    / "templates"
+                    / "extensions"
+                    / f"{extension_name}.yaml",
+                    source_records,
+                    framework_root,
+                    "case_extension_template",
+                )
 
         local_design = _local_build_design(
             model,

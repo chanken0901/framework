@@ -9,6 +9,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from case_configuration import (
+    CaseConfigurationError,
+    resolve_case_configuration,
+    write_resolved_case,
+)
 from yaml_support import YamlFormatError, load_yaml
 
 
@@ -1842,8 +1847,8 @@ def render_nse(
     if nse.get("time_integrator") in {"rk3", "ssp_rk3", "ssp-rk3"}:
         nse["time_integrator"] = "ssprk3"
     lines = [
-        "! Automatically generated from case.yaml.",
-        "! Edit case.yaml and regenerate this file.",
+        "! Automatically generated from case.yaml and referenced extensions.",
+        "! Edit the YAML sources and regenerate this file.",
         "",
         "&simulation",
     ]
@@ -1874,8 +1879,8 @@ def render_gpe(
         ]
     )
     lines = [
-        "! Automatically generated from case.yaml.",
-        "! Edit case.yaml and regenerate this file.",
+        "! Automatically generated from case.yaml and referenced extensions.",
+        "! Edit the YAML sources and regenerate this file.",
         "",
         "&simulation",
     ]
@@ -2080,6 +2085,211 @@ def _mixture_averaged_transport_settings(
     }
 
 
+def _named_species_coefficients(
+    value: Any,
+    label: str,
+    species: list[str],
+    *,
+    expected_names: set[str] | None = None,
+) -> list[float]:
+    coefficients = _mapping(value, label)
+    if not coefficients:
+        raise CaseInputError(f"{label} must contain at least one species")
+    names = {str(name) for name in coefficients}
+    unknown = sorted(names - set(species))
+    if unknown:
+        raise CaseInputError(
+            f"{label} contains species not listed in "
+            f"physics.multicomponent.species: {unknown}"
+        )
+    if expected_names is not None and names != expected_names:
+        raise CaseInputError(
+            f"{label} keys must exactly match the reaction reactants"
+        )
+    result = [0.0] * len(species)
+    for name, coefficient in coefficients.items():
+        species_name = str(name)
+        result[species.index(species_name)] = _positive_float(
+            coefficient, f"{label}.{species_name}"
+        )
+    return result
+
+
+def _one_step_arrhenius_settings(
+    chemistry: dict[str, Any],
+    species: list[str],
+    molecular_weights: list[float],
+) -> dict[str, Any]:
+    reaction = _mapping(chemistry.get("reaction"), "chemistry.reaction")
+    reactants_value = _mapping(
+        reaction.get("reactants"), "chemistry.reaction.reactants"
+    )
+    products_value = _mapping(
+        reaction.get("products"), "chemistry.reaction.products"
+    )
+    reactant_names = {str(name) for name in reactants_value}
+    product_names = {str(name) for name in products_value}
+    overlap = sorted(reactant_names & product_names)
+    if overlap:
+        raise CaseInputError(
+            "chemistry.reaction does not support species on both sides: "
+            f"{overlap}"
+        )
+    reactant_stoich = _named_species_coefficients(
+        reactants_value,
+        "chemistry.reaction.reactants",
+        species,
+    )
+    product_stoich = _named_species_coefficients(
+        products_value,
+        "chemistry.reaction.products",
+        species,
+    )
+    orders_value = reaction.get("orders")
+    if orders_value is None:
+        reaction_orders = reactant_stoich.copy()
+    else:
+        reaction_orders = _named_species_coefficients(
+            orders_value,
+            "chemistry.reaction.orders",
+            species,
+            expected_names=reactant_names,
+        )
+
+    reactant_mass = sum(
+        molecular_weights[index] * reactant_stoich[index]
+        for index in range(len(species))
+    )
+    product_mass = sum(
+        molecular_weights[index] * product_stoich[index]
+        for index in range(len(species))
+    )
+    mass_scale = max(reactant_mass + product_mass, 1.0)
+    if abs(product_mass - reactant_mass) > 1.0e-12 * mass_scale:
+        raise CaseInputError(
+            "chemistry.reaction stoichiometry does not conserve mass when "
+            "combined with thermodynamics molecular weights"
+        )
+
+    return {
+        "chemistry_species_names": species,
+        "reactant_stoich": reactant_stoich,
+        "product_stoich": product_stoich,
+        "reaction_orders": reaction_orders,
+        "pre_exponential_factor": _positive_float(
+            reaction.get("pre_exponential_factor"),
+            "chemistry.reaction.pre_exponential_factor",
+        ),
+        "temperature_exponent": _finite_float(
+            reaction.get("temperature_exponent", 0.0),
+            "chemistry.reaction.temperature_exponent",
+        ),
+        "activation_temperature": _positive_float(
+            reaction.get("activation_temperature", 0.0),
+            "chemistry.reaction.activation_temperature",
+            allow_zero=True,
+        ),
+    }
+
+
+def _homogeneous_reactor_settings(
+    case: dict[str, Any],
+    species: list[str],
+    thermally_perfect: dict[str, Any],
+) -> dict[str, Any]:
+    flow = _mapping(nested(case, "flow", {}), "flow")
+    flow_type = _canonical_selector(str(flow.get("type", "")))
+    if flow_type != "homogeneous_reactor":
+        raise CaseInputError("stage-5 requires flow.type='homogeneous_reactor'")
+    initial = _mapping(
+        nested(case, "flow.homogeneous_reactor", {}),
+        "flow.homogeneous_reactor",
+    )
+    density = _positive_float(
+        initial.get("density"), "flow.homogeneous_reactor.density"
+    )
+    temperature = _positive_float(
+        initial.get("temperature"), "flow.homogeneous_reactor.temperature"
+    )
+    if not (
+        thermally_perfect["temperature_min"]
+        <= temperature
+        <= thermally_perfect["temperature_max"]
+    ):
+        raise CaseInputError(
+            "flow.homogeneous_reactor.temperature is outside the configured "
+            "thermodynamics temperature range"
+        )
+    fractions_value = _mapping(
+        initial.get("mass_fractions"),
+        "flow.homogeneous_reactor.mass_fractions",
+    )
+    if set(fractions_value) != set(species):
+        raise CaseInputError(
+            "flow.homogeneous_reactor.mass_fractions keys must exactly match "
+            "physics.multicomponent.species"
+        )
+    fractions = [
+        _positive_float(
+            fractions_value[name],
+            f"flow.homogeneous_reactor.mass_fractions.{name}",
+            allow_zero=True,
+        )
+        for name in species
+    ]
+    if abs(sum(fractions) - 1.0) > 1.0e-12:
+        raise CaseInputError(
+            "flow.homogeneous_reactor.mass_fractions must sum to one"
+        )
+
+    time = _mapping(nested(case, "time", {}), "time")
+    dt = _positive_float(time.get("dt", 0.0), "time.dt", allow_zero=True)
+    maximum_dt = _positive_float(
+        time.get("maximum_dt", 1.0e-3), "time.maximum_dt"
+    )
+    if dt > maximum_dt:
+        raise CaseInputError("time.dt must not exceed time.maximum_dt")
+    chemistry_cfl = _positive_float(
+        time.get("chemistry_cfl", 0.1), "time.chemistry_cfl"
+    )
+    if chemistry_cfl > 1.0:
+        raise CaseInputError("time.chemistry_cfl must not exceed one")
+    nsteps = time.get("nsteps")
+    if isinstance(nsteps, bool) or not isinstance(nsteps, int) or nsteps < 0:
+        raise CaseInputError("time.nsteps must be a non-negative integer")
+
+    output = _mapping(nested(case, "output", {}), "output")
+    output_every = output.get("output_every", 1)
+    if (
+        isinstance(output_every, bool)
+        or not isinstance(output_every, int)
+        or output_every < 1
+    ):
+        raise CaseInputError("output.output_every must be a positive integer")
+    write_history = output.get("write_history", True)
+    if not isinstance(write_history, bool):
+        raise CaseInputError("output.write_history must be true or false")
+    output_file = str(
+        output.get("filename", "homogeneous_reactor.csv")
+    ).strip()
+    if write_history and not output_file:
+        raise CaseInputError("output.filename must not be empty")
+
+    return {
+        "reactor_species_names": species,
+        "initial_density": density,
+        "initial_temperature": temperature,
+        "initial_mass_fractions": fractions,
+        "dt": dt,
+        "maximum_dt": maximum_dt,
+        "chemistry_cfl": chemistry_cfl,
+        "nsteps": nsteps,
+        "output_every": output_every,
+        "write_history": write_history,
+        "output_file": output_file,
+    }
+
+
 def render_nse_multicomponent(
     case: dict[str, Any], profile_name: str | None = None
 ) -> str:
@@ -2109,11 +2319,12 @@ def render_nse_multicomponent(
         "inviscid_euler",
         "thermally_perfect_euler",
         "viscous_navier_stokes",
+        "homogeneous_reactor",
     }:
         raise CaseInputError(
             "physics.multicomponent.mode must be foundation, passive_scalar, "
             "inviscid_euler, thermally_perfect_euler, or "
-            "viscous_navier_stokes"
+            "viscous_navier_stokes, or homogeneous_reactor"
         )
     if simulation_mode == "passive_scalar" and len(species) < 2:
         raise CaseInputError(
@@ -2125,6 +2336,7 @@ def render_nse_multicomponent(
         "cpu_serial_inviscid": "inviscid_euler",
         "cpu_serial_thermally_perfect": "thermally_perfect_euler",
         "cpu_serial_viscous": "viscous_navier_stokes",
+        "cpu_serial_reactor": "homogeneous_reactor",
     }
     if profile_name in expected_modes and simulation_mode != expected_modes[profile_name]:
         raise CaseInputError(
@@ -2149,6 +2361,7 @@ def render_nse_multicomponent(
         if simulation_mode in {
             "thermally_perfect_euler",
             "viscous_navier_stokes",
+            "homogeneous_reactor",
         }
         else "calorically_perfect"
     )
@@ -2159,7 +2372,11 @@ def render_nse_multicomponent(
             if simulation_mode == "viscous_navier_stokes"
             else "none"
         ),
-        "chemistry": "none",
+        "chemistry": (
+            "one_step_arrhenius"
+            if simulation_mode == "homogeneous_reactor"
+            else "none"
+        ),
     }
     for category, expected in supported.items():
         if models[category] != expected:
@@ -2178,9 +2395,12 @@ def render_nse_multicomponent(
         "viscous_navier_stokes": (
             "Stage-4 thermally-perfect multicomponent Navier-Stokes"
         ),
+        "homogeneous_reactor": (
+            "Stage-5 homogeneous finite-rate chemistry reactor"
+        ),
     }
     lines = [
-        "! Automatically generated from case.yaml.",
+        "! Automatically generated from case.yaml and referenced extensions.",
         f"! {stage_names[simulation_mode]}.",
         "",
         "&multicomponent",
@@ -2202,6 +2422,7 @@ def render_nse_multicomponent(
     if simulation_mode in {
         "thermally_perfect_euler",
         "viscous_navier_stokes",
+        "homogeneous_reactor",
     }:
         thermally_perfect = _thermally_perfect_settings(
             thermodynamics, species
@@ -2216,6 +2437,27 @@ def render_nse_multicomponent(
         )
         lines.append("&mixture_averaged_transport")
         _append(lines, list(mixture_transport.items()))
+        lines.extend(["/", ""])
+
+    if simulation_mode == "homogeneous_reactor":
+        if thermally_perfect is None:
+            raise CaseInputError(
+                "stage-5 homogeneous reactor requires thermally-perfect data"
+            )
+        chemistry_settings = _one_step_arrhenius_settings(
+            chemistry,
+            species,
+            thermally_perfect["molecular_weights"],
+        )
+        lines.append("&one_step_arrhenius")
+        _append(lines, list(chemistry_settings.items()))
+        lines.extend(["/", ""])
+
+        reactor_settings = _homogeneous_reactor_settings(
+            case, species, thermally_perfect
+        )
+        lines.append("&homogeneous_reactor")
+        _append(lines, list(reactor_settings.items()))
         lines.extend(["/", ""])
 
     if simulation_mode == "passive_scalar":
@@ -2663,8 +2905,11 @@ def render_case_input(
     manifest_path: Path,
     model: str,
     profile_name: str,
+    *,
+    write_resolved: bool = False,
 ) -> tuple[str, str]:
-    case = _mapping(load_yaml(case_path), "case YAML")
+    configuration = resolve_case_configuration(case_path)
+    case = configuration.document
     manifest = _mapping(load_yaml(manifest_path), "solver manifest")
     actual_model = str(nested(case, "physics.model", model)).strip().lower()
     allowed_models = {model.lower()}
@@ -2679,18 +2924,25 @@ def render_case_input(
     input_name = str(input_cfg.get("default_name") or "input.dat")
     if model.lower() == "nse":
         runtime_root = manifest_path.parent.parent.parent
-        return input_name, render_nse(
-            case,
-            manifest,
-            profile_name,
-            case_dir=case_path.parent,
-            runtime_root=runtime_root,
+        result = (
+            input_name,
+            render_nse(
+                case,
+                manifest,
+                profile_name,
+                case_dir=case_path.parent,
+                runtime_root=runtime_root,
+            ),
         )
-    if model.lower() == "gpe":
-        return input_name, render_gpe(case, manifest, profile_name)
-    if model.lower() == "nse_multicomponent":
-        return input_name, render_nse_multicomponent(case, profile_name)
-    raise CaseInputError(f"unsupported model: {model}")
+    elif model.lower() == "gpe":
+        result = input_name, render_gpe(case, manifest, profile_name)
+    elif model.lower() == "nse_multicomponent":
+        result = input_name, render_nse_multicomponent(case, profile_name)
+    else:
+        raise CaseInputError(f"unsupported model: {model}")
+    if write_resolved:
+        write_resolved_case(configuration)
+    return result
 
 
 def parse_args() -> argparse.Namespace:
@@ -2723,10 +2975,12 @@ def main() -> int:
         output = Path(args.output).resolve() if args.output else case_path.parent / input_name
         if output.exists() and not args.overwrite:
             raise CaseInputError(f"output already exists; use --overwrite: {output}")
+        write_resolved_case(resolve_case_configuration(case_path))
         output.write_text(text, encoding="ascii")
+        print(f"[OK] Generated resolved case: {case_path.parent / 'resolved_case.yaml'}")
         print(f"[OK] Generated solver input: {output}")
         return 0
-    except (CaseInputError, YamlFormatError, OSError) as exc:
+    except (CaseConfigurationError, CaseInputError, YamlFormatError, OSError) as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 1
 

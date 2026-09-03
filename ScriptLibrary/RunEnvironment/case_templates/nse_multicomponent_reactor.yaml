@@ -14,6 +14,25 @@ physics:
 
 extensions:
   multicomponent: config/multicomponent.yaml
+  thermodynamics: config/thermodynamics.yaml
+  chemistry: config/chemistry.yaml
+
+flow:
+  type: homogeneous_reactor
+  homogeneous_reactor:
+    density: 1.0
+    temperature: 1200.0
+    mass_fractions:
+      fuel: 0.5
+      oxidizer: 0.5
+      product: 0.0
+
+time:
+  # dt=0 selects the chemistry-CFL timestep, capped by maximum_dt.
+  dt: 0.0
+  maximum_dt: 1.0e-3
+  chemistry_cfl: 0.1
+  nsteps: 100
 
 solver:
   profile: {{solver_profile}}
@@ -24,8 +43,9 @@ solver:
   omp_threads: {{omp_threads}}
 
 output:
-  directory: output
-  format: slf
+  write_history: true
+  output_every: 1
+  filename: homogeneous_reactor.csv
 
 storage:
   raw_data_location: {{raw_data_location}}

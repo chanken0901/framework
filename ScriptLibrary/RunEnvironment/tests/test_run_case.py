@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import copy
 import io
+import os
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -224,6 +226,55 @@ class RunCasePrepareTests(unittest.TestCase):
             output = _prepare_input(root, lock, force=False, dry_run=False)
 
             self.assertEqual(output.read_text(encoding="ascii"), "current")
+
+    def test_newer_extension_regenerates_solver_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            case_dir = root / "cases" / "case0001"
+            tools_dir = root / "tools"
+            build_dir = root / "ScriptLibrary" / "BuildSolver"
+            solver_dir = root / "SolverLibrary" / "GPE" / "gp3d"
+            for path in (case_dir, tools_dir, build_dir, solver_dir):
+                path.mkdir(parents=True, exist_ok=True)
+            case_path = case_dir / "case.yaml"
+            extension_path = case_dir / "chemistry.yaml"
+            input_path = case_dir / "input.nml"
+            case_path.write_text(
+                "schema_version: 2\nphysics:\n  model: gpe\n"
+                "extensions:\n  chemistry: chemistry.yaml\n",
+                encoding="utf-8",
+            )
+            extension_path.write_text(
+                "schema_version: 1\nextension: chemistry\n"
+                "config:\n  model: none\n",
+                encoding="utf-8",
+            )
+            input_path.write_text("old", encoding="ascii")
+            current = input_path.stat().st_mtime_ns
+            os.utime(extension_path, ns=(current + 1_000_000_000,) * 2)
+            (tools_dir / "case_input.py").write_text("", encoding="utf-8")
+            (solver_dir / "solver_manifest.yaml").write_text(
+                "schema_version: 1\n", encoding="utf-8"
+            )
+            (build_dir / "model_catalog.yaml").write_text(
+                "schema_version: 1\nmodels:\n  gpe:\n"
+                "    library_subpath: GPE/gp3d\n"
+                "    manifest: solver_manifest.yaml\n",
+                encoding="utf-8",
+            )
+            lock = {
+                "case_directory": "cases/case0001",
+                "input_name": "input.nml",
+                "model": "gpe",
+                "profile": "cuda_single",
+            }
+
+            with patch(
+                "run_case.subprocess.run", return_value=SimpleNamespace(returncode=0)
+            ) as run:
+                _prepare_input(root, lock, force=False, dry_run=False)
+
+            run.assert_called_once()
 
     def test_parallel_settings_follow_case_yaml(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

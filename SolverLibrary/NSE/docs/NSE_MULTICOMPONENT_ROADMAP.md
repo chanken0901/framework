@@ -1,6 +1,6 @@
 # NSE多成分・反応流拡張仕様
 
-更新日: 2026-09-02
+更新日: 2026-09-03
 
 ## 1. 目的と実装状態
 
@@ -16,6 +16,7 @@
 | `nse_multicomponent` | `cpu_serial_inviscid` | Stage 2非反応・非粘性多成分流 |
 | `nse_multicomponent` | `cpu_serial_thermally_perfect` | Stage 3温度・組成依存熱力学 |
 | `nse_multicomponent` | `cpu_serial_viscous` | Stage 4拡散・粘性・熱伝導 |
+| `nse_multicomponent` | `cpu_serial_reactor` | Stage 5 0次元有限反応速度化学 |
 
 多成分profileの実行ファイル名はすべて`nse_multicomponent`である。profileごとに
 main programとコンパイル対象を切り替えるため、各Stageの実行内容は混在しない。
@@ -110,7 +111,7 @@ dt = CFL / max_cells[
 
 Stage 3はStage 2と同じ非反応・非粘性Euler方程式を解き、熱力学providerを
 `thermally_perfect`へ交換する。各speciesについて分子量とNASA-7係数の低温・高温域を
-`case.yaml`へ指定する。係数配列は`physics.multicomponent.species`の名前をキーにするため、
+`config/thermodynamics.yaml`へ指定する。係数配列は`physics.multicomponent.species`の名前をキーにするため、
 化学種の並び順を変更しても別speciesの物性を誤って割り当てない。
 
 ```text
@@ -180,7 +181,49 @@ dt_diff   = diffusion_cfl /
 質量分率に逆符号の正弦波を加える。これは拡散による振幅減衰、成分流束和ゼロ、
 周期領域の保存性を分離して確認するための初期条件である。
 
-## 7. 保存変数
+## 7. Stage 5: 0次元有限反応速度化学
+
+Stage 5は流体輸送と化学反応を分離して検証する、断熱・定容の0次元均質反応器である。
+保存状態はStage 0--4と同じで、化学反応源だけをSSPRK3で時間積分する。
+
+```text
+d(rho_s)/dt = omega_s
+d(rho u)/dt = 0
+d(rho E)/dt = 0
+```
+
+最初の反応providerは一段不可逆Arrhenius反応である。`C_s=rho_s/W_s`を
+kmol/m3単位のモル濃度とすると、進行速度と質量生成速度は次式になる。
+
+```text
+q = A T^beta exp(-Ta/T) product_s(C_s^alpha_s)
+omega_s = W_s (nu_product,s - nu_reactant,s) q
+```
+
+`A`の単位は総反応次数に依存する。`Ta`は活性化温度[K]であり、活性化エネルギーを
+指定する場合は`Ta=Ea/Ru`へ変換する。指数計算はlog空間で評価し、非常に小さい
+反応速度は明示的にゼロへ丸める。これにより正常な低反応速度で
+`IEEE_UNDERFLOW_FLAG`や`IEEE_DENORMAL`を発生させない。
+
+反応式はspecies名をキーにして入力する。入力生成時とFortran初期化時の両方で、
+speciesの存在、反応物と生成物の分離、係数の非負性、分子量を含む質量保存を検査する。
+`orders`を省略すると反応物の量論係数を反応次数として使う。
+
+自動時間刻みは、消費されるspeciesが負にならないためのdepletion時間を使う。
+
+```text
+dt = min(maximum_dt, chemistry_cfl * min_s[rho_s/(-omega_s)])
+```
+
+`dt: 0.0`でこの自動刻みを選ぶ。正の固定`dt`も指定できるが、各stepで上式の制約を
+満たさない場合は停止する。各SSPRK段で部分密度、混合密度、温度、圧力を検査する。
+
+反応源の全エネルギー成分はゼロである。NASA-7の`a6`を含む生成エネルギーが
+保存状態に含まれるため、発熱反応では組成変化と全エネルギー保存から温度が上昇する。
+履歴CSVには初期状態（step 0）、指定間隔、必ず最終stepを出力し、step、時刻、dt、
+密度、温度、圧力、全species質量分率を記録する。
+
+## 8. 保存変数
 
 全Stageで状態レイアウトを共有する。
 
@@ -192,7 +235,7 @@ nvar = Ns + 4
 
 `Ns=1`では5保存変数になる。変数番号は`mod_mc_state_layout`だけが決定する。
 
-## 8. Provider境界
+## 9. Provider境界
 
 熱力学、輸送、化学反応は同一APIを持つ代替Fortran moduleとして実装し、manifestが
 ビルド時に各1個を選択する。
@@ -206,31 +249,27 @@ mod_mc_chemistry_provider
 Stage 2では熱力学providerが混合密度、圧力、音速を提供する。Stage 3では同じAPIに
 温度、混合気体定数、混合比熱比、primitive状態からの全エネルギー生成を追加した。
 Stage 4では輸送providerを`mixture_averaged`へ交換し、Stage 0--3では`none`を維持する。
-化学反応providerは全Stageで`none`である。入力名とコンパイル済みproviderが異なる場合は
-開始前に停止する。
+Stage 5では輸送providerを`none`に戻し、化学反応providerを
+`one_step_arrhenius`へ交換する。Stage 0--4の化学反応providerは引き続き`none`である。
+入力名とコンパイル済みproviderが異なる場合は開始前に停止する。
 
-## 9. 設計書
+## 10. 設計書
 
-完全なひな型は
-`ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_inviscid.yaml`
-に置く。
+新しく生成する多成分ケースは、共通条件を`case.yaml`、拡張固有条件を
+`config/*.yaml`へ分ける。詳細な規約は
+`ScriptLibrary/RunEnvironment/CASE_CONFIGURATION.md`を参照する。
+
+Stage 2の`case.yaml`は利用する拡張を明示的に参照する。
 
 ```yaml
+schema_version: 2
+
 physics:
   model: nse_multicomponent
-  multicomponent:
-    mode: inviscid_euler
-    species: [species_a, species_b]
 
-thermodynamics:
-  model: calorically_perfect
-  gamma: 1.4
-
-transport:
-  model: none
-
-chemistry:
-  model: none
+extensions:
+  multicomponent: config/multicomponent.yaml
+  thermodynamics: config/thermodynamics.yaml
 
 flow:
   type: multispecies_sod
@@ -254,16 +293,33 @@ numerics:
   time_integration: ssprk3
 ```
 
-Stage 3では`case_templates/nse_multicomponent_thermally_perfect.yaml`をひな型にする。
-物性はspecies名をキーにして指定する。
+`config/multicomponent.yaml`には拡張の識別情報と多成分設定を書く。
 
 ```yaml
-physics:
-  multicomponent:
-    mode: thermally_perfect_euler
-    species: [N2, O2]
+schema_version: 1
+extension: multicomponent
+config:
+  mode: inviscid_euler
+  species: [species_a, species_b]
+```
 
-thermodynamics:
+Stage 2の`config/thermodynamics.yaml`は次のとおりである。
+
+```yaml
+schema_version: 1
+extension: thermodynamics
+config:
+  model: calorically_perfect
+  gamma: 1.4
+```
+
+Stage 3では`case_templates/nse_multicomponent_thermally_perfect.yaml`をひな型にする。
+物性は`config/thermodynamics.yaml`でspecies名をキーにして指定する。
+
+```yaml
+schema_version: 1
+extension: thermodynamics
+config:
   model: thermally_perfect
   universal_gas_constant: 8314.46261815324
   temperature_min: 200.0
@@ -277,22 +333,24 @@ thermodynamics:
 ```
 
 Stage 4では`case_templates/nse_multicomponent_viscous.yaml`をひな型にする。
-輸送物性もspecies名をキーにするため、species一覧との過不足を入力生成時に拒否する。
+輸送物性は`config/transport.yaml`へ分離する。species名をキーにするため、species一覧との
+過不足を入力生成時に拒否する。
 
 ```yaml
-physics:
-  multicomponent:
-    mode: viscous_navier_stokes
-    species: [N2, O2]
-
-transport:
+schema_version: 1
+extension: transport
+config:
   model: mixture_averaged
   reference_dynamic_viscosity: 1.8e-5
   prandtl_number: 0.72
   species_data:
     N2: {diffusivity: 2.0e-5}
     O2: {diffusivity: 2.0e-5}
+```
 
+格子、初期条件、時間条件はStage 4でも`case.yaml`に残す。
+
+```yaml
 flow:
   type: periodic_species_wave
   periodic_species_wave:
@@ -312,7 +370,50 @@ time:
   dt: 0.0
 ```
 
-## 10. ビルドと実行環境
+Stage 0--4は非反応なので`chemistry`ファイルを生成せず、既定値`none`を使う。
+Stage 5では`case_templates/nse_multicomponent_reactor.yaml`をひな型にし、
+`config/chemistry.yaml`を追加する。
+
+```yaml
+schema_version: 1
+extension: chemistry
+config:
+  model: one_step_arrhenius
+  reaction:
+    reactants: {fuel: 1.0, oxidizer: 1.0}
+    products: {product: 2.0}
+    pre_exponential_factor: 1000.0
+    temperature_exponent: 0.0
+    activation_temperature: 2000.0
+```
+
+初期状態と時間・出力条件は`case.yaml`へ記述する。
+
+```yaml
+flow:
+  type: homogeneous_reactor
+  homogeneous_reactor:
+    density: 1.0
+    temperature: 1200.0
+    mass_fractions: {fuel: 0.5, oxidizer: 0.5, product: 0.0}
+
+time:
+  dt: 0.0
+  maximum_dt: 1.0e-3
+  chemistry_cfl: 0.1
+  nsteps: 100
+
+output:
+  write_history: true
+  output_every: 1
+  filename: homogeneous_reactor.csv
+```
+
+旧来の一体型`case.yaml`も引き続き読み込めるが、同じ設定を本体と拡張ファイルへ
+重複定義することはできない。入力生成時には全設定を展開した`resolved_case.yaml`も
+保存する。
+
+## 11. ビルドと実行環境
 
 Windows（PowerShell）:
 
@@ -338,7 +439,32 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 `ScriptLibrary/RunEnvironment/environment.nse_multicomponent.viscous.yaml`
 を使用する。
 
-## 11. Stage 4の制約
+Stage 5はprofileを`cpu_serial_reactor`へ、実行環境設計書を
+`ScriptLibrary/RunEnvironment/environment.nse_multicomponent.reactor.yaml`へ変更する。
+
+Windows（PowerShell）:
+
+```powershell
+python .\ScriptLibrary\BuildSolver\build_model.py `
+  .\ScriptLibrary\BuildSolver\build.yaml `
+  --model nse_multicomponent `
+  --profile cpu_serial_reactor `
+  --test
+```
+
+Linux（bash）:
+
+```bash
+python3 ./ScriptLibrary/BuildSolver/build_model.py \
+  ./ScriptLibrary/BuildSolver/build.yaml \
+  --model nse_multicomponent \
+  --profile cpu_serial_reactor \
+  --test
+```
+
+## 12. 制約
+
+### 12.1 Stage 4
 
 - CPU逐次実行のみ
 - 三次元直交等間隔格子
@@ -352,18 +478,27 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 - x方向の周期species波初期条件のみ
 - CSVは最終時刻だけ出力
 
+### 12.2 Stage 5
+
+- CPU逐次の0次元均質反応器のみ
+- 断熱・定容のみ
+- 一段不可逆反応を1本だけ使用可能
+- 圧力依存反応、第三体、Falloff、可逆反応、平衡定数は未実装
+- 陽的SSPRK3のみで、stiff chemistry用陰解法は未実装
+- 空間輸送、粘性、拡散との結合は未実装
+- 標準テンプレートの3species物性・反応係数は数値検証用であり、実在反応機構ではない
+
 未実装の選択肢は黙って別方式として扱わず、入力生成時または計算開始前に拒否する。
 
-## 12. 後続Stage
+## 13. 後続Stage
 
-5. 0次元有限反応速度化学
 6. Strang分割による流体・反応結合
 7. 反応流境界条件、初期条件、出力
 8. MPI/OpenMP最適化
 9. 一般座標
 10. CUDA
 
-## 13. 必須回帰条件
+## 14. 必須回帰条件
 
 - 現行`nse`のmanifest、実行ファイル名、既定profileを維持する。
 - Stage 0/1 profileを独立してビルド・実行できる。
@@ -377,6 +512,9 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 - 混合比熱比が温度と組成に応じて変化する。
 - NASA-7の温度範囲外やspecies物性の不一致を開始前に拒否する。
 - 反応追加後も成分生成速度の総和をゼロにする。
+- 0次元反応器で反応物が減少し、生成物が増加する。
+- 発熱反応で全エネルギーを保存しながら温度が上昇する。
+- 化学反応の自動時間刻みがspecies depletion制約を満たす。
 - 成分拡散流束の総和を各セルでゼロにする。
 - 一様場の輸送右辺をゼロにする。
 - 周期species波と周期速度波を拡散・粘性で減衰させる。

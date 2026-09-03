@@ -1,3 +1,4 @@
+schema_version: 2
 case_id: {{case_id}}
 case_label: {{case_label}}
 status: development
@@ -10,36 +11,10 @@ project:
 
 physics:
   model: {{physics_model}}
-  multicomponent:
-    mode: thermally_perfect_euler
-    species:
-      - N2
-      - O2
 
-# SI units: molecular_weight [kg/kmol], Ru [J/(kmol K)], T [K].
-thermodynamics:
-  model: thermally_perfect
-  universal_gas_constant: 8314.46261815324
-  temperature_min: 200.0
-  temperature_max: 6000.0
-  temperature_tolerance: 1.0e-10
-  species_data:
-    N2:
-      molecular_weight: 28.0134
-      temperature_midpoint: 1000.0
-      nasa7_low: [3.53100528, -1.23660987e-4, -5.02999433e-7, 2.43530612e-9, -1.40881235e-12, -1046.97628, 2.96747468]
-      nasa7_high: [2.95257626, 1.39690040e-3, -4.92631603e-7, 7.86010367e-11, -4.60755321e-15, -923.948645, 5.87188762]
-    O2:
-      molecular_weight: 31.9988
-      temperature_midpoint: 1000.0
-      nasa7_low: [3.78245636, -2.99673416e-3, 9.84730201e-6, -9.68129509e-9, 3.24372837e-12, -1063.94356, 3.65767573]
-      nasa7_high: [3.28253784, 1.48308754e-3, -7.57966669e-7, 2.09470555e-10, -2.16717794e-14, -1088.45772, 5.45323129]
-
-transport:
-  model: none
-
-chemistry:
-  model: none
+extensions:
+  multicomponent: config/multicomponent.yaml
+  thermodynamics: config/thermodynamics.yaml
 
 grid:
   nx: 64

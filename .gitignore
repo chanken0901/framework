@@ -12,6 +12,7 @@ __pycache__/
 .pytest_cache/
 build/
 /build-*-validation/
+/.codex-build/
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt

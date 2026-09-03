@@ -236,6 +236,27 @@ class EnvironmentOptionTests(unittest.TestCase):
             "ScriptLibrary/RunEnvironment/case_templates/"
             "nse_multicomponent_viscous.yaml",
         )
+        self.assertEqual(
+            set(resolved["case"]["extension_templates"]),
+            {"multicomponent", "thermodynamics", "transport"},
+        )
+        self.assertFalse(resolved["parallel"]["use_mpi"])
+        self.assertFalse(resolved["parallel"]["use_cuda"])
+
+    def test_stage_five_multicomponent_environment_resolves(self) -> None:
+        design_path = (
+            SCRIPT_DIR / "environment.nse_multicomponent.reactor.yaml"
+        )
+        resolved, _ = resolve_design_options(
+            load_yaml(design_path), design_path, BUILTIN
+        )
+
+        self.assertEqual(resolved["model"]["name"], "nse_multicomponent")
+        self.assertEqual(resolved["solver"]["profile"], "cpu_serial_reactor")
+        self.assertEqual(
+            set(resolved["case"]["extension_templates"]),
+            {"multicomponent", "thermodynamics", "chemistry"},
+        )
         self.assertFalse(resolved["parallel"]["use_mpi"])
         self.assertFalse(resolved["parallel"]["use_cuda"])
 

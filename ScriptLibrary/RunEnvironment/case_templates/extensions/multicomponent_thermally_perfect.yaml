@@ -1,0 +1,7 @@
+schema_version: 1
+extension: multicomponent
+config:
+  mode: thermally_perfect_euler
+  species:
+    - N2
+    - O2

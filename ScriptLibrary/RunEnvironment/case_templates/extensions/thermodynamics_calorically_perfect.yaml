@@ -1,0 +1,5 @@
+schema_version: 1
+extension: thermodynamics
+config:
+  model: calorically_perfect
+  gamma: 1.4

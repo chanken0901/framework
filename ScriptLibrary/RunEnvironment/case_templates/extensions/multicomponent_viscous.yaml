@@ -1,0 +1,7 @@
+schema_version: 1
+extension: multicomponent
+config:
+  mode: viscous_navier_stokes
+  species:
+    - N2
+    - O2

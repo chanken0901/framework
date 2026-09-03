@@ -1,0 +1,7 @@
+schema_version: 1
+extension: multicomponent
+config:
+  mode: inviscid_euler
+  species:
+    - species_a
+    - species_b

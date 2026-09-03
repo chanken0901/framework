@@ -21,13 +21,14 @@ option(NSE_USE_MPI "Build the MPI domain-decomposition backend" ON)
 set(
   NSE_TEST_SUITE "legacy"
   CACHE STRING
-  "CTest suite: legacy, multicomponent_foundation, multicomponent_passive_scalar, multicomponent_euler, multicomponent_thermally_perfect, multicomponent_viscous, or none"
+  "CTest suite: legacy, multicomponent_foundation, multicomponent_passive_scalar, multicomponent_euler, multicomponent_thermally_perfect, multicomponent_viscous, multicomponent_reactor, or none"
 )
 set_property(
   CACHE NSE_TEST_SUITE
   PROPERTY STRINGS legacy multicomponent_foundation
     multicomponent_passive_scalar multicomponent_euler
-    multicomponent_thermally_perfect multicomponent_viscous none
+    multicomponent_thermally_perfect multicomponent_viscous
+    multicomponent_reactor none
 )
 option(
   NSE_ENABLE_MULTI_GPU_TESTS
@@ -128,12 +129,14 @@ if(NOT NSE_TEST_SUITE STREQUAL "legacy" AND
    NOT NSE_TEST_SUITE STREQUAL "multicomponent_euler" AND
    NOT NSE_TEST_SUITE STREQUAL "multicomponent_thermally_perfect" AND
    NOT NSE_TEST_SUITE STREQUAL "multicomponent_viscous" AND
+   NOT NSE_TEST_SUITE STREQUAL "multicomponent_reactor" AND
    NOT NSE_TEST_SUITE STREQUAL "none")
   message(FATAL_ERROR
     "Unsupported NSE_TEST_SUITE='${NSE_TEST_SUITE}'. "
     "Available suites: legacy, multicomponent_foundation, "
     "multicomponent_passive_scalar, multicomponent_euler, "
-    "multicomponent_thermally_perfect, multicomponent_viscous, none"
+    "multicomponent_thermally_perfect, multicomponent_viscous, "
+    "multicomponent_reactor, none"
   )
 endif()
 
@@ -631,7 +634,8 @@ if(BUILD_TESTING AND
     NSE_TEST_SUITE STREQUAL "multicomponent_passive_scalar" OR
     NSE_TEST_SUITE STREQUAL "multicomponent_euler" OR
     NSE_TEST_SUITE STREQUAL "multicomponent_thermally_perfect" OR
-    NSE_TEST_SUITE STREQUAL "multicomponent_viscous"))
+    NSE_TEST_SUITE STREQUAL "multicomponent_viscous" OR
+    NSE_TEST_SUITE STREQUAL "multicomponent_reactor"))
   add_executable(
     nse_test_multicomponent_foundation
     tests/test_multicomponent_foundation.f90
@@ -667,6 +671,48 @@ if(BUILD_TESTING AND
           "Multicomponent NSE stage-0 foundation initialized successfully"
     )
   endif()
+endif()
+
+if(BUILD_TESTING AND NSE_TEST_SUITE STREQUAL "multicomponent_reactor")
+  add_executable(
+    nse_test_multicomponent_reactor
+    tests/test_multicomponent_reactor.f90
+  )
+  set_target_properties(
+    nse_test_multicomponent_reactor
+    PROPERTIES
+      Fortran_MODULE_DIRECTORY
+        "${NSE_MODULE_DIR}/multicomponent_reactor_test"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
+  )
+  target_link_libraries(nse_test_multicomponent_reactor PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_multicomponent_reactor)
+  add_test(
+    NAME nse_multicomponent_reactor
+    COMMAND $<TARGET_FILE:nse_test_multicomponent_reactor>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_multicomponent_reactor.dat"
+  )
+  set_tests_properties(
+    nse_multicomponent_reactor
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION
+        "Homogeneous finite-rate chemistry tests passed"
+      FAIL_REGULAR_EXPRESSION
+        "floating-point exceptions are signalling;ERROR STOP"
+  )
+  add_test(
+    NAME nse_multicomponent_reactor_input
+    COMMAND $<TARGET_FILE:nse_solver>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_multicomponent_reactor.dat"
+  )
+  set_tests_properties(
+    nse_multicomponent_reactor_input
+    PROPERTIES
+      PASS_REGULAR_EXPRESSION
+        "Homogeneous reactor calculation completed successfully"
+      FAIL_REGULAR_EXPRESSION
+        "floating-point exceptions are signalling;ERROR STOP"
+  )
 endif()
 
 if(BUILD_TESTING AND NSE_TEST_SUITE STREQUAL "multicomponent_viscous")

@@ -1,3 +1,4 @@
+schema_version: 2
 case_id: {{case_id}}
 case_label: {{case_label}}
 status: development
@@ -10,21 +11,9 @@ project:
 
 physics:
   model: {{physics_model}}
-  multicomponent:
-    mode: passive_scalar
-    # Stage 1 transports partial densities without feedback to momentum or energy.
-    species:
-      - tracer
-      - carrier
 
-thermodynamics:
-  model: calorically_perfect
-
-transport:
-  model: none
-
-chemistry:
-  model: none
+extensions:
+  multicomponent: config/multicomponent.yaml
 
 grid:
   nx: 32

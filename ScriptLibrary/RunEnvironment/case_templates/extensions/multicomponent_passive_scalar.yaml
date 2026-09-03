@@ -1,0 +1,8 @@
+schema_version: 1
+extension: multicomponent
+config:
+  mode: passive_scalar
+  # Stage 1 transports partial densities without feedback to momentum or energy.
+  species:
+    - tracer
+    - carrier

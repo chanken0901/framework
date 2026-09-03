@@ -1,5 +1,9 @@
 # 外部実行環境ジェネレーター
 
+ケース設定の分割形式、従来形式との互換性、`resolved_case.yaml`については
+[`CASE_CONFIGURATION.md`](CASE_CONFIGURATION.md)を参照してください。新しい多成分ケースは
+必要な拡張だけを`config/*.yaml`として生成します。
+
 多成分・反応流拡張のStage 0検証環境には
 `environment.nse_multicomponent.yaml`を使用します。この環境は現行単成分NSEとは
 別モデル`nse_multicomponent`を生成し、まだ流体時間発展を行いません。
@@ -26,6 +30,13 @@ Stage 4の混合平均輸送には
 基準粘性係数、Prandtl数と周期species波を設定します。生成される
 `cpu_serial_viscous`環境はCPU逐次で、拡散・粘性・熱伝導を含む非反応
 多成分Navier--Stokes計算をビルド・試験できます。
+
+Stage 5の0次元有限反応速度化学には
+`environment.nse_multicomponent.reactor.yaml`を使用します。設計書から反応器の
+`case.yaml`と、多成分・NASA-7熱力学・一段Arrhenius反応の3つの拡張YAMLを生成します。
+`cpu_serial_reactor`環境は断熱・定容の均質反応器をSSPRK3で積分し、時刻、温度、
+圧力、全species質量分率をCSVへ出力します。Stage 5はCPU逐次の化学反応単体検証で、
+流体輸送との結合はStage 6の対象です。
 
 > OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通のパス、Python、CMake、MPIの対応表は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 

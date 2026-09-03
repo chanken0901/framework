@@ -1,3 +1,4 @@
+schema_version: 2
 case_id: {{case_id}}
 case_label: {{case_label}}
 status: development
@@ -10,21 +11,10 @@ project:
 
 physics:
   model: {{physics_model}}
-  multicomponent:
-    mode: inviscid_euler
-    species:
-      - species_a
-      - species_b
 
-thermodynamics:
-  model: calorically_perfect
-  gamma: 1.4
-
-transport:
-  model: none
-
-chemistry:
-  model: none
+extensions:
+  multicomponent: config/multicomponent.yaml
+  thermodynamics: config/thermodynamics.yaml
 
 grid:
   nx: 64
