@@ -1,6 +1,6 @@
 # ケース設定と拡張YAML
 
-更新日: 2026-09-03
+更新日: 2026-09-04
 
 ## 1. 方針
 
@@ -79,10 +79,11 @@ config:
 | Stage 3 温度依存熱力学 | `multicomponent.yaml`, `thermodynamics.yaml` |
 | Stage 4 粘性・拡散・熱伝導 | `multicomponent.yaml`, `thermodynamics.yaml`, `transport.yaml` |
 | Stage 5 0次元有限反応速度化学 | `multicomponent.yaml`, `thermodynamics.yaml`, `chemistry.yaml` |
+| Stage 6 反応性多成分流 | `multicomponent.yaml`, `thermodynamics.yaml`, `transport.yaml`, `chemistry.yaml` |
 
 非反応計算では`chemistry.model`の既定値が`none`なので、空の化学反応設定ファイルは
-生成しない。Stage 5だけが`config/chemistry.yaml`を生成する。Stage 5は格子輸送を
-行わないため、`transport.yaml`は生成しない。
+生成しない。Stage 5とStage 6が`config/chemistry.yaml`を生成する。Stage 5は格子輸送を
+行わないため`transport.yaml`を生成せず、Stage 6は流体輸送と反応を結合するため両方を生成する。
 
 Stage 5の反応式はspecies名をキーにして記述する。`orders`を省略すると反応物の
 量論係数を反応次数として使う。入力生成時にspecies名、係数の正値性、分子量を
@@ -117,6 +118,27 @@ time:
   maximum_dt: 1.0e-3
   chemistry_cfl: 0.1
   nsteps: 100
+```
+
+Stage 6では流体と化学の刻み制約、結合方式を`case.yaml`へ記述する。
+`dt: 0.0`では対流・拡散・化学制約の最小値を使い、固定`dt`では化学半stepだけを
+`maximum_chemistry_substeps`の範囲内で自動subcycleする。
+
+```yaml
+time:
+  cfl: 0.2
+  diffusion_cfl: 0.4
+  chemistry_cfl: 0.1
+  maximum_chemistry_substeps: 10000
+  dt: 0.0
+  nsteps: 20
+
+numerics:
+  convective_scheme: rusanov1
+  boundary_condition: periodic
+  time_integration: ssprk3
+  coupling_scheme: strang
+  chemistry_time_integration: ssprk3_subcycled
 ```
 
 ## 4. 編集と入力再生成

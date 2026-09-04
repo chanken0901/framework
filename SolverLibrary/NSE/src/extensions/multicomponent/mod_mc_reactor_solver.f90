@@ -1,5 +1,4 @@
 module mod_mc_reactor_solver
-  use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
   use mod_precision, only : dp
   use mod_mc_config, only : mc_config
   use mod_mc_state_layout, only : mc_state_layout
@@ -7,12 +6,11 @@ module mod_mc_reactor_solver
   use mod_mc_thermodynamics_provider, only : mc_mixture_density, &
     mc_mixture_gas_constant, mc_pressure, mc_temperature, &
     mc_total_energy_from_primitive
-  use mod_mc_chemistry_provider, only : compute_mc_chemistry_source, &
-    compute_mc_chemistry_timestep
+  use mod_mc_chemistry_provider, only : compute_mc_chemistry_timestep
+  use mod_mc_chemistry_integrator, only : validate_mc_chemistry_state, &
+    advance_mc_chemistry_ssprk3
   implicit none
   private
-
-  real(dp), parameter :: state_tolerance = 1.0e-12_dp
 
   public :: initialize_mc_reactor_state
   public :: validate_mc_reactor_state
@@ -49,52 +47,16 @@ contains
   subroutine validate_mc_reactor_state(state,layout)
     real(dp), intent(in) :: state(:)
     type(mc_state_layout), intent(in) :: layout
-    real(dp) :: density, pressure, temperature
 
-    if (size(state) /= layout%nvariables .or. &
-        .not. all(ieee_is_finite(state))) then
-      error stop 'homogeneous-reactor state is invalid'
-    end if
-    if (minval(state(layout%first_species:layout%last_species)) < &
-        -state_tolerance) then
-      error stop 'negative species density in homogeneous reactor'
-    end if
-    density = mc_mixture_density(state,layout)
-    if (density <= state_tolerance) then
-      error stop 'non-positive density in homogeneous reactor'
-    end if
-    temperature = mc_temperature(state,layout,1.4_dp)
-    pressure = mc_pressure(state,layout,1.4_dp)
-    if (.not. ieee_is_finite(temperature) .or. temperature <= 0.0_dp .or. &
-        .not. ieee_is_finite(pressure) .or. pressure <= 0.0_dp) then
-      error stop 'non-positive thermodynamic state in homogeneous reactor'
-    end if
+    call validate_mc_chemistry_state(state,layout,1.4_dp)
   end subroutine validate_mc_reactor_state
 
   subroutine advance_mc_reactor_ssprk3(state,dt,layout)
     real(dp), intent(inout) :: state(:)
     real(dp), intent(in) :: dt
     type(mc_state_layout), intent(in) :: layout
-    real(dp) :: initial(layout%nvariables)
-    real(dp) :: stage(layout%nvariables)
-    real(dp) :: source(layout%nvariables)
 
-    if (.not. ieee_is_finite(dt) .or. dt <= 0.0_dp) then
-      error stop 'homogeneous-reactor dt must be finite and positive'
-    end if
-    initial = state
-    call compute_mc_chemistry_source( &
-      initial,layout,1.4_dp,source)
-    stage = initial + dt*source
-    call validate_mc_reactor_state(stage,layout)
-
-    call compute_mc_chemistry_source(stage,layout,1.4_dp,source)
-    stage = 0.75_dp*initial + 0.25_dp*(stage+dt*source)
-    call validate_mc_reactor_state(stage,layout)
-
-    call compute_mc_chemistry_source(stage,layout,1.4_dp,source)
-    state = initial/3.0_dp + 2.0_dp*(stage+dt*source)/3.0_dp
-    call validate_mc_reactor_state(state,layout)
+    call advance_mc_chemistry_ssprk3(state,dt,layout,1.4_dp)
   end subroutine advance_mc_reactor_ssprk3
 
   subroutine write_history_header(unit,model)

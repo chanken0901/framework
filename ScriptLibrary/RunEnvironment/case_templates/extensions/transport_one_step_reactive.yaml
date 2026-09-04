@@ -1,0 +1,14 @@
+schema_version: 1
+extension: transport
+config:
+  model: mixture_averaged
+  # Constant validation transport properties in SI units.
+  reference_dynamic_viscosity: 1.8e-5
+  prandtl_number: 0.72
+  species_data:
+    fuel:
+      diffusivity: 2.0e-5
+    oxidizer:
+      diffusivity: 2.0e-5
+    product:
+      diffusivity: 2.0e-5

@@ -36,7 +36,15 @@ Stage 5の0次元有限反応速度化学には
 `case.yaml`と、多成分・NASA-7熱力学・一段Arrhenius反応の3つの拡張YAMLを生成します。
 `cpu_serial_reactor`環境は断熱・定容の均質反応器をSSPRK3で積分し、時刻、温度、
 圧力、全species質量分率をCSVへ出力します。Stage 5はCPU逐次の化学反応単体検証で、
-流体輸送との結合はStage 6の対象です。
+流体輸送を行いません。
+
+Stage 6の反応性多成分Navier--Stokes計算には
+`environment.nse_multicomponent.reactive.yaml`を使用します。設計書から周期species波の
+`case.yaml`と、多成分・NASA-7熱力学・混合平均輸送・一段Arrhenius反応の4つの拡張YAMLを
+生成します。`cpu_serial_reactive`環境は、Stage 4の対流・species拡散・Newton粘性・
+Fourier熱伝導とStage 5の化学反応をStrang分割で結合します。全体時間刻みは対流・拡散・
+化学制約から決まり、化学半stepは必要に応じてSSPRK3でsubcycleします。現在はCPU逐次、
+直交等間隔格子、全方向周期境界、一次Rusanov流束に限定しています。
 
 > OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通のパス、Python、CMake、MPIの対応表は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 

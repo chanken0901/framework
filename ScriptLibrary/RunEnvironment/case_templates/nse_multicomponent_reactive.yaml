@@ -1,0 +1,76 @@
+schema_version: 2
+case_id: {{case_id}}
+case_label: {{case_label}}
+status: development
+description: {{description}}
+created_at: {{created_at}}
+
+project:
+  name: {{project_name}}
+  author: Kento Tanaka
+
+physics:
+  model: {{physics_model}}
+
+extensions:
+  multicomponent: config/multicomponent.yaml
+  thermodynamics: config/thermodynamics.yaml
+  transport: config/transport.yaml
+  chemistry: config/chemistry.yaml
+
+grid:
+  nx: 24
+  ny: 4
+  nz: 4
+  x_min: 0.0
+  x_max: 1.0
+  y_min: 0.0
+  y_max: 1.0
+  z_min: 0.0
+  z_max: 1.0
+
+flow:
+  type: periodic_species_wave
+  periodic_species_wave:
+    initial_condition: periodic_species_wave_x
+    density: 1.0
+    temperature: 1200.0
+    velocity: [0.0, 0.0, 0.0]
+    mean_mass_fractions: [0.45, 0.45, 0.10]
+    positive_species: fuel
+    negative_species: product
+    amplitude: 0.05
+    wavenumber: 1
+
+time:
+  cfl: 0.20
+  diffusion_cfl: 0.40
+  chemistry_cfl: 0.10
+  maximum_chemistry_substeps: 10000
+  dt: 0.0
+  nsteps: 20
+
+numerics:
+  convective_scheme: rusanov1
+  boundary_condition: periodic
+  time_integration: ssprk3
+  coupling_scheme: strang
+  chemistry_time_integration: ssprk3_subcycled
+
+solver:
+  profile: {{solver_profile}}
+  use_mpi: {{use_mpi}}
+  use_openmp: {{use_openmp}}
+  use_cuda: {{use_cuda}}
+  mpi_processes: {{mpi_processes}}
+  omp_threads: {{omp_threads}}
+
+output:
+  write_final: true
+  filename: multicomponent_reactive_final.csv
+
+storage:
+  raw_data_location: {{raw_data_location}}
+
+outputs:
+  used_in:

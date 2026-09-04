@@ -1,6 +1,6 @@
 # NSE多成分・反応流拡張仕様
 
-更新日: 2026-09-03
+更新日: 2026-09-04
 
 ## 1. 目的と実装状態
 
@@ -17,6 +17,7 @@
 | `nse_multicomponent` | `cpu_serial_thermally_perfect` | Stage 3温度・組成依存熱力学 |
 | `nse_multicomponent` | `cpu_serial_viscous` | Stage 4拡散・粘性・熱伝導 |
 | `nse_multicomponent` | `cpu_serial_reactor` | Stage 5 0次元有限反応速度化学 |
+| `nse_multicomponent` | `cpu_serial_reactive` | Stage 6反応性多成分Navier--Stokes |
 
 多成分profileの実行ファイル名はすべて`nse_multicomponent`である。profileごとに
 main programとコンパイル対象を切り替えるため、各Stageの実行内容は混在しない。
@@ -223,7 +224,38 @@ dt = min(maximum_dt, chemistry_cfl * min_s[rho_s/(-omega_s)])
 履歴CSVには初期状態（step 0）、指定間隔、必ず最終stepを出力し、step、時刻、dt、
 密度、温度、圧力、全species質量分率を記録する。
 
-## 8. 保存変数
+## 8. Stage 6: 流体・反応結合
+
+Stage 6はStage 4の多成分Navier--Stokes輸送とStage 5の有限反応速度化学を、
+Strang分割で結合する。
+
+```text
+Q^(1) = C(dt/2) Q^n
+Q^(2) = F(dt)   Q^(1)
+Q^(n+1) = C(dt/2) Q^(2)
+```
+
+`C`は各セル独立の化学反応、`F`は対流、species拡散、Newton粘性、Fourier熱伝導を
+含む流体更新である。流体更新にはStage 4のSSPRK3をそのまま使用する。化学更新も
+Stage 5と同じSSPRK3を共通integratorから呼び出し、各半stepをspecies depletion時間で
+必要な回数だけsubcycleする。固定`dt`でも化学反応だけを自動分割できる。
+
+`dt: 0.0`の場合、流体の対流・拡散制約と化学反応のdepletion制約の最小値を採用する。
+
+```text
+dt = min(dt_convective, dt_diffusive, dt_chemistry)
+```
+
+化学半step後にも流体CFLを再検査し、部分密度、混合密度、圧力、温度を各演算子の
+更新中に検証する。周期領域では総質量、三方向運動量、全エネルギーを保存する。
+最終CSVには座標、全species部分密度、混合密度、速度、圧力、温度、全エネルギーを
+出力する。
+
+初期Stage 6は、周期直交格子上の反応species波を検証問題とする。一様反応場では
+Stage 5と同じ時間発展になり、反応速度ゼロではStage 4と同じ流体更新になることを
+回帰試験で確認する。
+
+## 9. 保存変数
 
 全Stageで状態レイアウトを共有する。
 
@@ -235,7 +267,7 @@ nvar = Ns + 4
 
 `Ns=1`では5保存変数になる。変数番号は`mod_mc_state_layout`だけが決定する。
 
-## 9. Provider境界
+## 10. Provider境界
 
 熱力学、輸送、化学反応は同一APIを持つ代替Fortran moduleとして実装し、manifestが
 ビルド時に各1個を選択する。
@@ -251,9 +283,10 @@ Stage 2では熱力学providerが混合密度、圧力、音速を提供する�
 Stage 4では輸送providerを`mixture_averaged`へ交換し、Stage 0--3では`none`を維持する。
 Stage 5では輸送providerを`none`に戻し、化学反応providerを
 `one_step_arrhenius`へ交換する。Stage 0--4の化学反応providerは引き続き`none`である。
+Stage 6では`thermally_perfect`、`mixture_averaged`、`one_step_arrhenius`を同時に選択する。
 入力名とコンパイル済みproviderが異なる場合は開始前に停止する。
 
-## 10. 設計書
+## 11. 設計書
 
 新しく生成する多成分ケースは、共通条件を`case.yaml`、拡張固有条件を
 `config/*.yaml`へ分ける。詳細な規約は
@@ -409,11 +442,37 @@ output:
   filename: homogeneous_reactor.csv
 ```
 
+Stage 6は`case_templates/nse_multicomponent_reactive.yaml`をひな型にし、
+`multicomponent`、`thermodynamics`、`transport`、`chemistry`の4拡張を参照する。
+結合方式と化学積分方式は`case.yaml`で明示する。
+
+```yaml
+extensions:
+  multicomponent: config/multicomponent.yaml
+  thermodynamics: config/thermodynamics.yaml
+  transport: config/transport.yaml
+  chemistry: config/chemistry.yaml
+
+time:
+  cfl: 0.2
+  diffusion_cfl: 0.4
+  chemistry_cfl: 0.1
+  maximum_chemistry_substeps: 10000
+  dt: 0.0
+
+numerics:
+  convective_scheme: rusanov1
+  boundary_condition: periodic
+  time_integration: ssprk3
+  coupling_scheme: strang
+  chemistry_time_integration: ssprk3_subcycled
+```
+
 旧来の一体型`case.yaml`も引き続き読み込めるが、同じ設定を本体と拡張ファイルへ
 重複定義することはできない。入力生成時には全設定を展開した`resolved_case.yaml`も
 保存する。
 
-## 11. ビルドと実行環境
+## 12. ビルドと実行環境
 
 Windows（PowerShell）:
 
@@ -462,9 +521,32 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
   --test
 ```
 
-## 12. 制約
+Stage 6はprofile `cpu_serial_reactive`と実行環境設計書
+`ScriptLibrary/RunEnvironment/environment.nse_multicomponent.reactive.yaml`を使用する。
 
-### 12.1 Stage 4
+Windows（PowerShell）:
+
+```powershell
+python .\ScriptLibrary\BuildSolver\build_model.py `
+  .\ScriptLibrary\BuildSolver\build.yaml `
+  --model nse_multicomponent `
+  --profile cpu_serial_reactive `
+  --test
+```
+
+Linux（bash）:
+
+```bash
+python3 ./ScriptLibrary/BuildSolver/build_model.py \
+  ./ScriptLibrary/BuildSolver/build.yaml \
+  --model nse_multicomponent \
+  --profile cpu_serial_reactive \
+  --test
+```
+
+## 13. 制約
+
+### 13.1 Stage 4
 
 - CPU逐次実行のみ
 - 三次元直交等間隔格子
@@ -478,7 +560,7 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 - x方向の周期species波初期条件のみ
 - CSVは最終時刻だけ出力
 
-### 12.2 Stage 5
+### 13.2 Stage 5
 
 - CPU逐次の0次元均質反応器のみ
 - 断熱・定容のみ
@@ -488,17 +570,27 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 - 空間輸送、粘性、拡散との結合は未実装
 - 標準テンプレートの3species物性・反応係数は数値検証用であり、実在反応機構ではない
 
+### 13.3 Stage 6
+
+- CPU逐次実行のみ
+- 三次元直交等間隔格子、全方向周期境界のみ
+- 対流は一次Rusanov流束、流体と化学の結合はStrang分割のみ
+- 一段不可逆反応を1本だけ使用可能
+- 化学反応は陽的SSPRK3 subcyclingで、stiff chemistry用陰解法は未実装
+- 初期条件はx方向の周期species波のみ
+- 標準テンプレートの物性・反応係数は結合検証用であり、実在反応機構ではない
+- MPI、OpenMP、CUDAは未対応
+
 未実装の選択肢は黙って別方式として扱わず、入力生成時または計算開始前に拒否する。
 
-## 13. 後続Stage
+## 14. 後続Stage
 
-6. Strang分割による流体・反応結合
 7. 反応流境界条件、初期条件、出力
 8. MPI/OpenMP最適化
 9. 一般座標
 10. CUDA
 
-## 14. 必須回帰条件
+## 15. 必須回帰条件
 
 - 現行`nse`のmanifest、実行ファイル名、既定profileを維持する。
 - Stage 0/1 profileを独立してビルド・実行できる。
@@ -519,3 +611,6 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 - 一様場の輸送右辺をゼロにする。
 - 周期species波と周期速度波を拡散・粘性で減衰させる。
 - 輸送を含む周期計算でも全species質量、運動量、全エネルギーを保存する。
+- Stage 6の周期反応流で総質量、運動量、全エネルギーを保存する。
+- 一様反応場のStage 6結果がStage 5の化学更新と一致する。
+- 反応速度ゼロのStage 6結果がStage 4の流体更新と一致する。

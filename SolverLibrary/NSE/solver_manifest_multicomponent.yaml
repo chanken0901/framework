@@ -1,4 +1,4 @@
-# Additive multicomponent foundation through stage-5 homogeneous chemistry.
+# Additive multicomponent foundation through stage-6 reactive flow.
 # The production single-component NSE remains in solver_manifest.yaml.
 schema_version: 1
 solver_id: nse_multicomponent
@@ -58,6 +58,11 @@ components:
     files:
       - src/extensions/multicomponent/providers/mod_mc_chemistry_one_step_arrhenius.f90
 
+  chemistry_integrator_core:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/mod_mc_chemistry_integrator.f90
+
   main_foundation:
     cmake_role: executable
     files:
@@ -111,6 +116,17 @@ components:
     files:
       - src/extensions/multicomponent/main_nse_multicomponent_reactor.f90
 
+  reactive_core:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/mod_mc_reactive_config.f90
+      - src/extensions/multicomponent/mod_mc_reactive_solver.f90
+
+  main_reactive:
+    cmake_role: executable
+    files:
+      - src/extensions/multicomponent/main_nse_multicomponent_reactive.f90
+
   foundation_tests:
     files:
       - tests/test_multicomponent_foundation.f90
@@ -140,6 +156,11 @@ components:
     files:
       - tests/test_multicomponent_reactor.f90
       - tests/input_multicomponent_reactor.dat
+
+  reactive_tests:
+    files:
+      - tests/test_multicomponent_reactive.f90
+      - tests/input_multicomponent_reactive.dat
 
   foundation_docs:
     files:
@@ -336,6 +357,7 @@ profiles:
       - thermodynamics_thermally_perfect
       - transport_none
       - chemistry_one_step_arrhenius
+      - chemistry_integrator_core
       - reactor_core
       - foundation_docs
       - main_reactor
@@ -356,3 +378,49 @@ profiles:
       NSE_INIT_FFT_BACKEND: none
       NSE_FORCING_FFT_BACKEND: none
       NSE_TEST_SUITE: multicomponent_reactor
+
+  cpu_serial_reactive:
+    description: Stage-6 Strang-split reactive multicomponent Navier-Stokes solver
+    capabilities:
+      - multicomponent_foundation
+      - reactive_multicomponent_navier_stokes
+      - thermally_perfect_ideal_gas_mixture
+      - nasa7_thermodynamics
+      - mixture_averaged_species_diffusion
+      - newtonian_viscosity
+      - fourier_heat_conduction
+      - one_step_irreversible_arrhenius
+      - strang_splitting
+      - chemistry_subcycling
+      - conservative_mass_momentum_and_energy
+      - periodic_boundary
+      - rusanov1
+      - ssprk3
+    components:
+      - foundation_core
+      - thermodynamics_thermally_perfect
+      - transport_mixture_averaged
+      - chemistry_one_step_arrhenius
+      - chemistry_integrator_core
+      - euler_core
+      - viscous_core
+      - reactive_core
+      - foundation_docs
+      - main_reactive
+    test_components:
+      - foundation_tests
+      - reactive_tests
+    executable: nse_multicomponent
+    execution:
+      use_mpi: false
+      use_openmp: false
+    cmake:
+      NSE_USE_MPI: false
+      NSE_ENABLE_OPENMP: false
+      NSE_GPU_BACKEND: none
+      NSE_CONVECTIVE_BACKEND: runtime
+      NSE_VISCOUS_SCHEME: none
+      NSE_BOUNDARY_SCHEME: periodic
+      NSE_INIT_FFT_BACKEND: none
+      NSE_FORCING_FFT_BACKEND: none
+      NSE_TEST_SUITE: multicomponent_reactive

@@ -2290,6 +2290,50 @@ def _homogeneous_reactor_settings(
     }
 
 
+def _reactive_navier_stokes_settings(
+    time: dict[str, Any], numerics: dict[str, Any]
+) -> dict[str, Any]:
+    splitting_scheme = _canonical_selector(
+        str(numerics.get("coupling_scheme", "strang"))
+    )
+    if splitting_scheme != "strang":
+        raise CaseInputError(
+            "stage-6 requires numerics.coupling_scheme='strang'"
+        )
+    chemistry_integrator = _canonical_selector(
+        str(
+            numerics.get(
+                "chemistry_time_integration", "ssprk3_subcycled"
+            )
+        )
+    )
+    if chemistry_integrator != "ssprk3_subcycled":
+        raise CaseInputError(
+            "stage-6 requires numerics.chemistry_time_integration="
+            "'ssprk3_subcycled'"
+        )
+    chemistry_cfl = _positive_float(
+        time.get("chemistry_cfl", 0.1), "time.chemistry_cfl"
+    )
+    if chemistry_cfl > 1.0:
+        raise CaseInputError("time.chemistry_cfl must not exceed one")
+    maximum_substeps = time.get("maximum_chemistry_substeps", 10000)
+    if (
+        isinstance(maximum_substeps, bool)
+        or not isinstance(maximum_substeps, int)
+        or maximum_substeps < 1
+    ):
+        raise CaseInputError(
+            "time.maximum_chemistry_substeps must be a positive integer"
+        )
+    return {
+        "splitting_scheme": splitting_scheme,
+        "chemistry_integrator": chemistry_integrator,
+        "chemistry_cfl": chemistry_cfl,
+        "maximum_chemistry_substeps": maximum_substeps,
+    }
+
+
 def render_nse_multicomponent(
     case: dict[str, Any], profile_name: str | None = None
 ) -> str:
@@ -2320,11 +2364,13 @@ def render_nse_multicomponent(
         "thermally_perfect_euler",
         "viscous_navier_stokes",
         "homogeneous_reactor",
+        "reactive_navier_stokes",
     }:
         raise CaseInputError(
             "physics.multicomponent.mode must be foundation, passive_scalar, "
             "inviscid_euler, thermally_perfect_euler, or "
-            "viscous_navier_stokes, or homogeneous_reactor"
+            "viscous_navier_stokes, homogeneous_reactor, or "
+            "reactive_navier_stokes"
         )
     if simulation_mode == "passive_scalar" and len(species) < 2:
         raise CaseInputError(
@@ -2337,6 +2383,7 @@ def render_nse_multicomponent(
         "cpu_serial_thermally_perfect": "thermally_perfect_euler",
         "cpu_serial_viscous": "viscous_navier_stokes",
         "cpu_serial_reactor": "homogeneous_reactor",
+        "cpu_serial_reactive": "reactive_navier_stokes",
     }
     if profile_name in expected_modes and simulation_mode != expected_modes[profile_name]:
         raise CaseInputError(
@@ -2362,6 +2409,7 @@ def render_nse_multicomponent(
             "thermally_perfect_euler",
             "viscous_navier_stokes",
             "homogeneous_reactor",
+            "reactive_navier_stokes",
         }
         else "calorically_perfect"
     )
@@ -2369,12 +2417,18 @@ def render_nse_multicomponent(
         "thermodynamics": expected_thermodynamics,
         "transport": (
             "mixture_averaged"
-            if simulation_mode == "viscous_navier_stokes"
+            if simulation_mode in {
+                "viscous_navier_stokes",
+                "reactive_navier_stokes",
+            }
             else "none"
         ),
         "chemistry": (
             "one_step_arrhenius"
-            if simulation_mode == "homogeneous_reactor"
+            if simulation_mode in {
+                "homogeneous_reactor",
+                "reactive_navier_stokes",
+            }
             else "none"
         ),
     }
@@ -2397,6 +2451,9 @@ def render_nse_multicomponent(
         ),
         "homogeneous_reactor": (
             "Stage-5 homogeneous finite-rate chemistry reactor"
+        ),
+        "reactive_navier_stokes": (
+            "Stage-6 Strang-split reactive multicomponent Navier-Stokes"
         ),
     }
     lines = [
@@ -2423,6 +2480,7 @@ def render_nse_multicomponent(
         "thermally_perfect_euler",
         "viscous_navier_stokes",
         "homogeneous_reactor",
+        "reactive_navier_stokes",
     }:
         thermally_perfect = _thermally_perfect_settings(
             thermodynamics, species
@@ -2431,7 +2489,10 @@ def render_nse_multicomponent(
         _append(lines, list(thermally_perfect.items()))
         lines.extend(["/", ""])
 
-    if simulation_mode == "viscous_navier_stokes":
+    if simulation_mode in {
+        "viscous_navier_stokes",
+        "reactive_navier_stokes",
+    }:
         mixture_transport = _mixture_averaged_transport_settings(
             transport, species
         )
@@ -2439,10 +2500,13 @@ def render_nse_multicomponent(
         _append(lines, list(mixture_transport.items()))
         lines.extend(["/", ""])
 
-    if simulation_mode == "homogeneous_reactor":
+    if simulation_mode in {
+        "homogeneous_reactor",
+        "reactive_navier_stokes",
+    }:
         if thermally_perfect is None:
             raise CaseInputError(
-                "stage-5 homogeneous reactor requires thermally-perfect data"
+                "reactive chemistry requires thermally-perfect data"
             )
         chemistry_settings = _one_step_arrhenius_settings(
             chemistry,
@@ -2453,6 +2517,7 @@ def render_nse_multicomponent(
         _append(lines, list(chemistry_settings.items()))
         lines.extend(["/", ""])
 
+    if simulation_mode == "homogeneous_reactor":
         reactor_settings = _homogeneous_reactor_settings(
             case, species, thermally_perfect
         )
@@ -2594,11 +2659,13 @@ def render_nse_multicomponent(
         "inviscid_euler",
         "thermally_perfect_euler",
         "viscous_navier_stokes",
+        "reactive_navier_stokes",
     }:
         stage_number = {
             "inviscid_euler": 2,
             "thermally_perfect_euler": 3,
             "viscous_navier_stokes": 4,
+            "reactive_navier_stokes": 6,
         }[simulation_mode]
         flow = _mapping(nested(case, "flow", {}), "flow")
         flow_type = _canonical_selector(str(flow.get("type", "")))
@@ -2635,10 +2702,14 @@ def render_nse_multicomponent(
         wave_amplitude = None
         wave_wavenumber = None
 
-        if simulation_mode == "viscous_navier_stokes":
+        if simulation_mode in {
+            "viscous_navier_stokes",
+            "reactive_navier_stokes",
+        }:
             if flow_type != "periodic_species_wave":
                 raise CaseInputError(
-                    "stage-4 requires flow.type='periodic_species_wave'"
+                    f"stage-{stage_number} requires "
+                    "flow.type='periodic_species_wave'"
                 )
             initial = _mapping(
                 nested(case, "flow.periodic_species_wave", {}),
@@ -2794,20 +2865,27 @@ def render_nse_multicomponent(
                 f"stage-{stage_number} multicomponent Euler CFL must not exceed 1"
             )
         diffusion_cfl = None
-        if simulation_mode == "viscous_navier_stokes":
+        if simulation_mode in {
+            "viscous_navier_stokes",
+            "reactive_navier_stokes",
+        }:
             diffusion_cfl = _positive_float(
                 time.get("diffusion_cfl", 0.4), "time.diffusion_cfl"
             )
             if diffusion_cfl > 1.0:
                 raise CaseInputError(
-                    "stage-4 multicomponent diffusion CFL must not exceed 1"
+                    f"stage-{stage_number} multicomponent diffusion CFL "
+                    "must not exceed 1"
                 )
         fixed_dt = _positive_float(
             time.get("dt",0.0), "time.dt", allow_zero=True
         )
         default_initial_condition = (
             "periodic_species_wave_x"
-            if simulation_mode == "viscous_navier_stokes"
+            if simulation_mode in {
+                "viscous_navier_stokes",
+                "reactive_navier_stokes",
+            }
             else "multispecies_sod_x"
         )
         initial_condition = _canonical_selector(
@@ -2824,7 +2902,10 @@ def render_nse_multicomponent(
         )
         initial_condition_label = (
             "flow.periodic_species_wave.initial_condition"
-            if simulation_mode == "viscous_navier_stokes"
+            if simulation_mode in {
+                "viscous_navier_stokes",
+                "reactive_navier_stokes",
+            }
             else "flow.multispecies_sod.initial_condition"
         )
         supported_values = {
@@ -2844,11 +2925,12 @@ def render_nse_multicomponent(
         write_final = output.get("write_final",True)
         if not isinstance(write_final,bool):
             raise CaseInputError("output.write_final must be true or false")
-        default_output_file = (
-            "multicomponent_viscous_final.csv"
-            if simulation_mode == "viscous_navier_stokes"
-            else "multicomponent_euler_final.csv"
-        )
+        if simulation_mode == "reactive_navier_stokes":
+            default_output_file = "multicomponent_reactive_final.csv"
+        elif simulation_mode == "viscous_navier_stokes":
+            default_output_file = "multicomponent_viscous_final.csv"
+        else:
+            default_output_file = "multicomponent_euler_final.csv"
         output_file = str(output.get("filename", default_output_file)).strip()
         if write_final and not output_file:
             raise CaseInputError("output.filename must not be empty")
@@ -2897,6 +2979,13 @@ def render_nse_multicomponent(
             ],
         )
         lines.extend(["/",""])
+        if simulation_mode == "reactive_navier_stokes":
+            reactive_settings = _reactive_navier_stokes_settings(
+                time, numerics
+            )
+            lines.append("&reactive_navier_stokes")
+            _append(lines, list(reactive_settings.items()))
+            lines.extend(["/", ""])
     return "\n".join(lines)
 
 

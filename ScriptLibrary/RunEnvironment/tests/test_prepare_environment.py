@@ -459,6 +459,45 @@ class ModularCaseEnvironmentTests(unittest.TestCase):
             self.assertIn("&one_step_arrhenius", generated_input)
             self.assertIn("&homogeneous_reactor", generated_input)
 
+    def test_stage_six_generates_all_reactive_extensions_and_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            framework_root = SCRIPT_DIR.parents[1]
+            output = Path(temporary) / "nse_multicomponent_reactive_case0001"
+            args = Namespace(
+                design=str(
+                    SCRIPT_DIR / "environment.nse_multicomponent.reactive.yaml"
+                ),
+                framework_root=str(framework_root),
+                output=str(output),
+                model=None,
+                profile=None,
+                case_id=None,
+                overwrite=False,
+                archive=False,
+                archive_format=None,
+                dry_run=False,
+            )
+
+            with patch("prepare_environment.sync_environment_case"):
+                generated = prepare(args)
+
+            case_dir = generated / "cases" / "case0001"
+            self.assertEqual(
+                {path.name for path in (case_dir / "config").iterdir()},
+                {
+                    "multicomponent.yaml",
+                    "thermodynamics.yaml",
+                    "transport.yaml",
+                    "chemistry.yaml",
+                },
+            )
+            generated_input = (case_dir / "input.dat").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("&mixture_averaged_transport", generated_input)
+            self.assertIn("&one_step_arrhenius", generated_input)
+            self.assertIn("&reactive_navier_stokes", generated_input)
+
 
 class MulticomponentFoundationManifestTests(unittest.TestCase):
     @classmethod
@@ -653,6 +692,33 @@ class MulticomponentFoundationManifestTests(unittest.TestCase):
         )
         self.assertIn("tests/test_multicomponent_reactor.f90", dependencies)
 
+    def test_stage_six_profile_has_complete_fortran_dependencies(self) -> None:
+        files, components = _selected_solver_files(
+            self.solver_root,
+            self.manifest,
+            "cpu_serial_reactive",
+            True,
+        )
+
+        dependencies = _inspect_dependencies(
+            self.solver_root,
+            self.manifest,
+            files,
+            _profile_preprocessor_defines(
+                self.manifest, "cpu_serial_reactive"
+            ),
+        )
+
+        self.assertIn("transport_mixture_averaged", components)
+        self.assertIn("chemistry_one_step_arrhenius", components)
+        self.assertIn("chemistry_integrator_core", components)
+        self.assertIn("reactive_core", components)
+        self.assertIn(
+            "src/extensions/multicomponent/mod_mc_reactive_solver.f90",
+            dependencies,
+        )
+        self.assertIn("tests/test_multicomponent_reactive.f90", dependencies)
+
 
 class NseCaseTemplateTests(unittest.TestCase):
     def test_multicomponent_template_exposes_stage_zero_contract(self) -> None:
@@ -795,6 +861,32 @@ class NseCaseTemplateTests(unittest.TestCase):
         self.assertIn("pre_exponential_factor: 1000.0", chemistry)
         self.assertIn("type: homogeneous_reactor", template)
         self.assertIn("chemistry_cfl: 0.1", template)
+
+    def test_reactive_template_exposes_stage_six(self) -> None:
+        template = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "nse_multicomponent_reactive.yaml"
+        ).read_text(encoding="utf-8")
+        multicomponent = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "extensions"
+            / "multicomponent_reactive.yaml"
+        ).read_text(encoding="utf-8")
+        transport = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "extensions"
+            / "transport_one_step_reactive.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("transport: config/transport.yaml", template)
+        self.assertIn("chemistry: config/chemistry.yaml", template)
+        self.assertIn("mode: reactive_navier_stokes", multicomponent)
+        self.assertIn("model: mixture_averaged", transport)
+        self.assertIn("coupling_scheme: strang", template)
+        self.assertIn("chemistry_time_integration: ssprk3_subcycled", template)
 
     def test_parallel_features_and_runtime_counts_are_template_fields(self) -> None:
         template = (

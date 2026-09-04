@@ -9,6 +9,8 @@
 > Stage 4ではNASA-7物性に加え、混合平均species拡散、Newton粘性、
 > Fourier熱伝導まで実装済みです。Stage 5では断熱・定容0次元反応器、
 > 一段不可逆Arrhenius反応、SSPRK3時間積分まで実装済みです。
+> Stage 6ではStage 4の流体輸送とStage 5の化学反応をStrang分割で結合し、
+> 化学反応の自動subcyclingを実装済みです。
 > Stage 2の共通γモデルも独立profileとして維持しています。
 
 MPI＋CUDAで分散HIT初期化またはPetersen–Livescu forcingを使う場合は、
@@ -54,6 +56,7 @@ Navier-Stokesソルバーです。全backendの面別周期／特性無反射／
 | `cpu_serial_thermally_perfect` | CPU逐次 | Stage 3 NASA-7熱的完全混合気体 |
 | `cpu_serial_viscous` | CPU逐次 | Stage 4拡散・粘性・熱伝導 |
 | `cpu_serial_reactor` | CPU逐次 | Stage 5断熱・定容0次元有限反応速度化学 |
+| `cpu_serial_reactive` | CPU逐次 | Stage 6 Strang分割反応性多成分Navier--Stokes |
 
 新規cloneではFrameWorkモノレポと`2decomp-fft`サブモジュールをまとめて取得します。
 

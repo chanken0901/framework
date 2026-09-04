@@ -2,8 +2,8 @@
 
 > Windows／Linuxのコマンドとパスの対応は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。Linuxでは`linux_gnu_mpi`または`linux_hpc_slurm`など、実行機に対応する選択肢を使用します。
 
-**版:** 1.5
-**更新日:** 2026-09-03
+**版:** 1.6
+**更新日:** 2026-09-04
 **機械可読の正本:** `environment_options.yaml`
 
 ## ケース拡張テンプレート
@@ -26,6 +26,11 @@ case:
 
 Stage 5の`nse_multicomponent_reactor`は`multicomponent`、`thermodynamics`、
 `chemistry`だけを生成する。格子輸送を行わないため`transport`は生成しない。
+
+Stage 6の`nse_multicomponent_reactive`は`multicomponent`、`thermodynamics`、
+`transport`、`chemistry`をすべて生成する。実行環境設計書は
+`environment.nse_multicomponent.reactive.yaml`、solver profileは
+`cpu_serial_reactive`である。
 
 ## NSE CUDA
 

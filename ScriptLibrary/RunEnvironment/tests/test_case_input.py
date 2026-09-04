@@ -349,6 +349,68 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
         }
         return case
 
+    @classmethod
+    def reactive_case(cls) -> dict:
+        case = cls.reactor_case()
+        case["physics"]["multicomponent"]["mode"] = (
+            "reactive_navier_stokes"
+        )
+        case["transport"] = {
+            "model": "mixture_averaged",
+            "reference_dynamic_viscosity": 1.8e-5,
+            "prandtl_number": 0.72,
+            "species_data": {
+                "fuel": {"diffusivity": 2.0e-5},
+                "oxidizer": {"diffusivity": 2.0e-5},
+                "product": {"diffusivity": 2.0e-5},
+            },
+        }
+        case["grid"] = {
+            "nx": 24,
+            "ny": 4,
+            "nz": 4,
+            "x_min": 0.0,
+            "x_max": 1.0,
+            "y_min": 0.0,
+            "y_max": 1.0,
+            "z_min": 0.0,
+            "z_max": 1.0,
+        }
+        case["flow"] = {
+            "type": "periodic_species_wave",
+            "periodic_species_wave": {
+                "initial_condition": "periodic_species_wave_x",
+                "density": 1.0,
+                "temperature": 1200.0,
+                "velocity": [0.0, 0.0, 0.0],
+                "mean_mass_fractions": [0.45, 0.45, 0.10],
+                "positive_species": "fuel",
+                "negative_species": "product",
+                "amplitude": 0.05,
+                "wavenumber": 1,
+            },
+        }
+        case["time"] = {
+            "cfl": 0.2,
+            "diffusion_cfl": 0.4,
+            "chemistry_cfl": 0.1,
+            "maximum_chemistry_substeps": 10000,
+            "dt": 0.0,
+            "nsteps": 20,
+        }
+        case["numerics"] = {
+            "convective_scheme": "rusanov1",
+            "boundary_condition": "periodic",
+            "time_integration": "ssprk3",
+            "coupling_scheme": "strang",
+            "chemistry_time_integration": "ssprk3_subcycled",
+        }
+        case["output"] = {
+            "write_final": True,
+            "filename": "multicomponent_reactive_final.csv",
+        }
+        return case
+
     def test_renders_one_species_stage_zero_contract(self) -> None:
         text = render_nse_multicomponent(self.case())
 
@@ -573,6 +635,43 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
 
         with self.assertRaisesRegex(CaseInputError, "keys must exactly match"):
             render_nse_multicomponent(case, "cpu_serial_reactor")
+
+    def test_renders_stage_six_reactive_flow_contract(self) -> None:
+        text = render_nse_multicomponent(
+            self.reactive_case(), "cpu_serial_reactive"
+        )
+
+        self.assertIn('simulation_mode = "reactive_navier_stokes"', text)
+        self.assertIn('transport_model = "mixture_averaged"', text)
+        self.assertIn('chemistry_model = "one_step_arrhenius"', text)
+        self.assertIn("&thermally_perfect", text)
+        self.assertIn("&mixture_averaged_transport", text)
+        self.assertIn("&one_step_arrhenius", text)
+        self.assertIn("&multicomponent_euler", text)
+        self.assertIn("&reactive_navier_stokes", text)
+        self.assertIn('splitting_scheme = "strang"', text)
+        self.assertIn(
+            'chemistry_integrator = "ssprk3_subcycled"', text
+        )
+        self.assertIn("maximum_chemistry_substeps = 10000", text)
+        self.assertIn(
+            'output_file = "multicomponent_reactive_final.csv"', text
+        )
+
+    def test_stage_six_rejects_unsupported_coupling_scheme(self) -> None:
+        case = self.reactive_case()
+        case["numerics"]["coupling_scheme"] = "lie"
+
+        with self.assertRaisesRegex(CaseInputError, "coupling_scheme"):
+            render_nse_multicomponent(case, "cpu_serial_reactive")
+
+    def test_stage_six_requires_reactive_profile_mode(self) -> None:
+        with self.assertRaisesRegex(
+            CaseInputError, "requires.*reactive_navier_stokes"
+        ):
+            render_nse_multicomponent(
+                self.viscous_case(), "cpu_serial_reactive"
+            )
 
     def test_passive_scalar_rejects_unimplemented_scheme(self) -> None:
         case = self.case()
