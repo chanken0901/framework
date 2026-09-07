@@ -1,4 +1,4 @@
-program main_nse_multicomponent_reactive
+program main_nse_multicomponent_mpi
 !$ use omp_lib, only : omp_get_max_threads
   use mod_mc_config, only : mc_config, read_mc_config, print_mc_config
   use mod_mc_state_layout, only : mc_state_layout, &
@@ -8,7 +8,7 @@ program main_nse_multicomponent_reactive
   use mod_mc_euler_config, only : mc_euler_config, read_mc_euler_config
   use mod_mc_reactive_config, only : mc_reactive_config, &
     read_mc_reactive_config
-  use mod_mc_reactive_solver, only : run_mc_reactive
+  use mod_mc_mpi_pencil, only : mc_mpi_start,mc_mpi_finish,mc_rank,run_mc_reactive_mpi
   use mod_mc_thermodynamics_provider, only : &
     configure_mc_thermodynamics, mc_thermodynamics_provider_name
   use mod_mc_transport_provider, only : configure_mc_transport, &
@@ -24,6 +24,7 @@ program main_nse_multicomponent_reactive
   character(len=512) :: input_path
   logical :: input_exists
 
+  call mc_mpi_start()
   input_path = 'input.dat'
   if (command_argument_count() >= 1) call get_command_argument(1,input_path)
   inquire(file=trim(input_path),exist=input_exists)
@@ -59,9 +60,12 @@ program main_nse_multicomponent_reactive
       mc_chemistry_provider_name /= 'one_step_arrhenius') then
     error stop 'reactive executable contains incompatible providers'
   end if
+  if (mc_rank == 0) then
+!$ write(*,'(A,I0)') 'OpenMP maximum threads per rank = ',omp_get_max_threads()
   call print_mc_config(config)
-!$ write(*,'(A,I0)') 'OpenMP maximum threads = ',omp_get_max_threads()
   call print_mc_providers()
   write(*,'(A,I0)') 'conservative variables = ', layout%nvariables
-  call run_mc_reactive(config,layout,numerics,reactive)
-end program main_nse_multicomponent_reactive
+  end if
+  call run_mc_reactive_mpi(config,layout,numerics,reactive,trim(input_path))
+  call mc_mpi_finish()
+end program main_nse_multicomponent_mpi

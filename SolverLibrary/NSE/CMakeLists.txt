@@ -767,6 +767,26 @@ endif()
 
 if(BUILD_TESTING AND
    NSE_TEST_SUITE STREQUAL "multicomponent_reactive_boundaries")
+  if(NSE_USE_MPI)
+    add_executable(nse_test_multicomponent_mpi_pencil tests/test_multicomponent_mpi_pencil.f90)
+    set_target_properties(nse_test_multicomponent_mpi_pencil PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/mc_mpi_test"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+    target_link_libraries(nse_test_multicomponent_mpi_pencil PRIVATE NSE::core)
+    nse_apply_fortran_options(nse_test_multicomponent_mpi_pencil)
+    foreach(ranks IN ITEMS 1 2 3 4)
+      add_test(NAME nse_mc_pencil_${ranks}
+        COMMAND "${MPIEXEC_EXECUTABLE}" "${MPIEXEC_NUMPROC_FLAG}" ${ranks}
+          ${MPIEXEC_PREFLAGS} $<TARGET_FILE:nse_test_multicomponent_mpi_pencil>
+          ${MPIEXEC_POSTFLAGS}
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_multicomponent_reactive_boundaries.dat")
+      set_tests_properties(nse_mc_pencil_${ranks} PROPERTIES
+        ENVIRONMENT "OMP_NUM_THREADS=2;OMP_DYNAMIC=FALSE"
+        TIMEOUT 60 PROCESSORS ${ranks}
+        PASS_REGULAR_EXPRESSION "MPI pencil transverse/corner and Strang regression passed"
+        FAIL_REGULAR_EXPRESSION "ERROR STOP;Mismatch")
+    endforeach()
+  endif()
   add_executable(nse_test_multicomponent_rhs_workspace
     tests/test_multicomponent_rhs_workspace.f90)
   set_target_properties(nse_test_multicomponent_rhs_workspace PROPERTIES

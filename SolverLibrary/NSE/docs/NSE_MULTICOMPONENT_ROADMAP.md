@@ -1,6 +1,6 @@
 # NSE多成分・反応流拡張仕様
 
-更新日: 2026-09-04
+更新日: 2026-09-07
 
 ## 1. 目的と実装状態
 
@@ -19,6 +19,8 @@
 | `nse_multicomponent` | `cpu_serial_reactor` | Stage 5 0次元有限反応速度化学 |
 | `nse_multicomponent` | `cpu_serial_reactive` | Stage 6反応性多成分Navier--Stokes |
 | `nse_multicomponent` | `cpu_serial_reactive_boundaries` | Stage 7反応流境界・初期条件・時系列出力 |
+| `nse_multicomponent` | `cpu_openmp_reactive` | Stage 8 OpenMP反応流 |
+| `nse_multicomponent` | `cpu_mpi_reactive_pencil` | Stage 8 MPIペンシル分割・OpenMP併用 |
 
 多成分profileの実行ファイル名はすべて`nse_multicomponent`である。profileごとに
 main programとコンパイル対象を切り替えるため、各Stageの実行内容は混在しない。
@@ -692,9 +694,13 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 
 未実装の選択肢は黙って別方式として扱わず、入力生成時または計算開始前に拒否する。
 
-## 15. 後続Stage
+## 15. Stage 8と後続Stage
 
-8. MPI/OpenMP最適化
+Stage 8のMPI/OpenMPを実装した。MPIはx方向を保持しy・zを分割するペンシル方式、
+2層haloとコーナー通信、全rankの時間刻み・保存量集約、rank 0の出力を提供する。
+`use_mpi`は維持する。既存逐次profileも継続使用できる。
+設定・実行手順・制約は`docs/NSE_MULTICOMPONENT_PARALLEL.md`を参照する。
+
 9. 一般座標
 10. CUDA
 

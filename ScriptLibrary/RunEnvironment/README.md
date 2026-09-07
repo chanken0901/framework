@@ -1,5 +1,9 @@
 # 外部実行環境ジェネレーター
 
+Stage 8の多成分MPIペンシル/OpenMP環境は`environment.nse_multicomponent.parallel.yaml`、
+OpenMP単独は`environment.nse_multicomponent.openmp.yaml`を使用する。
+設定とWindows/Linux手順は[多成分並列計算](../../SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_PARALLEL.md)を参照。
+
 ケース設定の分割形式、従来形式との互換性、`resolved_case.yaml`については
 [`CASE_CONFIGURATION.md`](CASE_CONFIGURATION.md)を参照してください。新しい多成分ケースは
 必要な拡張だけを`config/*.yaml`として生成します。

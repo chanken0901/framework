@@ -220,6 +220,8 @@ contains
     case default
       error stop 'invalid multicomponent boundary normal axis'
     end select
+    if (config%global_boundary_lengths(normal_axis) > 0.0_dp) &
+      length_scale=config%global_boundary_lengths(normal_axis)
   end subroutine boundary_spacing_and_length
 
   pure real(dp) function outgoing_or_relaxed( &

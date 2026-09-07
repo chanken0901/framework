@@ -59,6 +59,8 @@ module mod_mc_euler_config
       mc_boundary_face_count,mc_max_species) = 0.0_dp
     real(dp) :: boundary_relaxation_strength = 0.1_dp
     real(dp) :: boundary_length_scale = -1.0_dp
+    ! Internal domain metadata; zero means use the local (serial) extent.
+    real(dp) :: global_boundary_lengths(3) = 0.0_dp
     character(len=32) :: time_integrator = 'ssprk3'
     logical :: write_final = .true.
     character(len=mc_path_length) :: output_file = &

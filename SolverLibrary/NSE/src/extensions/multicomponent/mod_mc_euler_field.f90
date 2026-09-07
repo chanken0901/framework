@@ -78,6 +78,7 @@ contains
         work%velocity(nx,ny,nz,3), &
         work%mass_fractions(nx,ny,nz,layout%nspecies))
     end if
+    !$omp parallel do collapse(3) default(shared) private(i,j,k) schedule(static)
     do k=1,nz
       do j=1,ny
         do i=1,nx
@@ -88,13 +89,16 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
   end subroutine prepare_mc_primitives
 
-  subroutine initialize_mc_euler_state(q, layout, config)
+  subroutine initialize_mc_euler_state(q, layout, config, reference_config)
     real(dp), intent(out) :: q(:,:,:,:)
     type(mc_state_layout), intent(in) :: layout
     type(mc_euler_config), intent(in) :: config
     integer :: i, j, k
+    type(mc_euler_config), intent(in), optional :: reference_config
+    real(dp) :: wave_origin, wave_length
     real(dp) :: x, dx, phase, pressure, gas_constant
     real(dp) :: mass_fractions(layout%nspecies)
     real(dp), parameter :: pi = acos(-1.0_dp)
@@ -102,6 +106,12 @@ contains
     if (size(q,1) /= config%nx .or. size(q,2) /= config%ny .or. &
         size(q,3) /= config%nz .or. size(q,4) /= layout%nvariables) then
       error stop 'multicomponent Euler state allocation is inconsistent'
+    end if
+    wave_origin=config%x_min
+    wave_length=config%x_max-config%x_min
+    if (present(reference_config)) then
+      wave_origin=reference_config%x_min
+      wave_length=reference_config%x_max-reference_config%x_min
     end if
     dx = (config%x_max-config%x_min) / real(config%nx,dp)
     do k = 1, config%nz
@@ -123,7 +133,7 @@ contains
             end if
           case ('periodic_species_wave_x')
             phase = 2.0_dp*pi*real(config%wave_wavenumber,dp)* &
-              (x-config%x_min)/(config%x_max-config%x_min)
+              (x-wave_origin)/wave_length
             mass_fractions = &
               config%wave_mean_mass_fractions(1:layout%nspecies)
             mass_fractions(config%wave_positive_species) = &

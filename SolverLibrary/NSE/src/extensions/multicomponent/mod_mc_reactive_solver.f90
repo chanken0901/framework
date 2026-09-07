@@ -21,6 +21,7 @@ module mod_mc_reactive_solver
   public :: apply_mc_field_chemistry
   public :: advance_mc_reactive_strang
   public :: run_mc_reactive
+  public :: write_reactive_snapshot, write_reactive_history_header, write_reactive_history_row
 
 contains
 
@@ -44,6 +45,7 @@ contains
     fluid_dt = compute_mc_navier_stokes_timestep( &
       q,layout,automatic_numerics)
     chemistry_dt = fluid_dt
+    !$omp parallel do collapse(3) default(shared) private(i,j,k) reduction(min:chemistry_dt)
     do k = 1, size(q,3)
       do j = 1, size(q,2)
         do i = 1, size(q,1)
@@ -54,6 +56,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
     dt = min(fluid_dt,chemistry_dt)
     if (.not. ieee_is_finite(dt) .or. dt <= 0.0_dp) then
       error stop 'reactive Navier-Stokes timestep is invalid'
@@ -71,6 +74,8 @@ contains
     integer :: i, j, k, substeps, maximum_used
 
     maximum_used = 0
+    !$omp parallel do collapse(3) default(shared) private(i,j,k,substeps) &
+    !$omp reduction(max:maximum_used) schedule(guided)
     do k = 1, size(q,3)
       do j = 1, size(q,2)
         do i = 1, size(q,1)
@@ -82,6 +87,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
     call validate_mc_euler_state(q,layout,numerics)
     if (present(maximum_substeps_used)) then
       maximum_substeps_used = maximum_used

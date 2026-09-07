@@ -14,6 +14,8 @@
 > Stage 7では反応流に面別の周期・鏡像・Dirichlet・特性緩和無反射境界、
 > x方向反応衝撃波管、途中スナップショットと積分履歴を追加しています。
 > Stage 2の共通γモデルも独立profileとして維持しています。
+> Stage 8はMPIペンシル分割とOpenMPに対応します。
+> 設定・Windows/Linux手順は[多成分並列計算](docs/NSE_MULTICOMPONENT_PARALLEL.md)を参照してください。
 
 MPI＋CUDAで分散HIT初期化またはPetersen–Livescu forcingを使う場合は、
 [`docs/NSE_CUFFTMP.md`](docs/NSE_CUFFTMP.md)の`cuda_mpi_cufftmp`手順を参照してください。

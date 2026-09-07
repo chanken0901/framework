@@ -498,6 +498,25 @@ class ModularCaseEnvironmentTests(unittest.TestCase):
             self.assertIn("&one_step_arrhenius", generated_input)
             self.assertIn("&reactive_navier_stokes", generated_input)
 
+    def test_stage_eight_generated_environment_contains_pencil_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            args = Namespace(
+                design=str(SCRIPT_DIR / "environment.nse_multicomponent.parallel.yaml"),
+                framework_root=str(SCRIPT_DIR.parents[1]), output=str(Path(temporary) / "parallel"),
+                model=None, profile=None, case_id=None, overwrite=False, archive=False,
+                archive_format=None, dry_run=False,
+            )
+            with patch("prepare_environment.sync_environment_case"):
+                generated = prepare(args)
+            local = generated / "SolverLibrary" / "NSE"
+            self.assertTrue((local / "src/extensions/multicomponent/mod_mc_mpi_pencil.f90").is_file())
+            self.assertTrue((local / "tests/test_multicomponent_mpi_pencil.f90").is_file())
+            text = (generated / "cases/case0001/input.dat").read_text(encoding="utf-8")
+            self.assertIn("&multicomponent_parallel", text)
+            case = load_yaml(generated / "cases/case0001/case.yaml")
+            self.assertTrue(case["solver"]["use_mpi"])
+            self.assertTrue(case["solver"]["use_openmp"])
+
     def test_stage_seven_generates_boundaries_and_output_input(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             framework_root = SCRIPT_DIR.parents[1]

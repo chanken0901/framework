@@ -96,12 +96,12 @@ contains
       q,layout,config,velocity,temperature,mass_fractions,dx,dy,dz, &
       velocity_gradient,temperature_gradient,fraction_gradient)
 
-    do k = 1, config%nz
-      kp = merge(1,k+1,k == config%nz)
-      do j = 1, config%ny
-        jp = merge(1,j+1,j == config%ny)
-        do i = 1, config%nx
-          ip = merge(1,i+1,i == config%nx)
+    ! Independent grid lines own both cells of each transport face.
+    !$omp parallel do collapse(2) default(shared) private(i,j,k,ip,jp,kp,face_flux) schedule(static)
+    do k=1,config%nz
+      do j=1,config%ny
+        do i=1,config%nx
+          ip=merge(1,i+1,i == config%nx)
           if (i < config%nx .or. &
               mc_boundary_is_periodic(config,mc_face_x_max)) then
             call compute_transport_face_flux( &
@@ -136,7 +136,16 @@ contains
               face_flux)
             rhs(i,j,k,:) = rhs(i,j,k,:)-face_flux/dx
           end if
-
+        end do
+      end do
+    end do
+    !$omp end parallel do
+    ! Independent grid lines own both cells of each transport face.
+    !$omp parallel do collapse(2) default(shared) private(i,j,k,ip,jp,kp,face_flux) schedule(static)
+    do k=1,config%nz
+      do i=1,config%nx
+        do j=1,config%ny
+          jp=merge(1,j+1,j == config%ny)
           if (j < config%ny .or. &
               mc_boundary_is_periodic(config,mc_face_y_max)) then
             call compute_transport_face_flux( &
@@ -171,7 +180,16 @@ contains
               face_flux)
             rhs(i,j,k,:) = rhs(i,j,k,:)-face_flux/dy
           end if
-
+        end do
+      end do
+    end do
+    !$omp end parallel do
+    ! Independent grid lines own both cells of each transport face.
+    !$omp parallel do collapse(2) default(shared) private(i,j,k,ip,jp,kp,face_flux) schedule(static)
+    do j=1,config%ny
+      do i=1,config%nx
+        do k=1,config%nz
+          kp=merge(1,k+1,k == config%nz)
           if (k < config%nz .or. &
               mc_boundary_is_periodic(config,mc_face_z_max)) then
             call compute_transport_face_flux( &
@@ -209,6 +227,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
     end associate
   end subroutine add_transport_rhs
 
@@ -229,6 +248,9 @@ contains
     real(dp) :: fractions_plus(layout%nspecies)
     integer :: i, j, k
 
+    !$omp parallel do collapse(3) default(shared) schedule(static) &
+    !$omp private(i,j,k,velocity_minus,velocity_plus,temperature_minus,temperature_plus, &
+    !$omp fractions_minus,fractions_plus)
     do k = 1, size(temperature,3)
       do j = 1, size(temperature,2)
         do i = 1, size(temperature,1)
@@ -276,6 +298,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
   end subroutine compute_mc_gradients
 
   subroutine sample_mc_neighbor_primitive( &
@@ -490,6 +513,9 @@ contains
     dy = (config%y_max-config%y_min)/real(config%ny,dp)
     dz = (config%z_max-config%z_min)/real(config%nz,dp)
     maximum_rate = 0.0_dp
+    !$omp parallel do collapse(3) default(shared) schedule(static) &
+    !$omp private(i,j,k,density,temperature,mass_fractions,cp_value,gas_constant, &
+    !$omp viscosity,conductivity,diffusivities,maximum_diffusivity,rate) reduction(max:maximum_rate)
     do k = 1, config%nz
       do j = 1, config%ny
         do i = 1, config%nx
@@ -514,6 +540,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
     if (maximum_rate <= 0.0_dp) then
       error stop 'transport stability rate must be positive'
     end if

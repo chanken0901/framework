@@ -107,6 +107,8 @@ contains
       a = mod(direction,3)+1
       b = mod(direction+1,3)+1
       periodic = mc_boundary_is_periodic(config,2*direction-1)
+      !$omp parallel do collapse(2) default(shared) schedule(static) &
+      !$omp private(ib,ia,n,left,right,previous,current,first,ghost,rho,vel,temp,p,sound,fractions)
       do ib=1,extent(b)
         do ia=1,extent(a)
           right = 1
@@ -154,6 +156,7 @@ contains
           end do
         end do
       end do
+      !$omp end parallel do
     end do
   contains
     subroutine interior_flux(l,r,d,flux)
@@ -195,6 +198,8 @@ contains
     dy = (config%y_max-config%y_min)/real(config%ny,dp)
     dz = (config%z_max-config%z_min)/real(config%nz,dp)
     maximum_rate = 0.0_dp
+    !$omp parallel do collapse(3) default(shared) schedule(static) &
+    !$omp private(i,j,k,density,velocity,sound_speed,rate) reduction(max:maximum_rate)
     do k = 1, config%nz
       do j = 1, config%ny
         do i = 1, config%nx
@@ -208,6 +213,7 @@ contains
         end do
       end do
     end do
+    !$omp end parallel do
     if (config%dt > 0.0_dp) then
       if (config%dt*maximum_rate > 1.0_dp+100.0_dp*epsilon(1.0_dp)) then
         error stop 'fixed multicomponent Euler dt violates the CFL limit'

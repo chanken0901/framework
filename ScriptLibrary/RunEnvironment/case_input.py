@@ -2665,6 +2665,8 @@ def render_nse_multicomponent(
         "cpu_serial_reactor": "homogeneous_reactor",
         "cpu_serial_reactive": "reactive_navier_stokes",
         "cpu_serial_reactive_boundaries": "reactive_navier_stokes",
+        "cpu_openmp_reactive": "reactive_navier_stokes",
+        "cpu_mpi_reactive_pencil": "reactive_navier_stokes",
     }
     if profile_name in expected_modes and simulation_mode != expected_modes[profile_name]:
         raise CaseInputError(
@@ -2739,7 +2741,7 @@ def render_nse_multicomponent(
     }
     if (
         simulation_mode == "reactive_navier_stokes"
-        and profile_name == "cpu_serial_reactive_boundaries"
+        and profile_name in {"cpu_serial_reactive_boundaries", "cpu_openmp_reactive", "cpu_mpi_reactive_pencil"}
     ):
         stage_names[simulation_mode] = (
             "Stage-7 reactive initial/boundary/output extension"
@@ -2957,7 +2959,7 @@ def render_nse_multicomponent(
         }[simulation_mode]
         if (
             simulation_mode == "reactive_navier_stokes"
-            and profile_name == "cpu_serial_reactive_boundaries"
+            and profile_name in {"cpu_serial_reactive_boundaries", "cpu_openmp_reactive", "cpu_mpi_reactive_pencil"}
         ):
             stage_number = 7
         flow = _mapping(nested(case, "flow", {}), "flow")
@@ -3321,6 +3323,24 @@ def render_nse_multicomponent(
             lines.append("&reactive_navier_stokes")
             _append(lines, list(reactive_settings.items()))
             lines.extend(["/", ""])
+    if profile_name == "cpu_mpi_reactive_pencil":
+        solver = _mapping(case.get("solver", {}), "solver")
+        if solver.get("decomposition", "pencil") != "pencil":
+            raise CaseInputError("Stage-8 MPI requires solver.decomposition=pencil")
+        grid = solver.get("process_grid", [0, 0])
+        if (not isinstance(grid, list) or len(grid) != 2
+                or any(type(n) is not int or n < 0 for n in grid)):
+            raise CaseInputError("solver.process_grid must contain two non-negative integers [Py, Pz]")
+        processes = solver.get("mpi_processes", 1)
+        if type(processes) is not int or processes < 1:
+            raise CaseInputError("solver.mpi_processes must be a positive integer")
+        if all(grid) and grid[0] * grid[1] != processes:
+            raise CaseInputError("solver.process_grid product must equal solver.mpi_processes")
+        if any(n and processes % n for n in grid):
+            raise CaseInputError("solver.process_grid entries must divide solver.mpi_processes")
+        lines.extend(["&multicomponent_parallel"])
+        _append(lines, [("decomposition", "pencil"), ("process_grid", grid)])
+        lines.extend(["/", ""])
     return "\n".join(lines)
 
 

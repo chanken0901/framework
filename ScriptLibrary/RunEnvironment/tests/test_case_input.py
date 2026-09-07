@@ -111,6 +111,36 @@ class CaseInputProfileTests(unittest.TestCase):
 
 
 class MulticomponentFoundationInputTests(unittest.TestCase):
+    def test_stage_eight_pencil_namelist(self) -> None:
+        case = self.reactive_boundary_case()
+        case["solver"] = {"mpi_processes": 4, "decomposition": "pencil", "process_grid": [2, 2]}
+        text = render_nse_multicomponent(case, "cpu_mpi_reactive_pencil")
+        self.assertIn("&multicomponent_parallel", text)
+        self.assertIn('decomposition = "pencil"', text)
+        self.assertIn("process_grid = 2, 2", text)
+        self.assertIn("boundary_face_types", text)
+
+    def test_stage_eight_rejects_invalid_pencil_grid(self) -> None:
+        for grid in ([3, 2], [-1, 0], [True, 4], [2], [3, 0]):
+            with self.subTest(grid=grid):
+                case = self.reactive_boundary_case()
+                case["solver"] = {"mpi_processes": 4, "process_grid": grid}
+                with self.assertRaises(CaseInputError):
+                    render_nse_multicomponent(case, "cpu_mpi_reactive_pencil")
+
+    def test_stage_eight_rejects_slab(self) -> None:
+        case = self.reactive_boundary_case()
+        case["solver"] = {"decomposition": "slab"}
+        with self.assertRaisesRegex(CaseInputError, "decomposition=pencil"):
+            render_nse_multicomponent(case, "cpu_mpi_reactive_pencil")
+
+    def test_stage_eight_openmp_retains_physics_input(self) -> None:
+        case = self.reactive_boundary_case()
+        self.assertEqual(
+            render_nse_multicomponent(case, "cpu_openmp_reactive"),
+            render_nse_multicomponent(case, "cpu_serial_reactive_boundaries"),
+        )
+
     @staticmethod
     def case() -> dict:
         return {
