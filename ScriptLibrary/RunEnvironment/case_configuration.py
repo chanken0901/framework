@@ -8,6 +8,7 @@ import json
 import os
 import uuid
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -181,6 +182,13 @@ def resolve_case_configuration(case_path: str | Path) -> ResolvedCaseConfigurati
     )
 
 
+def _json_yaml_scalar(value: Any) -> str:
+    """Preserve YAML timestamps as ISO text in the JSON-compatible snapshot."""
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def write_resolved_case(
     configuration: ResolvedCaseConfiguration,
     output_path: str | Path | None = None,
@@ -198,7 +206,10 @@ def write_resolved_case(
     )
     try:
         temporary.write_text(
-            json.dumps(configuration.document, indent=2, ensure_ascii=False) + "\n",
+            json.dumps(
+                configuration.document, indent=2, ensure_ascii=False,
+                default=_json_yaml_scalar,
+            ) + "\n",
             encoding="utf-8",
         )
         temporary.replace(destination)

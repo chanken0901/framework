@@ -81,7 +81,8 @@ Stage 0は状態レイアウトとprovider契約、Stage 1は一定速度場に�
 周期パッシブスカラー移流、Stage 2は共通γの非反応・非粘性多成分Euler方程式、
 Stage 3はNASA-7物性による温度・組成依存熱力学、Stage 4は混合平均拡散、
 Newton粘性、Fourier熱伝導、Stage 5は断熱・定容0次元反応器の一段不可逆
-Arrhenius反応、Stage 6はStrang分割による流体・反応結合を検証します。
+Arrhenius反応、Stage 6はStrang分割による流体・反応結合、Stage 7は反応衝撃波管、
+面別物理境界、時系列出力を検証します。
 
 | プロファイル | 内容 |
 |---|---|
@@ -92,6 +93,7 @@ Arrhenius反応、Stage 6はStrang分割による流体・反応結合を検証�
 | `cpu_serial_viscous` | 混合平均species拡散、Newton粘性、Fourier熱伝導 |
 | `cpu_serial_reactor` | NASA-7生成エネルギー、一段Arrhenius反応、SSPRK3均質反応器 |
 | `cpu_serial_reactive` | Stage 4流体輸送とStage 5化学反応のStrang分割結合 |
+| `cpu_serial_reactive_boundaries` | 反応衝撃波管、面別周期・鏡像・Dirichlet・無反射境界、時系列出力 |
 
 ```powershell
 python .\build_model.py .\build.yaml `
@@ -200,6 +202,22 @@ python .\build_model.py .\build.yaml `
 python3 ./build_model.py ./build.yaml \
   --model nse_multicomponent \
   --profile cpu_serial_reactive \
+  --test
+```
+
+Stage 7のビルドと回帰試験:
+
+```powershell
+python .\build_model.py .\build.yaml `
+  --model nse_multicomponent `
+  --profile cpu_serial_reactive_boundaries `
+  --test
+```
+
+```bash
+python3 ./build_model.py ./build.yaml \
+  --model nse_multicomponent \
+  --profile cpu_serial_reactive_boundaries \
   --test
 ```
 

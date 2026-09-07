@@ -11,6 +11,8 @@
 > 一段不可逆Arrhenius反応、SSPRK3時間積分まで実装済みです。
 > Stage 6ではStage 4の流体輸送とStage 5の化学反応をStrang分割で結合し、
 > 化学反応の自動subcyclingを実装済みです。
+> Stage 7では反応流に面別の周期・鏡像・Dirichlet・特性緩和無反射境界、
+> x方向反応衝撃波管、途中スナップショットと積分履歴を追加しています。
 > Stage 2の共通γモデルも独立profileとして維持しています。
 
 MPI＋CUDAで分散HIT初期化またはPetersen–Livescu forcingを使う場合は、
@@ -35,6 +37,7 @@ Navier-Stokesソルバーです。全backendの面別周期／特性無反射／
 - 保存済み乱流場の配置: [`docs/NSE_IMPORTED_TURBULENCE.md`](docs/NSE_IMPORTED_TURBULENCE.md)
 - 平面衝撃波と保存乱流の干渉: [`docs/NSE_SHOCK_TURBULENCE_INTERACTION.md`](docs/NSE_SHOCK_TURBULENCE_INTERACTION.md)
 - 有限高圧室の衝撃波管と保存乱流の干渉: [`docs/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md`](docs/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md)
+- 多成分反応流の面別境界と出力（Stage 7）: [`docs/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md`](docs/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md)
 
 ## 対応プロファイル
 
@@ -57,6 +60,7 @@ Navier-Stokesソルバーです。全backendの面別周期／特性無反射／
 | `cpu_serial_viscous` | CPU逐次 | Stage 4拡散・粘性・熱伝導 |
 | `cpu_serial_reactor` | CPU逐次 | Stage 5断熱・定容0次元有限反応速度化学 |
 | `cpu_serial_reactive` | CPU逐次 | Stage 6 Strang分割反応性多成分Navier--Stokes |
+| `cpu_serial_reactive_boundaries` | CPU逐次 | Stage 7反応衝撃波管・面別物理境界・時系列出力 |
 
 新規cloneではFrameWorkモノレポと`2decomp-fft`サブモジュールをまとめて取得します。
 

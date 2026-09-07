@@ -46,6 +46,16 @@ Fourier熱伝導とStage 5の化学反応をStrang分割で結合します。全
 化学制約から決まり、化学半stepは必要に応じてSSPRK3でsubcycleします。現在はCPU逐次、
 直交等間隔格子、全方向周期境界、一次Rusanov流束に限定しています。
 
+Stage 7の反応衝撃波管と面別物理境界には
+`environment.nse_multicomponent.reactive_boundaries.yaml`を使用します。設計書から
+`case_templates/nse_multicomponent_reactive_shock_tube.yaml`を展開し、x方向の二状態反応流、
+6面別の`periodic`／`reflective`／`dirichlet`／`non_reflecting`、境界参照状態、
+途中スナップショットと積分履歴を設定します。solver profileは
+`cpu_serial_reactive_boundaries`です。現在はCPU逐次、直交等間隔格子、一次Rusanov流束、
+Strang分割に限定されます。境界と出力の詳細は
+[`../../SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md`](../../SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md)
+を参照してください。
+
 > OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通のパス、Python、CMake、MPIの対応表は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 NSEの`case.yaml`では`numerics.convective_scheme`に`keep2`、`keep6`、

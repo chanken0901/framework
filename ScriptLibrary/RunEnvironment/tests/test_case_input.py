@@ -411,6 +411,73 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
         }
         return case
 
+    @classmethod
+    def reactive_boundary_case(cls) -> dict:
+        case = cls.reactive_case()
+        case["flow"] = {
+            "type": "reactive_shock_tube",
+            "reactive_shock_tube": {
+                "initial_condition": "reactive_shock_tube_x",
+                "interface_location": 0.35,
+                "left": {
+                    "density": 1.0,
+                    "velocity": [0.0, 0.0, 0.0],
+                    "pressure": 356334.11220656743,
+                    "mass_fractions": {
+                        "fuel": 0.45,
+                        "oxidizer": 0.45,
+                        "product": 0.10,
+                    },
+                },
+                "right": {
+                    "density": 1.0,
+                    "velocity": [0.0, 0.0, 0.0],
+                    "pressure": 267250.5841549256,
+                    "mass_fractions": {
+                        "fuel": 0.49,
+                        "oxidizer": 0.49,
+                        "product": 0.02,
+                    },
+                },
+            },
+        }
+        case["numerics"].pop("boundary_condition")
+        case["boundary"] = {
+            "faces": {
+                "x_min": {
+                    "type": "dirichlet",
+                    "reference_state": "driver",
+                },
+                "x_max": {
+                    "type": "non_reflecting",
+                    "reference_state": "far_field",
+                },
+                "y_min": {"type": "periodic"},
+                "y_max": {"type": "periodic"},
+                "z_min": {"type": "reflective"},
+                "z_max": {"type": "reflective"},
+            },
+            "reference_states": {
+                "driver": case["flow"]["reactive_shock_tube"]["left"],
+                "far_field": case["flow"]["reactive_shock_tube"]["right"],
+            },
+            "non_reflecting": {
+                "formulation": "characteristic_relaxation",
+                "relaxation_strength": 0.1,
+                "length_scale": "auto",
+            },
+        }
+        case["output"].update(
+            {
+                "write_snapshots": True,
+                "write_history": True,
+                "output_every": 5,
+                "snapshot_prefix": "reactive_shock_tube",
+                "history_filename": "reactive_shock_tube_history.csv",
+            }
+        )
+        return case
+
     def test_renders_one_species_stage_zero_contract(self) -> None:
         text = render_nse_multicomponent(self.case())
 
@@ -671,6 +738,57 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
         ):
             render_nse_multicomponent(
                 self.viscous_case(), "cpu_serial_reactive"
+            )
+
+    def test_renders_stage_seven_boundary_and_output_contract(self) -> None:
+        text = render_nse_multicomponent(
+            self.reactive_boundary_case(),
+            "cpu_serial_reactive_boundaries",
+        )
+
+        self.assertIn('initial_condition = "reactive_shock_tube_x"', text)
+        self.assertIn('boundary_condition = "face_specific"', text)
+        self.assertIn(
+            'boundary_face_types = "dirichlet", "non_reflecting", '
+            '"periodic", "periodic", "reflective", "reflective"',
+            text,
+        )
+        self.assertIn(
+            "boundary_reference_mass_fractions = 0.45000000000000001",
+            text,
+        )
+        self.assertIn("write_snapshots = .true.", text)
+        self.assertIn("write_history = .true.", text)
+        self.assertIn("output_every = 5", text)
+        self.assertIn('history_file = "reactive_shock_tube_history.csv"', text)
+
+    def test_stage_seven_rejects_unpaired_periodic_faces(self) -> None:
+        case = self.reactive_boundary_case()
+        case["boundary"]["faces"]["y_max"] = {"type": "reflective"}
+
+        with self.assertRaisesRegex(CaseInputError, "periodic y.*paired"):
+            render_nse_multicomponent(
+                case, "cpu_serial_reactive_boundaries"
+            )
+
+    def test_stage_seven_requires_boundary_reference_composition(self) -> None:
+        case = self.reactive_boundary_case()
+        case["boundary"]["reference_states"]["far_field"] = dict(
+            case["boundary"]["reference_states"]["far_field"]
+        )
+        del case["boundary"]["reference_states"]["far_field"][
+            "mass_fractions"
+        ]
+
+        with self.assertRaisesRegex(CaseInputError, "missing: mass_fractions"):
+            render_nse_multicomponent(
+                case, "cpu_serial_reactive_boundaries"
+            )
+
+    def test_stage_six_profile_rejects_stage_seven_features(self) -> None:
+        with self.assertRaisesRegex(CaseInputError, "Stage-6 periodic profile"):
+            render_nse_multicomponent(
+                self.reactive_boundary_case(), "cpu_serial_reactive"
             )
 
     def test_passive_scalar_rejects_unimplemented_scheme(self) -> None:

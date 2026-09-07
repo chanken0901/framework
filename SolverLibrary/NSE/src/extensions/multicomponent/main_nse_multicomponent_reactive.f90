@@ -34,11 +34,12 @@ program main_nse_multicomponent_reactive
 
   call read_mc_config(trim(input_path),config)
   if (trim(config%simulation_mode) /= 'reactive_navier_stokes') then
-    error stop 'stage-6 executable requires mode=reactive_navier_stokes'
+    error stop 'reactive executable requires mode=reactive_navier_stokes'
   end if
   call read_mc_euler_config(trim(input_path),config%nspecies,numerics)
-  if (trim(numerics%initial_condition) /= 'periodic_species_wave_x') then
-    error stop 'stage-6 executable requires periodic_species_wave_x'
+  if (trim(numerics%initial_condition) /= 'periodic_species_wave_x' .and. &
+      trim(numerics%initial_condition) /= 'reactive_shock_tube_x') then
+    error stop 'reactive executable received unsupported initial condition'
   end if
   call read_mc_reactive_config(trim(input_path),reactive)
   call initialize_mc_state_layout(layout,config%nspecies)
@@ -55,7 +56,7 @@ program main_nse_multicomponent_reactive
   if (mc_thermodynamics_provider_name /= 'thermally_perfect' .or. &
       mc_transport_provider_name /= 'mixture_averaged' .or. &
       mc_chemistry_provider_name /= 'one_step_arrhenius') then
-    error stop 'stage-6 executable contains incompatible providers'
+    error stop 'reactive executable contains incompatible providers'
   end if
   call print_mc_config(config)
   call print_mc_providers()

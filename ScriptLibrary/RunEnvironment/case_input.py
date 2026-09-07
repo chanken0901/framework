@@ -1922,6 +1922,258 @@ def _mass_fraction_vector(value: Any, label: str, nspecies: int) -> list[float]:
     return fractions
 
 
+def _species_mass_fraction_vector(
+    value: Any, label: str, species: list[str]
+) -> list[float]:
+    if isinstance(value, dict):
+        normalized = {str(name): fraction for name, fraction in value.items()}
+        if len(normalized) != len(value):
+            raise CaseInputError(f"{label} contains duplicate species names")
+        if set(normalized) != set(species):
+            raise CaseInputError(
+                f"{label} keys must exactly match "
+                "physics.multicomponent.species"
+            )
+        return _mass_fraction_vector(
+            [normalized[name] for name in species], label, len(species)
+        )
+    return _mass_fraction_vector(value, label, len(species))
+
+
+def _resolve_mc_boundary(
+    case: dict[str, Any], species: list[str],
+    thermally_perfect: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    numerics = _mapping(nested(case, "numerics", {}), "numerics")
+    legacy = numerics.get("boundary_condition")
+    boundary = case.get("boundary")
+    default_fractions = [1.0] + [0.0] * (len(species) - 1)
+
+    if boundary is None:
+        normalized = _canonical_selector(str(legacy or "periodic"))
+        if normalized != "periodic":
+            raise CaseInputError(
+                "legacy numerics.boundary_condition supports only PERIODIC; "
+                "use top-level boundary for Stage-7 face settings"
+            )
+        return {
+            "boundary_condition": "periodic",
+            "boundary_face_types": ["periodic"] * len(NSE_BOUNDARY_FACES),
+            "boundary_reference_densities": [1.0] * len(NSE_BOUNDARY_FACES),
+            "boundary_reference_velocities": [0.0] * 18,
+            "boundary_reference_pressures": [1.0] * len(NSE_BOUNDARY_FACES),
+            "boundary_reference_mass_fractions": (
+                [default_fractions[index] for index in range(len(species))
+                 for _face in NSE_BOUNDARY_FACES]
+            ),
+            "boundary_relaxation_strength": 0.1,
+            "boundary_length_scale": -1.0,
+        }
+    if legacy not in {None, ""}:
+        raise CaseInputError(
+            "top-level boundary and numerics.boundary_condition cannot be "
+            "specified together"
+        )
+
+    boundary_map = _mapping(boundary, "boundary")
+    allowed_boundary = {"faces", "reference_states", "non_reflecting"}
+    unknown_boundary = sorted(set(boundary_map)-allowed_boundary)
+    if unknown_boundary:
+        raise CaseInputError(
+            "unknown multicomponent boundary key(s): "
+            + ", ".join(unknown_boundary)
+        )
+    faces = _mapping(boundary_map.get("faces", {}), "boundary.faces")
+    missing_faces = [face for face in NSE_BOUNDARY_FACES if face not in faces]
+    unknown_faces = sorted(set(faces)-set(NSE_BOUNDARY_FACES))
+    if missing_faces:
+        raise CaseInputError(
+            "boundary.faces must explicitly define all six physical faces; "
+            "missing: " + ", ".join(missing_faces)
+        )
+    if unknown_faces:
+        raise CaseInputError(
+            "unknown boundary.faces key(s): " + ", ".join(unknown_faces)
+        )
+
+    non_reflecting = _mapping(
+        boundary_map.get("non_reflecting", {}),
+        "boundary.non_reflecting",
+    )
+    allowed_non_reflecting = {
+        "formulation", "relaxation_strength", "length_scale"
+    }
+    unknown_non_reflecting = sorted(
+        set(non_reflecting)-allowed_non_reflecting
+    )
+    if unknown_non_reflecting:
+        raise CaseInputError(
+            "unknown boundary.non_reflecting key(s): "
+            + ", ".join(unknown_non_reflecting)
+        )
+    formulation = _canonical_selector(
+        str(non_reflecting.get("formulation", "characteristic_relaxation"))
+    )
+    if formulation != "characteristic_relaxation":
+        raise CaseInputError(
+            "boundary.non_reflecting.formulation must be "
+            "CHARACTERISTIC_RELAXATION"
+        )
+    relaxation = _positive_float(
+        non_reflecting.get("relaxation_strength", 0.1),
+        "boundary.non_reflecting.relaxation_strength",
+        allow_zero=True,
+    )
+    length_value = non_reflecting.get("length_scale", "auto")
+    if isinstance(length_value, str):
+        if _canonical_selector(length_value) != "auto":
+            raise CaseInputError(
+                "boundary.non_reflecting.length_scale must be AUTO or positive"
+            )
+        length_scale = -1.0
+    else:
+        length_scale = _positive_float(
+            length_value, "boundary.non_reflecting.length_scale"
+        )
+
+    references = _mapping(
+        boundary_map.get("reference_states", {}),
+        "boundary.reference_states",
+    )
+    resolved: dict[str, tuple[float, list[float], float, list[float]]] = {}
+    for raw_name, raw_state in references.items():
+        name = str(raw_name).strip()
+        if not name:
+            raise CaseInputError(
+                "boundary.reference_states names must not be empty"
+            )
+        state = _mapping(raw_state, f"boundary.reference_states.{name}")
+        allowed = {"density", "velocity", "pressure", "mass_fractions"}
+        if set(state) != allowed:
+            missing = sorted(allowed - set(state))
+            unknown = sorted(set(state) - allowed)
+            detail = []
+            if missing:
+                detail.append("missing: " + ", ".join(missing))
+            if unknown:
+                detail.append("unknown: " + ", ".join(unknown))
+            raise CaseInputError(
+                f"boundary.reference_states.{name} is invalid ("
+                + "; ".join(detail) + ")"
+            )
+        density = _positive_float(
+            state["density"],
+            f"boundary.reference_states.{name}.density",
+        )
+        velocity = list(
+            _vector3(
+                state["velocity"],
+                f"boundary.reference_states.{name}.velocity",
+            )
+        )
+        pressure = _positive_float(
+            state["pressure"],
+            f"boundary.reference_states.{name}.pressure",
+        )
+        composition = _species_mass_fraction_vector(
+            state["mass_fractions"],
+            f"boundary.reference_states.{name}.mass_fractions",
+            species,
+        )
+        if thermally_perfect is not None:
+            gas_constant = thermally_perfect["universal_gas_constant"] * sum(
+                composition[index]
+                / thermally_perfect["molecular_weights"][index]
+                for index in range(len(species))
+            )
+            temperature = pressure/(density*gas_constant)
+            if not (
+                thermally_perfect["temperature_min"]
+                <= temperature
+                <= thermally_perfect["temperature_max"]
+            ):
+                raise CaseInputError(
+                    f"boundary.reference_states.{name} gives "
+                    f"T={temperature:g}, outside the configured "
+                    "thermodynamics temperature range"
+                )
+        resolved[name] = (density,velocity,pressure,composition)
+
+    face_types: list[str] = []
+    densities: list[float] = []
+    velocities: list[float] = []
+    pressures: list[float] = []
+    face_compositions: list[list[float]] = []
+    for face in NSE_BOUNDARY_FACES:
+        face_config = _mapping(faces[face], f"boundary.faces.{face}")
+        allowed_face = {"type", "reference_state"}
+        unknown_face = sorted(set(face_config)-allowed_face)
+        if unknown_face:
+            raise CaseInputError(
+                f"unknown boundary.faces.{face} key(s): "
+                + ", ".join(unknown_face)
+            )
+        if "type" not in face_config:
+            raise CaseInputError(f"boundary.faces.{face}.type is required")
+        face_type = _canonical_selector(str(face_config["type"]))
+        if face_type not in {
+            "periodic", "non_reflecting", "reflective", "dirichlet"
+        }:
+            raise CaseInputError(
+                f"boundary.faces.{face}.type is unsupported"
+            )
+        reference_name = face_config.get("reference_state")
+        if face_type in {"non_reflecting", "dirichlet"}:
+            if not isinstance(reference_name, str) or not reference_name.strip():
+                raise CaseInputError(
+                    f"boundary.faces.{face}.reference_state is required"
+                )
+            reference_name = reference_name.strip()
+            if reference_name not in resolved:
+                raise CaseInputError(
+                    f"boundary.faces.{face}.reference_state={reference_name!r} "
+                    "is not defined"
+                )
+            density, velocity, pressure, composition = resolved[reference_name]
+        else:
+            if reference_name not in {None, ""}:
+                raise CaseInputError(
+                    f"boundary.faces.{face}.reference_state is not valid for "
+                    f"{face_type.upper()}"
+                )
+            density, velocity, pressure, composition = (
+                1.0, [0.0, 0.0, 0.0], 1.0, default_fractions
+            )
+        face_types.append(face_type)
+        densities.append(density)
+        velocities.extend(velocity)
+        pressures.append(pressure)
+        face_compositions.append(composition)
+
+    for first, second, direction in ((0, 1, "x"), (2, 3, "y"), (4, 5, "z")):
+        if (face_types[first] == "periodic") != (
+            face_types[second] == "periodic"
+        ):
+            raise CaseInputError(
+                f"periodic {direction} boundaries must be paired"
+            )
+    all_periodic = all(value == "periodic" for value in face_types)
+    return {
+        "boundary_condition": "periodic" if all_periodic else "face_specific",
+        "boundary_face_types": face_types,
+        "boundary_reference_densities": densities,
+        "boundary_reference_velocities": velocities,
+        "boundary_reference_pressures": pressures,
+        "boundary_reference_mass_fractions": [
+            face_compositions[face][species_index]
+            for species_index in range(len(species))
+            for face in range(len(NSE_BOUNDARY_FACES))
+        ],
+        "boundary_relaxation_strength": relaxation,
+        "boundary_length_scale": length_scale,
+    }
+
+
 def _nasa7_coefficients(value: Any, label: str) -> list[float]:
     if not isinstance(value, (list, tuple)) or len(value) != 7:
         raise CaseInputError(f"{label} must contain exactly seven coefficients")
@@ -2291,7 +2543,7 @@ def _homogeneous_reactor_settings(
 
 
 def _reactive_navier_stokes_settings(
-    time: dict[str, Any], numerics: dict[str, Any]
+    time: dict[str, Any], numerics: dict[str, Any], output: dict[str, Any]
 ) -> dict[str, Any]:
     splitting_scheme = _canonical_selector(
         str(numerics.get("coupling_scheme", "strang"))
@@ -2326,11 +2578,39 @@ def _reactive_navier_stokes_settings(
         raise CaseInputError(
             "time.maximum_chemistry_substeps must be a positive integer"
         )
+    write_snapshots = output.get("write_snapshots", False)
+    write_history = output.get("write_history", False)
+    if not isinstance(write_snapshots, bool):
+        raise CaseInputError("output.write_snapshots must be true or false")
+    if not isinstance(write_history, bool):
+        raise CaseInputError("output.write_history must be true or false")
+    output_every = output.get("output_every", 1)
+    if (
+        isinstance(output_every, bool)
+        or not isinstance(output_every, int)
+        or output_every < 1
+    ):
+        raise CaseInputError("output.output_every must be a positive integer")
+    snapshot_prefix = str(
+        output.get("snapshot_prefix", "multicomponent_reactive")
+    ).strip()
+    history_file = str(
+        output.get("history_filename", "multicomponent_reactive_history.csv")
+    ).strip()
+    if write_snapshots and not snapshot_prefix:
+        raise CaseInputError("output.snapshot_prefix must not be empty")
+    if write_history and not history_file:
+        raise CaseInputError("output.history_filename must not be empty")
     return {
         "splitting_scheme": splitting_scheme,
         "chemistry_integrator": chemistry_integrator,
         "chemistry_cfl": chemistry_cfl,
         "maximum_chemistry_substeps": maximum_substeps,
+        "write_snapshots": write_snapshots,
+        "write_history": write_history,
+        "output_every": output_every,
+        "snapshot_prefix": snapshot_prefix,
+        "history_file": history_file,
     }
 
 
@@ -2384,6 +2664,7 @@ def render_nse_multicomponent(
         "cpu_serial_viscous": "viscous_navier_stokes",
         "cpu_serial_reactor": "homogeneous_reactor",
         "cpu_serial_reactive": "reactive_navier_stokes",
+        "cpu_serial_reactive_boundaries": "reactive_navier_stokes",
     }
     if profile_name in expected_modes and simulation_mode != expected_modes[profile_name]:
         raise CaseInputError(
@@ -2456,6 +2737,13 @@ def render_nse_multicomponent(
             "Stage-6 Strang-split reactive multicomponent Navier-Stokes"
         ),
     }
+    if (
+        simulation_mode == "reactive_navier_stokes"
+        and profile_name == "cpu_serial_reactive_boundaries"
+    ):
+        stage_names[simulation_mode] = (
+            "Stage-7 reactive initial/boundary/output extension"
+        )
     lines = [
         "! Automatically generated from case.yaml and referenced extensions.",
         f"! {stage_names[simulation_mode]}.",
@@ -2667,8 +2955,26 @@ def render_nse_multicomponent(
             "viscous_navier_stokes": 4,
             "reactive_navier_stokes": 6,
         }[simulation_mode]
+        if (
+            simulation_mode == "reactive_navier_stokes"
+            and profile_name == "cpu_serial_reactive_boundaries"
+        ):
+            stage_number = 7
         flow = _mapping(nested(case, "flow", {}), "flow")
         flow_type = _canonical_selector(str(flow.get("type", "")))
+        if (
+            simulation_mode == "reactive_navier_stokes"
+            and profile_name == "cpu_serial_reactive"
+            and (
+                flow_type != "periodic_species_wave"
+                or case.get("boundary") is not None
+            )
+        ):
+            raise CaseInputError(
+                "cpu_serial_reactive is the Stage-6 periodic profile; use "
+                "cpu_serial_reactive_boundaries for Stage-7 initial and "
+                "boundary conditions"
+            )
         time = _mapping(nested(case, "time", {}), "time")
         numerics = _mapping(nested(case, "numerics", {}), "numerics")
         output = _mapping(nested(case, "output", {}), "output")
@@ -2702,15 +3008,13 @@ def render_nse_multicomponent(
         wave_amplitude = None
         wave_wavenumber = None
 
-        if simulation_mode in {
-            "viscous_navier_stokes",
-            "reactive_navier_stokes",
-        }:
-            if flow_type != "periodic_species_wave":
-                raise CaseInputError(
-                    f"stage-{stage_number} requires "
-                    "flow.type='periodic_species_wave'"
-                )
+        if (
+            simulation_mode in {
+                "viscous_navier_stokes",
+                "reactive_navier_stokes",
+            }
+            and flow_type == "periodic_species_wave"
+        ):
             initial = _mapping(
                 nested(case, "flow.periodic_species_wave", {}),
                 "flow.periodic_species_wave",
@@ -2779,56 +3083,66 @@ def render_nse_multicomponent(
                     "positive integer"
                 )
         else:
-            if flow_type != "multispecies_sod":
+            if simulation_mode == "viscous_navier_stokes":
+                raise CaseInputError(
+                    "stage-4 requires flow.type='periodic_species_wave'"
+                )
+            if simulation_mode == "reactive_navier_stokes":
+                expected_flow_type = "reactive_shock_tube"
+                initial_key = "reactive_shock_tube"
+            else:
+                expected_flow_type = "multispecies_sod"
+                initial_key = "multispecies_sod"
+            if flow_type != expected_flow_type:
                 raise CaseInputError(
                     f"stage-{stage_number} requires "
-                    "flow.type='multispecies_sod'"
+                    f"flow.type={expected_flow_type!r}"
                 )
             initial = _mapping(
-                nested(case, "flow.multispecies_sod", {}),
-                "flow.multispecies_sod",
+                nested(case, f"flow.{initial_key}", {}),
+                f"flow.{initial_key}",
             )
             left = _mapping(
-                initial.get("left"), "flow.multispecies_sod.left"
+                initial.get("left"), f"flow.{initial_key}.left"
             )
             right = _mapping(
-                initial.get("right"), "flow.multispecies_sod.right"
+                initial.get("right"), f"flow.{initial_key}.right"
             )
             interface_location = _finite_float(
                 initial.get("interface_location", 0.5),
-                "flow.multispecies_sod.interface_location",
+                f"flow.{initial_key}.interface_location",
             )
             if not extents[0] < interface_location < extents[1]:
                 raise CaseInputError(
-                    "flow.multispecies_sod.interface_location must lie inside x"
+                    f"flow.{initial_key}.interface_location must lie inside x"
                 )
             left_density = _positive_float(
-                left.get("density"), "flow.multispecies_sod.left.density"
+                left.get("density"), f"flow.{initial_key}.left.density"
             )
             left_velocity = _vector3(
-                left.get("velocity"), "flow.multispecies_sod.left.velocity"
+                left.get("velocity"), f"flow.{initial_key}.left.velocity"
             )
             left_pressure = _positive_float(
-                left.get("pressure"), "flow.multispecies_sod.left.pressure"
+                left.get("pressure"), f"flow.{initial_key}.left.pressure"
             )
-            left_fractions = _mass_fraction_vector(
+            left_fractions = _species_mass_fraction_vector(
                 left.get("mass_fractions"),
-                "flow.multispecies_sod.left.mass_fractions",
-                len(species),
+                f"flow.{initial_key}.left.mass_fractions",
+                species,
             )
             right_density = _positive_float(
-                right.get("density"), "flow.multispecies_sod.right.density"
+                right.get("density"), f"flow.{initial_key}.right.density"
             )
             right_velocity = _vector3(
-                right.get("velocity"), "flow.multispecies_sod.right.velocity"
+                right.get("velocity"), f"flow.{initial_key}.right.velocity"
             )
             right_pressure = _positive_float(
-                right.get("pressure"), "flow.multispecies_sod.right.pressure"
+                right.get("pressure"), f"flow.{initial_key}.right.pressure"
             )
-            right_fractions = _mass_fraction_vector(
+            right_fractions = _species_mass_fraction_vector(
                 right.get("mass_fractions"),
-                "flow.multispecies_sod.right.mass_fractions",
-                len(species),
+                f"flow.{initial_key}.right.mass_fractions",
+                species,
             )
             if thermally_perfect is not None:
                 for side_name, density, pressure_value, fractions in (
@@ -2851,7 +3165,7 @@ def render_nse_multicomponent(
                         <= thermally_perfect["temperature_max"]
                     ):
                         raise CaseInputError(
-                            f"flow.multispecies_sod.{side_name} gives "
+                            f"flow.{initial_key}.{side_name} gives "
                             f"T={initial_temperature:g}, outside the "
                             "configured thermodynamics temperature range"
                         )
@@ -2880,42 +3194,49 @@ def render_nse_multicomponent(
         fixed_dt = _positive_float(
             time.get("dt",0.0), "time.dt", allow_zero=True
         )
-        default_initial_condition = (
-            "periodic_species_wave_x"
-            if simulation_mode in {
-                "viscous_navier_stokes",
-                "reactive_navier_stokes",
-            }
-            else "multispecies_sod_x"
-        )
+        if flow_type == "periodic_species_wave":
+            default_initial_condition = "periodic_species_wave_x"
+            initial_condition_label = (
+                "flow.periodic_species_wave.initial_condition"
+            )
+        elif flow_type == "reactive_shock_tube":
+            default_initial_condition = "reactive_shock_tube_x"
+            initial_condition_label = (
+                "flow.reactive_shock_tube.initial_condition"
+            )
+        else:
+            default_initial_condition = "multispecies_sod_x"
+            initial_condition_label = "flow.multispecies_sod.initial_condition"
         initial_condition = _canonical_selector(
             str(initial.get("initial_condition", default_initial_condition))
         )
         riemann_solver = _canonical_selector(
             str(numerics.get("convective_scheme","rusanov1"))
         )
-        boundary_condition = _canonical_selector(
-            str(numerics.get("boundary_condition","periodic"))
-        )
+        if simulation_mode == "reactive_navier_stokes":
+            boundary_values = _resolve_mc_boundary(
+                case,species,thermally_perfect
+            )
+            boundary_condition = boundary_values["boundary_condition"]
+        else:
+            boundary_values = {}
+            boundary_condition = _canonical_selector(
+                str(numerics.get("boundary_condition","periodic"))
+            )
         time_integrator = _canonical_selector(
             str(numerics.get("time_integration","ssprk3"))
-        )
-        initial_condition_label = (
-            "flow.periodic_species_wave.initial_condition"
-            if simulation_mode in {
-                "viscous_navier_stokes",
-                "reactive_navier_stokes",
-            }
-            else "flow.multispecies_sod.initial_condition"
         )
         supported_values = {
             initial_condition_label: (
                 initial_condition, default_initial_condition
             ),
             "numerics.convective_scheme": (riemann_solver,"rusanov1"),
-            "numerics.boundary_condition": (boundary_condition,"periodic"),
             "numerics.time_integration": (time_integrator,"ssprk3"),
         }
+        if simulation_mode != "reactive_navier_stokes":
+            supported_values["numerics.boundary_condition"] = (
+                boundary_condition,"periodic"
+            )
         for label, (actual, expected) in supported_values.items():
             if actual != expected:
                 raise CaseInputError(
@@ -2973,6 +3294,20 @@ def render_nse_multicomponent(
                 ("wave_wavenumber",wave_wavenumber),
                 ("riemann_solver",riemann_solver),
                 ("boundary_condition",boundary_condition),
+                ("boundary_face_types",boundary_values.get(
+                    "boundary_face_types")),
+                ("boundary_reference_densities",boundary_values.get(
+                    "boundary_reference_densities")),
+                ("boundary_reference_velocities",boundary_values.get(
+                    "boundary_reference_velocities")),
+                ("boundary_reference_pressures",boundary_values.get(
+                    "boundary_reference_pressures")),
+                ("boundary_reference_mass_fractions",boundary_values.get(
+                    "boundary_reference_mass_fractions")),
+                ("boundary_relaxation_strength",boundary_values.get(
+                    "boundary_relaxation_strength")),
+                ("boundary_length_scale",boundary_values.get(
+                    "boundary_length_scale")),
                 ("time_integrator",time_integrator),
                 ("write_final",write_final),
                 ("output_file",output_file),
@@ -2981,7 +3316,7 @@ def render_nse_multicomponent(
         lines.extend(["/",""])
         if simulation_mode == "reactive_navier_stokes":
             reactive_settings = _reactive_navier_stokes_settings(
-                time, numerics
+                time, numerics, output
             )
             lines.append("&reactive_navier_stokes")
             _append(lines, list(reactive_settings.items()))

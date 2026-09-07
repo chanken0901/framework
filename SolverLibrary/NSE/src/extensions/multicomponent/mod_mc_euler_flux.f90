@@ -1,8 +1,12 @@
 module mod_mc_euler_flux
   use mod_precision, only : dp
   use mod_mc_state_layout, only : mc_state_layout
-  use mod_mc_euler_config, only : mc_euler_config
-  use mod_mc_euler_field, only : validate_mc_euler_state
+  use mod_mc_euler_config, only : mc_euler_config, &
+    mc_face_x_min, mc_face_x_max, mc_face_y_min, mc_face_y_max, &
+    mc_face_z_min, mc_face_z_max
+  use mod_mc_euler_field, only : validate_mc_euler_state, &
+    mc_primitive_workspace, prepare_mc_primitives, evaluate_mc_primitive
+  use mod_mc_boundary, only : mc_boundary_state, mc_boundary_is_periodic
   use mod_mc_thermodynamics_provider, only : mc_mixture_density, &
     mc_pressure, mc_sound_speed
   implicit none
@@ -10,7 +14,7 @@ module mod_mc_euler_flux
 
   public :: compute_mc_euler_physical_flux
   public :: compute_mc_euler_rusanov_flux
-  public :: compute_mc_euler_rhs
+  public :: compute_mc_euler_rhs, compute_mc_euler_rhs_prepared
   public :: compute_mc_euler_timestep
   public :: advance_mc_euler_ssprk3
 
@@ -62,55 +66,121 @@ contains
       0.5_dp*wave_speed*(right-left)
   end subroutine compute_mc_euler_rusanov_flux
 
-  subroutine compute_mc_euler_rhs(q, rhs, layout, config)
+  subroutine compute_mc_euler_rhs(q,rhs,layout,config,workspace)
     real(dp), intent(in) :: q(:,:,:,:)
     real(dp), intent(out) :: rhs(:,:,:,:)
     type(mc_state_layout), intent(in) :: layout
     type(mc_euler_config), intent(in) :: config
-    integer :: i, j, k, im, ip, jm, jp, km, kp
-    real(dp) :: dx, dy, dz
-    real(dp) :: positive_flux(layout%nvariables)
-    real(dp) :: negative_flux(layout%nvariables)
+    type(mc_primitive_workspace), intent(inout), optional, target :: workspace
+    type(mc_primitive_workspace), target :: local_workspace
+    type(mc_primitive_workspace), pointer :: work
 
-    if (any(shape(rhs) /= shape(q))) then
+    work => local_workspace
+    if (present(workspace)) work => workspace
+    call prepare_mc_primitives(q,layout,config,work)
+    call compute_mc_euler_rhs_prepared(q,rhs,layout,config,work)
+  end subroutine compute_mc_euler_rhs
+
+  ! Low-level kernel: work MUST have been prepared from this exact q.
+  ! Each line retains its previous face, including the periodic seam.
+  ! Thus every face is evaluated once without full-volume flux buffers.
+  subroutine compute_mc_euler_rhs_prepared(q,rhs,layout,config,work)
+    real(dp), intent(in) :: q(:,:,:,:)
+    real(dp), intent(out) :: rhs(:,:,:,:)
+    type(mc_state_layout), intent(in) :: layout
+    type(mc_euler_config), intent(in) :: config
+    type(mc_primitive_workspace), intent(in) :: work
+    integer :: direction, a, b, ia, ib, n, extent(3), left(3), right(3)
+    real(dp) :: spacing(3), previous(layout%nvariables)
+    real(dp) :: current(layout%nvariables), first(layout%nvariables)
+    real(dp) :: ghost(layout%nvariables), rho, vel(3), temp, p, sound
+    real(dp) :: fractions(layout%nspecies)
+    logical :: periodic
+
+    if (any(shape(rhs) /= shape(q))) &
       error stop 'multicomponent Euler RHS allocation does not match state'
-    end if
-    call validate_mc_euler_state(q,layout,config)
-    dx = (config%x_max-config%x_min)/real(config%nx,dp)
-    dy = (config%y_max-config%y_min)/real(config%ny,dp)
-    dz = (config%z_max-config%z_min)/real(config%nz,dp)
+    extent = [config%nx,config%ny,config%nz]
+    spacing = [config%x_max-config%x_min,config%y_max-config%y_min, &
+      config%z_max-config%z_min]/real(extent,dp)
     rhs = 0.0_dp
-    do k = 1, config%nz
-      km = merge(config%nz,k-1,k == 1)
-      kp = merge(1,k+1,k == config%nz)
-      do j = 1, config%ny
-        jm = merge(config%ny,j-1,j == 1)
-        jp = merge(1,j+1,j == config%ny)
-        do i = 1, config%nx
-          im = merge(config%nx,i-1,i == 1)
-          ip = merge(1,i+1,i == config%nx)
-          call compute_mc_euler_rusanov_flux( &
-            q(i,j,k,:),q(ip,j,k,:),layout,config%gamma,1,positive_flux)
-          call compute_mc_euler_rusanov_flux( &
-            q(im,j,k,:),q(i,j,k,:),layout,config%gamma,1,negative_flux)
-          rhs(i,j,k,:) = rhs(i,j,k,:) - &
-            (positive_flux-negative_flux)/dx
-          call compute_mc_euler_rusanov_flux( &
-            q(i,j,k,:),q(i,jp,k,:),layout,config%gamma,2,positive_flux)
-          call compute_mc_euler_rusanov_flux( &
-            q(i,jm,k,:),q(i,j,k,:),layout,config%gamma,2,negative_flux)
-          rhs(i,j,k,:) = rhs(i,j,k,:) - &
-            (positive_flux-negative_flux)/dy
-          call compute_mc_euler_rusanov_flux( &
-            q(i,j,k,:),q(i,j,kp,:),layout,config%gamma,3,positive_flux)
-          call compute_mc_euler_rusanov_flux( &
-            q(i,j,km,:),q(i,j,k,:),layout,config%gamma,3,negative_flux)
-          rhs(i,j,k,:) = rhs(i,j,k,:) - &
-            (positive_flux-negative_flux)/dz
+    do direction=1,3
+      a = mod(direction,3)+1
+      b = mod(direction+1,3)+1
+      periodic = mc_boundary_is_periodic(config,2*direction-1)
+      do ib=1,extent(b)
+        do ia=1,extent(a)
+          right = 1
+          right(a)=ia
+          right(b)=ib
+          left=right
+          if (periodic) then
+            left(direction)=extent(direction)
+            call interior_flux(left,right,direction,previous)
+          else
+            call mc_boundary_state(q(right(1),right(2),right(3),:), &
+              ghost,layout,config,2*direction-1)
+            call evaluate_mc_primitive(ghost,layout,config%gamma,rho,vel, &
+              temp,fractions,p,sound)
+            call cached_rusanov(ghost,q(right(1),right(2),right(3),:), &
+              vel(direction),work%velocity(right(1),right(2),right(3),direction), &
+              p,work%pressure(right(1),right(2),right(3)), &
+              sound,work%sound_speed(right(1),right(2),right(3)), &
+              layout,direction,previous)
+          end if
+          first=previous
+          do n=1,extent(direction)
+            left=right
+            left(direction)=n
+            right=left
+            if (n < extent(direction)) then
+              right(direction)=n+1
+              call interior_flux(left,right,direction,current)
+            else if (periodic) then
+              current=first
+            else
+              call mc_boundary_state(q(left(1),left(2),left(3),:), &
+                ghost,layout,config,2*direction)
+              call evaluate_mc_primitive(ghost,layout,config%gamma,rho,vel, &
+                temp,fractions,p,sound)
+              call cached_rusanov(q(left(1),left(2),left(3),:),ghost, &
+                work%velocity(left(1),left(2),left(3),direction),vel(direction), &
+                work%pressure(left(1),left(2),left(3)),p, &
+                work%sound_speed(left(1),left(2),left(3)),sound, &
+                layout,direction,current)
+            end if
+            rhs(left(1),left(2),left(3),:) = rhs(left(1),left(2),left(3),:) - &
+              (current-previous)/spacing(direction)
+            previous=current
+          end do
         end do
       end do
     end do
-  end subroutine compute_mc_euler_rhs
+  contains
+    subroutine interior_flux(l,r,d,flux)
+      integer, intent(in) :: l(3),r(3),d
+      real(dp), intent(out) :: flux(:)
+      call cached_rusanov(q(l(1),l(2),l(3),:),q(r(1),r(2),r(3),:), &
+        work%velocity(l(1),l(2),l(3),d),work%velocity(r(1),r(2),r(3),d), &
+        work%pressure(l(1),l(2),l(3)),work%pressure(r(1),r(2),r(3)), &
+        work%sound_speed(l(1),l(2),l(3)),work%sound_speed(r(1),r(2),r(3)), &
+        layout,d,flux)
+    end subroutine interior_flux
+  end subroutine compute_mc_euler_rhs_prepared
+
+  subroutine cached_rusanov(left,right,ul,ur,pl,pr,cl,cr,layout,d,flux)
+    real(dp), intent(in) :: left(:),right(:),ul,ur,pl,pr,cl,cr
+    type(mc_state_layout), intent(in) :: layout
+    integer, intent(in) :: d
+    real(dp), intent(out) :: flux(:)
+    real(dp) :: fl(size(left)),fr(size(right))
+    fl=left*ul
+    fr=right*ur
+    fl(layout%momentum(d))=fl(layout%momentum(d))+pl
+    fr(layout%momentum(d))=fr(layout%momentum(d))+pr
+    fl(layout%total_energy)=(left(layout%total_energy)+pl)*ul
+    fr(layout%total_energy)=(right(layout%total_energy)+pr)*ur
+    flux=0.5_dp*(fl+fr)-0.5_dp*max(abs(ul)+cl,abs(ur)+cr)*(right-left)
+  end subroutine cached_rusanov
 
   real(dp) function compute_mc_euler_timestep(q,layout,config) result(dt)
     real(dp), intent(in) :: q(:,:,:,:)
@@ -148,21 +218,26 @@ contains
     end if
   end function compute_mc_euler_timestep
 
-  subroutine advance_mc_euler_ssprk3(q,q0,rhs,dt,layout,config)
+  subroutine advance_mc_euler_ssprk3(q,q0,rhs,dt,layout,config,workspace)
     real(dp), intent(inout) :: q(:,:,:,:), q0(:,:,:,:), rhs(:,:,:,:)
     real(dp), intent(in) :: dt
     type(mc_state_layout), intent(in) :: layout
     type(mc_euler_config), intent(in) :: config
+    type(mc_primitive_workspace), intent(inout), optional, target :: workspace
+    type(mc_primitive_workspace), target :: local_workspace
+    type(mc_primitive_workspace), pointer :: work
 
     if (any(shape(q0) /= shape(q)) .or. any(shape(rhs) /= shape(q))) then
       error stop 'multicomponent Euler SSPRK3 work arrays do not match state'
     end if
+    work => local_workspace
+    if (present(workspace)) work => workspace
     q0 = q
-    call compute_mc_euler_rhs(q,rhs,layout,config)
+    call compute_mc_euler_rhs(q,rhs,layout,config,work)
     q = q0 + dt*rhs
-    call compute_mc_euler_rhs(q,rhs,layout,config)
+    call compute_mc_euler_rhs(q,rhs,layout,config,work)
     q = 0.75_dp*q0 + 0.25_dp*(q+dt*rhs)
-    call compute_mc_euler_rhs(q,rhs,layout,config)
+    call compute_mc_euler_rhs(q,rhs,layout,config,work)
     q = (1.0_dp/3.0_dp)*q0 + (2.0_dp/3.0_dp)*(q+dt*rhs)
     call validate_mc_euler_state(q,layout,config)
   end subroutine advance_mc_euler_ssprk3

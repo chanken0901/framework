@@ -1,0 +1,88 @@
+! Stage-7 reactive shock tube and face-boundary smoke test.
+&multicomponent
+  nspecies = 3
+  species_names = "fuel", "oxidizer", "product"
+  simulation_mode = "reactive_navier_stokes"
+  thermodynamics_model = "thermally_perfect"
+  transport_model = "mixture_averaged"
+  chemistry_model = "one_step_arrhenius"
+/
+
+&thermally_perfect
+  thermo_species_names = "fuel", "oxidizer", "product"
+  universal_gas_constant = 8314.46261815324
+  temperature_min = 200.0
+  temperature_max = 6000.0
+  temperature_tolerance = 1.0e-10
+  molecular_weights = 28.0, 28.0, 28.0
+  temperature_midpoints = 1000.0, 1000.0, 1000.0
+  nasa_low_coefficients = 3.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 3.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 3.5, 0.0, 0.0, 0.0, 0.0, -5000.0, 0.0
+  nasa_high_coefficients = 3.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 3.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 3.5, 0.0, 0.0, 0.0, 0.0, -5000.0, 0.0
+/
+
+&mixture_averaged_transport
+  transport_species_names = "fuel", "oxidizer", "product"
+  reference_dynamic_viscosity = 1.8e-5
+  prandtl_number = 0.72
+  species_diffusivities = 2.0e-5, 2.0e-5, 2.0e-5
+/
+
+&one_step_arrhenius
+  chemistry_species_names = "fuel", "oxidizer", "product"
+  reactant_stoich = 1.0, 1.0, 0.0
+  product_stoich = 0.0, 0.0, 2.0
+  reaction_orders = 1.0, 1.0, 0.0
+  pre_exponential_factor = 1000.0
+  temperature_exponent = 0.0
+  activation_temperature = 2000.0
+/
+
+&multicomponent_euler
+  nx = 24
+  ny = 4
+  nz = 4
+  x_min = 0.0
+  x_max = 1.0
+  y_min = 0.0
+  y_max = 0.25
+  z_min = 0.0
+  z_max = 0.25
+  cfl = 0.15
+  diffusion_cfl = 0.30
+  dt = 0.0
+  nsteps = 4
+  initial_condition = "reactive_shock_tube_x"
+  interface_location = 0.35
+  left_density = 1.0
+  left_velocity = 0.0, 0.0, 0.0
+  left_pressure = 356334.11220656743
+  left_mass_fractions = 0.45, 0.45, 0.10
+  right_density = 1.0
+  right_velocity = 0.0, 0.0, 0.0
+  right_pressure = 267250.5841549256
+  right_mass_fractions = 0.49, 0.49, 0.02
+  riemann_solver = "rusanov1"
+  boundary_condition = "face_specific"
+  boundary_face_types = "dirichlet", "non_reflecting", "periodic", "periodic", "periodic", "periodic"
+  boundary_reference_densities = 1.0, 1.0, 1.0, 1.0, 1.0, 1.0
+  boundary_reference_velocities = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+  boundary_reference_pressures = 356334.11220656743, 267250.5841549256, 1.0, 1.0, 1.0, 1.0
+  boundary_reference_mass_fractions = 0.45, 0.49, 1.0, 1.0, 1.0, 1.0, 0.45, 0.49, 0.0, 0.0, 0.0, 0.0, 0.10, 0.02, 0.0, 0.0, 0.0, 0.0
+  boundary_relaxation_strength = 0.1
+  boundary_length_scale = -1.0
+  time_integrator = "ssprk3"
+  write_final = .true.
+  output_file = "multicomponent_reactive_boundaries_final.csv"
+/
+
+&reactive_navier_stokes
+  splitting_scheme = "strang"
+  chemistry_integrator = "ssprk3_subcycled"
+  chemistry_cfl = 0.10
+  maximum_chemistry_substeps = 10000
+  write_snapshots = .true.
+  write_history = .true.
+  output_every = 3
+  snapshot_prefix = "multicomponent_reactive_boundaries"
+  history_file = "multicomponent_reactive_boundaries_history.csv"
+/

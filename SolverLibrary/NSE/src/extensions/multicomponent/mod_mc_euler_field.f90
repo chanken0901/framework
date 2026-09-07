@@ -1,10 +1,11 @@
 module mod_mc_euler_field
+  use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
   use mod_precision, only : dp
   use mod_mc_state_layout, only : mc_state_layout
   use mod_mc_euler_config, only : mc_euler_config
   use mod_mc_thermodynamics_provider, only : mc_mixture_density, mc_pressure, &
     mc_temperature, mc_total_energy_from_primitive, &
-    mc_mixture_gas_constant
+    mc_mixture_gas_constant, mc_mixture_gamma
   implicit none
   private
 
@@ -14,7 +15,80 @@ module mod_mc_euler_field
   public :: compute_mc_euler_totals
   public :: compute_mc_euler_minima
 
+  ! Caller-owned scratch: refreshed from q on every RHS evaluation.
+  type, public :: mc_primitive_workspace
+    real(dp), allocatable :: density(:,:,:), temperature(:,:,:)
+    real(dp), allocatable :: pressure(:,:,:), sound_speed(:,:,:)
+    real(dp), allocatable :: velocity(:,:,:,:), mass_fractions(:,:,:,:)
+  end type mc_primitive_workspace
+  public :: prepare_mc_primitives, evaluate_mc_primitive
+
 contains
+
+  subroutine evaluate_mc_primitive(state,layout,gamma,density,velocity, &
+      temperature,mass_fractions,pressure,sound_speed)
+    real(dp), intent(in) :: state(:), gamma
+    type(mc_state_layout), intent(in) :: layout
+    real(dp), intent(out) :: density, velocity(3), temperature
+    real(dp), intent(out) :: mass_fractions(:), pressure, sound_speed
+    real(dp) :: gas_constant, gamma_value
+
+    if (.not. all(ieee_is_finite(state))) &
+      error stop 'non-finite multicomponent state'
+    if (minval(state(layout%first_species:layout%last_species)) < -1.0e-13_dp) &
+      error stop 'negative species partial density in Euler state'
+    density = mc_mixture_density(state,layout)
+    if (density <= 1.0e-13_dp) &
+      error stop 'non-positive mixture density in Euler state'
+    velocity = state(layout%momentum)/density
+    mass_fractions = state(layout%first_species:layout%last_species)/density
+    temperature = mc_temperature(state,layout,gamma)
+    gas_constant = mc_mixture_gas_constant(mass_fractions,layout)
+    pressure = density*gas_constant*temperature
+    if (.not. ieee_is_finite(pressure) .or. pressure <= 1.0e-13_dp) &
+      error stop 'non-positive or non-finite pressure in Euler state'
+    gamma_value = mc_mixture_gamma(mass_fractions,layout,temperature,gamma)
+    sound_speed = sqrt(gamma_value*pressure/density)
+    if (.not. ieee_is_finite(sound_speed)) &
+      error stop 'non-finite multicomponent sound speed'
+  end subroutine evaluate_mc_primitive
+
+  subroutine prepare_mc_primitives(q,layout,config,work)
+    real(dp), intent(in) :: q(:,:,:,:)
+    type(mc_state_layout), intent(in) :: layout
+    type(mc_euler_config), intent(in) :: config
+    type(mc_primitive_workspace), intent(inout) :: work
+    integer :: i,j,k,nx,ny,nz
+
+    nx = config%nx
+    ny = config%ny
+    nz = config%nz
+    if (any(shape(q) /= [nx,ny,nz,layout%nvariables])) &
+      error stop 'multicomponent primitive state shape mismatch'
+    if (allocated(work%density)) then
+      if (any(shape(work%density) /= [nx,ny,nz]) .or. &
+          size(work%mass_fractions,4) /= layout%nspecies) then
+        deallocate(work%density,work%temperature,work%pressure, &
+          work%sound_speed,work%velocity,work%mass_fractions)
+      end if
+    end if
+    if (.not. allocated(work%density)) then
+      allocate(work%density(nx,ny,nz),work%temperature(nx,ny,nz), &
+        work%pressure(nx,ny,nz),work%sound_speed(nx,ny,nz), &
+        work%velocity(nx,ny,nz,3), &
+        work%mass_fractions(nx,ny,nz,layout%nspecies))
+    end if
+    do k=1,nz
+      do j=1,ny
+        do i=1,nx
+          call evaluate_mc_primitive(q(i,j,k,:),layout,config%gamma, &
+            work%density(i,j,k),work%velocity(i,j,k,:), &
+            work%temperature(i,j,k),work%mass_fractions(i,j,k,:), &
+            work%pressure(i,j,k),work%sound_speed(i,j,k))
+        end do
+      end do
+    end do
+  end subroutine prepare_mc_primitives
 
   subroutine initialize_mc_euler_state(q, layout, config)
     real(dp), intent(out) :: q(:,:,:,:)
@@ -35,7 +109,7 @@ contains
         do i = 1, config%nx
           x = config%x_min + (real(i,dp)-0.5_dp)*dx
           select case (trim(config%initial_condition))
-          case ('multispecies_sod_x')
+          case ('multispecies_sod_x', 'reactive_shock_tube_x')
             if (x < config%interface_location) then
               call set_mc_euler_conservative_state( &
                 q(i,j,k,:), layout, config%gamma, config%left_density, &

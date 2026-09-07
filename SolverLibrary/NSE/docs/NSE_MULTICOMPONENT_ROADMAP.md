@@ -18,6 +18,7 @@
 | `nse_multicomponent` | `cpu_serial_viscous` | Stage 4拡散・粘性・熱伝導 |
 | `nse_multicomponent` | `cpu_serial_reactor` | Stage 5 0次元有限反応速度化学 |
 | `nse_multicomponent` | `cpu_serial_reactive` | Stage 6反応性多成分Navier--Stokes |
+| `nse_multicomponent` | `cpu_serial_reactive_boundaries` | Stage 7反応流境界・初期条件・時系列出力 |
 
 多成分profileの実行ファイル名はすべて`nse_multicomponent`である。profileごとに
 main programとコンパイル対象を切り替えるため、各Stageの実行内容は混在しない。
@@ -255,7 +256,27 @@ dt = min(dt_convective, dt_diffusive, dt_chemistry)
 Stage 5と同じ時間発展になり、反応速度ゼロではStage 4と同じ流体更新になることを
 回帰試験で確認する。
 
-## 9. 保存変数
+## 9. Stage 7: 反応流境界・初期条件・出力
+
+Stage 7はStage 6の流体・反応結合を維持し、6物理面を独立指定できる境界APIを追加する。
+各面の選択肢は`periodic`、`reflective`、`dirichlet`、`non_reflecting`である。
+`reflective`は法線運動量だけを反転する自由滑り・断熱鏡像境界、`dirichlet`は指定した
+参照状態を境界外状態にする。`non_reflecting`は内部と参照状態の平均比熱比を固定し、
+外向き特性を内部から、流入特性を参照状態へ緩和して構成するcharacteristic-relaxation
+近似である。参照状態には密度、3方向速度、圧力、全species質量分率を指定する。
+
+境界条件は対流流束と輸送流束の両方へ適用する。周期境界は同じ座標方向の両面を対で
+指定しなければならない。初期条件`reactive_shock_tube_x`はx方向の界面位置を境に、
+左右それぞれの密度、速度、圧力、組成から二状態反応流を生成する。
+
+場のCSVはstep 0、指定間隔、必ず最終stepへ出力できる。積分履歴にはspecies別質量、
+全質量、3方向運動量、全エネルギー、最小species部分密度、最小混合密度、最小圧力、
+最小温度を記録する。非周期境界では領域内保存量が境界流束により変化するため、
+終了時には保存誤差ではなく初期値に対する最大相対領域総量変化を表示する。
+
+設定、式、出力名の詳細は`docs/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md`を参照する。
+
+## 10. 保存変数
 
 全Stageで状態レイアウトを共有する。
 
@@ -267,7 +288,7 @@ nvar = Ns + 4
 
 `Ns=1`では5保存変数になる。変数番号は`mod_mc_state_layout`だけが決定する。
 
-## 10. Provider境界
+## 11. Provider境界
 
 熱力学、輸送、化学反応は同一APIを持つ代替Fortran moduleとして実装し、manifestが
 ビルド時に各1個を選択する。
@@ -283,10 +304,10 @@ Stage 2では熱力学providerが混合密度、圧力、音速を提供する�
 Stage 4では輸送providerを`mixture_averaged`へ交換し、Stage 0--3では`none`を維持する。
 Stage 5では輸送providerを`none`に戻し、化学反応providerを
 `one_step_arrhenius`へ交換する。Stage 0--4の化学反応providerは引き続き`none`である。
-Stage 6では`thermally_perfect`、`mixture_averaged`、`one_step_arrhenius`を同時に選択する。
+Stage 6とStage 7では`thermally_perfect`、`mixture_averaged`、`one_step_arrhenius`を同時に選択する。
 入力名とコンパイル済みproviderが異なる場合は開始前に停止する。
 
-## 11. 設計書
+## 12. 設計書
 
 新しく生成する多成分ケースは、共通条件を`case.yaml`、拡張固有条件を
 `config/*.yaml`へ分ける。詳細な規約は
@@ -468,11 +489,66 @@ numerics:
   chemistry_time_integration: ssprk3_subcycled
 ```
 
+Stage 7は`case_templates/nse_multicomponent_reactive_shock_tube.yaml`をひな型にする。
+4拡張はStage 6と同じであり、初期条件、面別境界、参照状態、時系列出力を
+`case.yaml`に追加する。
+
+```yaml
+flow:
+  type: reactive_shock_tube
+  reactive_shock_tube:
+    initial_condition: reactive_shock_tube_x
+    interface_location: 0.35
+    left:
+      density: 1.0
+      velocity: [0.0, 0.0, 0.0]
+      pressure: 356334.11220656743
+      mass_fractions: {fuel: 0.45, oxidizer: 0.45, product: 0.10}
+    right:
+      density: 1.0
+      velocity: [0.0, 0.0, 0.0]
+      pressure: 267250.5841549256
+      mass_fractions: {fuel: 0.49, oxidizer: 0.49, product: 0.02}
+
+boundary:
+  faces:
+    x_min: {type: dirichlet, reference_state: driver}
+    x_max: {type: non_reflecting, reference_state: far_field}
+    y_min: {type: periodic}
+    y_max: {type: periodic}
+    z_min: {type: periodic}
+    z_max: {type: periodic}
+  reference_states:
+    driver:
+      density: 1.0
+      velocity: [0.0, 0.0, 0.0]
+      pressure: 356334.11220656743
+      mass_fractions: {fuel: 0.45, oxidizer: 0.45, product: 0.10}
+    far_field:
+      density: 1.0
+      velocity: [0.0, 0.0, 0.0]
+      pressure: 267250.5841549256
+      mass_fractions: {fuel: 0.49, oxidizer: 0.49, product: 0.02}
+  non_reflecting:
+    formulation: characteristic_relaxation
+    relaxation_strength: 0.1
+    length_scale: auto
+
+output:
+  write_final: true
+  filename: multicomponent_reactive_shock_tube_final.csv
+  write_snapshots: true
+  write_history: true
+  output_every: 5
+  snapshot_prefix: multicomponent_reactive_shock_tube
+  history_filename: multicomponent_reactive_shock_tube_history.csv
+```
+
 旧来の一体型`case.yaml`も引き続き読み込めるが、同じ設定を本体と拡張ファイルへ
 重複定義することはできない。入力生成時には全設定を展開した`resolved_case.yaml`も
 保存する。
 
-## 12. ビルドと実行環境
+## 13. ビルドと実行環境
 
 Windows（PowerShell）:
 
@@ -544,9 +620,32 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
   --test
 ```
 
-## 13. 制約
+Stage 7はprofile `cpu_serial_reactive_boundaries`と実行環境設計書
+`ScriptLibrary/RunEnvironment/environment.nse_multicomponent.reactive_boundaries.yaml`を使用する。
 
-### 13.1 Stage 4
+Windows（PowerShell）:
+
+```powershell
+python .\ScriptLibrary\BuildSolver\build_model.py `
+  .\ScriptLibrary\BuildSolver\build.yaml `
+  --model nse_multicomponent `
+  --profile cpu_serial_reactive_boundaries `
+  --test
+```
+
+Linux（bash）:
+
+```bash
+python3 ./ScriptLibrary/BuildSolver/build_model.py \
+  ./ScriptLibrary/BuildSolver/build.yaml \
+  --model nse_multicomponent \
+  --profile cpu_serial_reactive_boundaries \
+  --test
+```
+
+## 14. 制約
+
+### 14.1 Stage 4
 
 - CPU逐次実行のみ
 - 三次元直交等間隔格子
@@ -560,7 +659,7 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 - x方向の周期species波初期条件のみ
 - CSVは最終時刻だけ出力
 
-### 13.2 Stage 5
+### 14.2 Stage 5
 
 - CPU逐次の0次元均質反応器のみ
 - 断熱・定容のみ
@@ -570,7 +669,7 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 - 空間輸送、粘性、拡散との結合は未実装
 - 標準テンプレートの3species物性・反応係数は数値検証用であり、実在反応機構ではない
 
-### 13.3 Stage 6
+### 14.3 Stage 6
 
 - CPU逐次実行のみ
 - 三次元直交等間隔格子、全方向周期境界のみ
@@ -581,16 +680,25 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 - 標準テンプレートの物性・反応係数は結合検証用であり、実在反応機構ではない
 - MPI、OpenMP、CUDAは未対応
 
+### 14.4 Stage 7
+
+- CPU逐次、三次元直交等間隔格子のみ
+- 対流は一次Rusanov流束、時間積分はSSPRK3、流体・化学結合はStrang分割のみ
+- 一段不可逆反応を1本だけ使用可能
+- `non_reflecting`は固定平均比熱比のcharacteristic-relaxation近似であり、厳密な変比熱NSCBCではない
+- `reflective`は自由滑り・断熱鏡像境界であり、no-slip壁ではない
+- MPI、OpenMP、CUDA、一般座標は未対応
+- 標準テンプレートの物性・反応係数は数値結合検証用であり、実在反応機構ではない
+
 未実装の選択肢は黙って別方式として扱わず、入力生成時または計算開始前に拒否する。
 
-## 14. 後続Stage
+## 15. 後続Stage
 
-7. 反応流境界条件、初期条件、出力
 8. MPI/OpenMP最適化
 9. 一般座標
 10. CUDA
 
-## 15. 必須回帰条件
+## 16. 必須回帰条件
 
 - 現行`nse`のmanifest、実行ファイル名、既定profileを維持する。
 - Stage 0/1 profileを独立してビルド・実行できる。
@@ -614,3 +722,8 @@ python3 ./ScriptLibrary/BuildSolver/build_model.py \
 - Stage 6の周期反応流で総質量、運動量、全エネルギーを保存する。
 - 一様反応場のStage 6結果がStage 5の化学更新と一致する。
 - 反応速度ゼロのStage 6結果がStage 4の流体更新と一致する。
+- Dirichlet境界が指定した密度、速度、圧力、全species質量分率を再現する。
+- 一様参照状態の無反射境界が一様場を変化させない。
+- 鏡像境界が法線運動量だけを反転し、全エネルギーを保存する。
+- 非周期境界を含む粘性・反応流の右辺と時間発展が有限かつ正値である。
+- Stage 7のstep 0、指定間隔、最終stepスナップショットと積分履歴を生成する。

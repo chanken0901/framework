@@ -498,6 +498,53 @@ class ModularCaseEnvironmentTests(unittest.TestCase):
             self.assertIn("&one_step_arrhenius", generated_input)
             self.assertIn("&reactive_navier_stokes", generated_input)
 
+    def test_stage_seven_generates_boundaries_and_output_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            framework_root = SCRIPT_DIR.parents[1]
+            output = Path(temporary) / "nse_multicomponent_stage7_case0001"
+            args = Namespace(
+                design=str(
+                    SCRIPT_DIR
+                    / "environment.nse_multicomponent.reactive_boundaries.yaml"
+                ),
+                framework_root=str(framework_root),
+                output=str(output),
+                model=None,
+                profile=None,
+                case_id=None,
+                overwrite=False,
+                archive=False,
+                archive_format=None,
+                dry_run=False,
+            )
+
+            with patch("prepare_environment.sync_environment_case"):
+                generated = prepare(args)
+
+            case_dir = generated / "cases" / "case0001"
+            self.assertEqual(
+                {path.name for path in (case_dir / "config").iterdir()},
+                {
+                    "multicomponent.yaml",
+                    "thermodynamics.yaml",
+                    "transport.yaml",
+                    "chemistry.yaml",
+                },
+            )
+            generated_input = (case_dir / "input.dat").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(
+                'initial_condition = "reactive_shock_tube_x"',
+                generated_input,
+            )
+            self.assertIn(
+                'boundary_condition = "face_specific"', generated_input
+            )
+            self.assertIn('"dirichlet", "non_reflecting"', generated_input)
+            self.assertIn("write_snapshots = .true.", generated_input)
+            self.assertIn("write_history = .true.", generated_input)
+
 
 class MulticomponentFoundationManifestTests(unittest.TestCase):
     @classmethod
@@ -719,6 +766,33 @@ class MulticomponentFoundationManifestTests(unittest.TestCase):
         )
         self.assertIn("tests/test_multicomponent_reactive.f90", dependencies)
 
+    def test_stage_seven_profile_has_complete_fortran_dependencies(self) -> None:
+        files, components = _selected_solver_files(
+            self.solver_root,
+            self.manifest,
+            "cpu_serial_reactive_boundaries",
+            True,
+        )
+
+        dependencies = _inspect_dependencies(
+            self.solver_root,
+            self.manifest,
+            files,
+            _profile_preprocessor_defines(
+                self.manifest, "cpu_serial_reactive_boundaries"
+            ),
+        )
+
+        self.assertIn("reactive_boundary_tests", components)
+        self.assertIn(
+            "src/extensions/multicomponent/mod_mc_boundary.f90",
+            dependencies,
+        )
+        self.assertIn(
+            "tests/test_multicomponent_reactive_boundaries.f90",
+            dependencies,
+        )
+
 
 class NseCaseTemplateTests(unittest.TestCase):
     def test_multicomponent_template_exposes_stage_zero_contract(self) -> None:
@@ -887,6 +961,21 @@ class NseCaseTemplateTests(unittest.TestCase):
         self.assertIn("model: mixture_averaged", transport)
         self.assertIn("coupling_scheme: strang", template)
         self.assertIn("chemistry_time_integration: ssprk3_subcycled", template)
+
+    def test_reactive_boundary_template_exposes_stage_seven(self) -> None:
+        template = (
+            SCRIPT_DIR
+            / "case_templates"
+            / "nse_multicomponent_reactive_shock_tube.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("type: reactive_shock_tube", template)
+        self.assertIn("initial_condition: reactive_shock_tube_x", template)
+        self.assertIn("x_min: {type: dirichlet", template)
+        self.assertIn("x_max: {type: non_reflecting", template)
+        self.assertIn("mass_fractions: {fuel:", template)
+        self.assertIn("write_snapshots: true", template)
+        self.assertIn("write_history: true", template)
 
     def test_parallel_features_and_runtime_counts_are_template_fields(self) -> None:
         template = (

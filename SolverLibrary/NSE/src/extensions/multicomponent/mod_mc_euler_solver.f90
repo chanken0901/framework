@@ -1,4 +1,5 @@
 module mod_mc_euler_solver
+  use mod_mc_euler_field, only : mc_primitive_workspace
   use mod_precision, only : dp
   use mod_mc_config, only : mc_config
   use mod_mc_state_layout, only : mc_state_layout
@@ -21,6 +22,7 @@ contains
     type(mc_config), intent(in) :: config
     type(mc_state_layout), intent(in) :: layout
     type(mc_euler_config), intent(in) :: euler
+    type(mc_primitive_workspace) :: workspace
     real(dp), allocatable :: q(:,:,:,:), q0(:,:,:,:), rhs(:,:,:,:)
     real(dp), allocatable :: initial_totals(:), final_totals(:)
     real(dp) :: dt, time, conservation_error, scale
@@ -48,7 +50,7 @@ contains
     write(*,'(A,I0)') 'nsteps = ', euler%nsteps
     do step = 1, euler%nsteps
       dt = compute_mc_euler_timestep(q,layout,euler)
-      call advance_mc_euler_ssprk3(q,q0,rhs,dt,layout,euler)
+      call advance_mc_euler_ssprk3(q,q0,rhs,dt,layout,euler,workspace)
       time = time + dt
     end do
 

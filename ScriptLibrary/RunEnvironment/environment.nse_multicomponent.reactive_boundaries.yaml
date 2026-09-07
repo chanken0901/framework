@@ -1,0 +1,29 @@
+schema_version: 1
+environment_id: nse_multicomponent_reactive_boundaries
+
+option_catalogs: []
+
+select:
+  source: local_framework
+  destination: windows_research_runs
+  model: nse_multicomponent
+  target: windows_gnu_msmpi
+  case: nse_multicomponent_reactive_shock_tube
+  execution: release
+  scheduler: disabled
+  archive: none
+
+parallel:
+  use_mpi: false
+  use_openmp: false
+  use_cuda: false
+
+case:
+  id: case0001
+  label: reactive_shock_tube
+  description: Stage-7 reactive shock tube with face-specific boundaries
+  project_name: NSEMulticomponentResearch
+
+solver:
+  profile: cpu_serial_reactive_boundaries
+  include_tests: true

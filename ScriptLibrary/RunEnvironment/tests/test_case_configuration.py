@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -11,6 +12,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from case_configuration import (  # noqa: E402
     CaseConfigurationError,
+    ResolvedCaseConfiguration,
     resolve_case_configuration,
     write_resolved_case,
 )
@@ -18,6 +20,47 @@ from yaml_support import load_yaml  # noqa: E402
 
 
 class CaseConfigurationTests(unittest.TestCase):
+    def test_resolved_case_preserves_dates_and_nested_timestamps(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "case.yaml"
+            stamp = datetime(2026, 9, 7, 12, 34, 56, 123456,
+                             tzinfo=timezone(timedelta(hours=9)))
+            document = {"created": stamp, "metadata": {
+                "dates": [date(2026, 9, 7), datetime(2026, 9, 7, 1, 2, 3)],
+                "label": "衝撃波", "enabled": True, "steps": 1000,
+            }}
+            resolved = ResolvedCaseConfiguration(document, (source,), {})
+            output = write_resolved_case(resolved)
+            reloaded = load_yaml(output)
+            self.assertEqual(reloaded["created"], stamp.isoformat())
+            self.assertEqual(reloaded["metadata"]["dates"],
+                             ["2026-09-07", "2026-09-07T01:02:03"])
+            self.assertEqual(reloaded["metadata"]["steps"], 1000)
+            self.assertIs(reloaded["metadata"]["enabled"], True)
+            self.assertIs(document["created"], stamp)
+
+    def test_unquoted_yaml_timestamp_can_be_resolved_and_written(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "case.yaml"
+            source.write_text("created: 2026-09-07T12:34:56+09:00\n"
+                              "date: 2026-09-07\nphysics:\n  model: nse\n",
+                              encoding="utf-8")
+            output = write_resolved_case(resolve_case_configuration(source))
+            self.assertEqual(load_yaml(output)["created"],
+                             "2026-09-07T12:34:56+09:00")
+            self.assertEqual(load_yaml(output)["date"], "2026-09-07")
+
+    def test_unsupported_object_does_not_replace_existing_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "case.yaml"
+            destination = Path(temporary) / "resolved_case.yaml"
+            destination.write_text('{"existing": true}\n', encoding="utf-8")
+            resolved = ResolvedCaseConfiguration({"bad": object()}, (source,), {})
+            with self.assertRaises(TypeError):
+                write_resolved_case(resolved)
+            self.assertEqual(load_yaml(destination), {"existing": True})
+            self.assertEqual(list(Path(temporary).glob(".*.tmp")), [])
+
     @staticmethod
     def _write_modular_case(root: Path, extensions: str) -> Path:
         case_path = root / "case.yaml"

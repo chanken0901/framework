@@ -7,7 +7,7 @@ module mod_mc_viscous_solver
     compute_mc_euler_totals, compute_mc_euler_minima
   use mod_mc_euler_solver, only : write_mc_euler_csv
   use mod_mc_viscous_flux, only : compute_mc_navier_stokes_timestep, &
-    advance_mc_navier_stokes_ssprk3
+    advance_mc_navier_stokes_ssprk3, mc_navier_stokes_workspace
   implicit none
   private
 
@@ -24,6 +24,7 @@ contains
     real(dp) :: dt, time, conservation_error, scale
     real(dp) :: minimum_species, minimum_density, minimum_pressure
     real(dp) :: minimum_temperature
+    type(mc_navier_stokes_workspace) :: workspace
     integer :: step, variable
 
     allocate(q(numerics%nx,numerics%ny,numerics%nz,layout%nvariables))
@@ -41,7 +42,7 @@ contains
     do step = 1, numerics%nsteps
       dt = compute_mc_navier_stokes_timestep(q,layout,numerics)
       call advance_mc_navier_stokes_ssprk3( &
-        q,q0,rhs,dt,layout,numerics)
+        q,q0,rhs,dt,layout,numerics,workspace)
       time = time+dt
     end do
 
