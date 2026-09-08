@@ -767,6 +767,15 @@ endif()
 
 if(BUILD_TESTING AND
    NSE_TEST_SUITE STREQUAL "multicomponent_reactive_boundaries")
+  add_executable(nse_test_multicomponent_geometry tests/test_multicomponent_geometry.f90)
+  set_target_properties(nse_test_multicomponent_geometry PROPERTIES
+    Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/mc_geometry_test"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+  target_link_libraries(nse_test_multicomponent_geometry PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_multicomponent_geometry)
+  add_test(NAME nse_mc_geometry COMMAND $<TARGET_FILE:nse_test_multicomponent_geometry>
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_multicomponent_reactive_boundaries.dat")
+  set_tests_properties(nse_mc_geometry PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=2")
   if(NSE_USE_MPI)
     add_executable(nse_test_multicomponent_mpi_pencil tests/test_multicomponent_mpi_pencil.f90)
     set_target_properties(nse_test_multicomponent_mpi_pencil PROPERTIES

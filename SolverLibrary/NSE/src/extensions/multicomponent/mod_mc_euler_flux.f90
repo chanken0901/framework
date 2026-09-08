@@ -1,5 +1,6 @@
 module mod_mc_euler_flux
   use mod_precision, only : dp
+  use mod_mc_mapped_flux, only: mc_mapped_rhs, mc_mapped_rate
   use mod_mc_state_layout, only : mc_state_layout
   use mod_mc_euler_config, only : mc_euler_config, &
     mc_face_x_min, mc_face_x_max, mc_face_y_min, mc_face_y_max, &
@@ -99,6 +100,10 @@ contains
 
     if (any(shape(rhs) /= shape(q))) &
       error stop 'multicomponent Euler RHS allocation does not match state'
+    if(config%geometry /= 'cartesian') then
+      call mc_mapped_rhs(q,rhs,layout,config,.false.)
+      return
+    end if
     extent = [config%nx,config%ny,config%nz]
     spacing = [config%x_max-config%x_min,config%y_max-config%y_min, &
       config%z_max-config%z_min]/real(extent,dp)
@@ -209,6 +214,7 @@ contains
           rate = (abs(velocity(1))+sound_speed)/dx + &
             (abs(velocity(2))+sound_speed)/dy + &
             (abs(velocity(3))+sound_speed)/dz
+          if(config%geometry /= 'cartesian') rate=mc_mapped_rate(config,i,j,k,velocity,sound_speed)
           maximum_rate = max(maximum_rate,rate)
         end do
       end do

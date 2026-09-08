@@ -1,6 +1,7 @@
 module mod_mc_euler_field
   use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
   use mod_precision, only : dp
+  use mod_mc_geometry, only: mc_cell_volume
   use mod_mc_state_layout, only : mc_state_layout
   use mod_mc_euler_config, only : mc_euler_config
   use mod_mc_thermodynamics_provider, only : mc_mixture_density, mc_pressure, &
@@ -204,7 +205,7 @@ contains
     real(dp), intent(in) :: q(:,:,:,:)
     type(mc_euler_config), intent(in) :: config
     real(dp), intent(out) :: totals(:)
-    integer :: variable
+    integer :: variable, i, j, k
     real(dp) :: cell_volume
 
     if (size(totals) /= size(q,4)) then
@@ -213,9 +214,20 @@ contains
     cell_volume = (config%x_max-config%x_min) / real(config%nx,dp) * &
       (config%y_max-config%y_min) / real(config%ny,dp) * &
       (config%z_max-config%z_min) / real(config%nz,dp)
-    do variable = 1, size(q,4)
-      totals(variable) = sum(q(:,:,:,variable))*cell_volume
-    end do
+    if(config%geometry == 'cartesian') then
+      do variable=1,size(q,4)
+        totals(variable)=sum(q(:,:,:,variable))*cell_volume
+      end do
+    else
+      totals=0
+      do k=1,size(q,3)
+        do j=1,size(q,2)
+          do i=1,size(q,1)
+            totals=totals+q(i,j,k,:)*mc_cell_volume(config,i,j,k)
+          end do
+        end do
+      end do
+    end if
   end subroutine compute_mc_euler_totals
 
   subroutine compute_mc_euler_minima( &

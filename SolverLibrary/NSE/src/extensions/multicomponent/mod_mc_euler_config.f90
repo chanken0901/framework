@@ -15,6 +15,11 @@ module mod_mc_euler_config
   integer, parameter, public :: mc_face_z_max = 6
 
   type, public :: mc_euler_config
+    character(len=32) :: geometry = 'cartesian'
+    real(dp) :: nozzle_inlet_half_height = 1.0_dp
+    real(dp) :: nozzle_throat_half_height = 0.5_dp
+    real(dp) :: nozzle_exit_half_height = 1.0_dp
+    real(dp) :: nozzle_throat_x = 0.5_dp
     integer :: nx = 64
     integer :: ny = 4
     integer :: nz = 4
@@ -102,6 +107,9 @@ contains
     integer, intent(in) :: nspecies
     type(mc_euler_config), intent(out) :: config
     integer :: unit, ios
+    character(len=32) :: geometry
+    real(dp) :: nozzle_inlet_half_height, nozzle_throat_half_height
+    real(dp) :: nozzle_exit_half_height, nozzle_throat_x
     integer :: nx, ny, nz, nsteps
     real(dp) :: x_min, x_max, y_min, y_max, z_min, z_max
     real(dp) :: gamma, cfl, diffusion_cfl, dt, interface_location
@@ -124,7 +132,8 @@ contains
     logical :: write_final
     character(len=mc_path_length) :: output_file
     character(len=512) :: message
-    namelist /multicomponent_euler/ nx, ny, nz, x_min, x_max, y_min, &
+    namelist /multicomponent_euler/ geometry, nozzle_inlet_half_height, &
+      nozzle_throat_half_height, nozzle_exit_half_height, nozzle_throat_x, nx, ny, nz, x_min, x_max, y_min, &
       y_max, z_min, z_max, gamma, cfl, diffusion_cfl, dt, nsteps, &
       initial_condition, &
       interface_location, left_density, left_velocity, left_pressure, &
@@ -139,6 +148,11 @@ contains
       time_integrator, write_final, output_file
 
     call initialize_mc_euler_config(config, nspecies)
+    geometry = config%geometry
+    nozzle_inlet_half_height = config%nozzle_inlet_half_height
+    nozzle_throat_half_height = config%nozzle_throat_half_height
+    nozzle_exit_half_height = config%nozzle_exit_half_height
+    nozzle_throat_x = config%nozzle_throat_x
     nx = config%nx
     ny = config%ny
     nz = config%nz
@@ -201,6 +215,23 @@ contains
       error stop 'failed to read multicomponent Euler input'
     end if
 
+    config%geometry = geometry
+    config%nozzle_inlet_half_height = nozzle_inlet_half_height
+    config%nozzle_throat_half_height = nozzle_throat_half_height
+    config%nozzle_exit_half_height = nozzle_exit_half_height
+    config%nozzle_throat_x = nozzle_throat_x
+    if (geometry /= 'cartesian' .and. geometry /= 'planar_nozzle') &
+      error stop 'unsupported geometry: use cartesian or planar_nozzle'
+    if (geometry == 'planar_nozzle') then
+      if (.not. all(ieee_is_finite([nozzle_inlet_half_height, nozzle_throat_half_height, &
+          nozzle_exit_half_height, nozzle_throat_x]))) error stop 'non-finite nozzle geometry'
+      if (min(nozzle_inlet_half_height,nozzle_throat_half_height,nozzle_exit_half_height) <= 0) &
+        error stop 'nozzle half heights must be positive'
+      if (nozzle_throat_x <= x_min .or. nozzle_throat_x >= x_max) &
+        error stop 'nozzle throat must be inside the x domain'
+      if (abs(y_min+1.0_dp) > 1e-12_dp .or. abs(y_max-1.0_dp) > 1e-12_dp) &
+        error stop 'planar nozzle computational y domain must be [-1,1]'
+    end if
     config%nx = nx
     config%ny = ny
     config%nz = nz
@@ -400,6 +431,13 @@ contains
     end if
     if (config%write_final .and. len_trim(config%output_file) == 0) then
       error stop 'multicomponent Euler output file must not be empty'
+    end if
+    if(config%geometry == 'planar_nozzle') then
+      if(any(config%boundary_face_types(3:4) == 'periodic')) &
+        error stop 'planar nozzle y faces cannot be periodic'
+      if(config%boundary_face_types(1) == 'periodic' .and. &
+          abs(config%nozzle_inlet_half_height-config%nozzle_exit_half_height)>1e-12_dp) &
+        error stop 'periodic nozzle x faces must have matching heights'
     end if
   end subroutine validate_mc_euler_config
 

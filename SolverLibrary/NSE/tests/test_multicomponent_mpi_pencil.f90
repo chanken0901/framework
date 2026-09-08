@@ -47,10 +47,17 @@ program test_multicomponent_mpi_pencil
   allocate(reference(config%nx,config%ny,config%nz,layout%nvariables))
   allocate(ref_rhs,mold=reference)
   allocate(ref_q0,mold=reference)
-  do mode=1,5
+  do mode=1,6
     config%boundary_face_types=kinds(min(mode,4))
     if (mode == 5) config%boundary_face_types=[character(len=32) :: &
       'reflective','non_reflecting','dirichlet','non_reflecting','reflective','dirichlet']
+    if(mode==6) then
+      config%geometry='planar_nozzle'
+      config%y_min=-1
+      config%y_max=1
+      config%boundary_face_types=[character(len=32):: &
+        'dirichlet','non_reflecting','reflective','reflective','periodic','periodic']
+    end if
     do k=1,config%nz
       do j=1,config%ny
         do i=1,config%nx

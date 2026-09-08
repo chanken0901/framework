@@ -1,0 +1,9 @@
+schema_version: 1
+extension: geometry
+config:
+  type: planar_nozzle
+  inlet_half_height: 0.20
+  throat_half_height: 0.10
+  exit_half_height: 0.25
+  throat_x: 0.50
+

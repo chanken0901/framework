@@ -236,6 +236,25 @@ options:
         description: Stage-7 reactive shock tube and physical boundaries
         project_name: NSEMulticomponentResearch
         data_root: results
+    nse_multicomponent_nozzle:
+      label: Multicomponent NSE stage-9 planar nozzle
+      description: Reactive shock tube with face-specific physical boundaries.
+      requires:
+        model.name: nse_multicomponent
+      values:
+        create: true
+        template: ScriptLibrary/RunEnvironment/case_templates/nse_multicomponent_nozzle.yaml
+        extension_templates:
+          multicomponent: ScriptLibrary/RunEnvironment/case_templates/extensions/multicomponent_reactive.yaml
+          thermodynamics: ScriptLibrary/RunEnvironment/case_templates/extensions/thermodynamics_one_step_reactor.yaml
+          transport: ScriptLibrary/RunEnvironment/case_templates/extensions/transport_one_step_reactive.yaml
+          chemistry: ScriptLibrary/RunEnvironment/case_templates/extensions/chemistry_one_step_arrhenius.yaml
+          geometry: ScriptLibrary/RunEnvironment/case_templates/extensions/geometry_planar_nozzle.yaml
+        id: case0001
+        label: reactive_nozzle
+        description: Stage-9 reactive planar nozzle and mapped geometry
+        project_name: NSEMulticomponentResearch
+        data_root: results
     gpe_quantum_taylor_green:
       label: GPE量子Taylor-Green
       description: 周期的な量子Taylor-Green渦caseを生成する。

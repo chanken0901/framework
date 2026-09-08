@@ -701,7 +701,9 @@ Stage 8のMPI/OpenMPを実装した。MPIはx方向を保持しy・zを分割す
 `use_mpi`は維持する。既存逐次profileも継続使用できる。
 設定・実行手順・制約は`docs/NSE_MULTICOMPONENT_PARALLEL.md`を参照する。
 
-9. 一般座標
+9. 一般座標: 静止・単一ブロックの平面ノズル写像を実装。
+   設定・制約・Windows/Linux手順は [Stage 9手順書](NSE_MULTICOMPONENT_GEOMETRY.md) を参照。
+   任意外部格子、軸対称、移動格子、非滑り壁は未対応。
 10. CUDA
 
 ## 16. 必須回帰条件

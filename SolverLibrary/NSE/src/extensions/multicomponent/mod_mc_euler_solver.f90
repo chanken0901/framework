@@ -1,6 +1,7 @@
 module mod_mc_euler_solver
   use mod_mc_euler_field, only : mc_primitive_workspace
   use mod_precision, only : dp
+  use mod_mc_geometry, only: mc_cell_center
   use mod_mc_config, only : mc_config
   use mod_mc_state_layout, only : mc_state_layout
   use mod_mc_euler_config, only : mc_euler_config
@@ -98,7 +99,7 @@ contains
     type(mc_euler_config), intent(in) :: euler
     integer :: unit, ios, i, j, k, species, variable
     real(dp) :: x, y, z, dx, dy, dz, density, velocity(3), pressure
-    real(dp) :: temperature
+    real(dp) :: temperature, position(3)
     character(len=512) :: message
 
     open(newunit=unit,file=trim(path),status='replace',action='write', &
@@ -128,7 +129,10 @@ contains
       do j = 1, euler%ny
         y = euler%y_min + (real(j,dp)-0.5_dp)*dy
         do i = 1, euler%nx
-          x = euler%x_min + (real(i,dp)-0.5_dp)*dx
+          position=mc_cell_center(euler,i,j,k)
+          x=position(1)
+          y=position(2)
+          z=position(3)
           density = mc_mixture_density(q(i,j,k,:),layout)
           velocity = q(i,j,k,layout%momentum)/density
           pressure = mc_pressure(q(i,j,k,:),layout,euler%gamma)

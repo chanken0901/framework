@@ -26,6 +26,7 @@ EXTENSION_TARGETS: dict[str, tuple[str, ...]] = {
     "thermodynamics": ("thermodynamics",),
     "transport": ("transport",),
     "chemistry": ("chemistry",),
+    "geometry": ("geometry",),
 }
 
 

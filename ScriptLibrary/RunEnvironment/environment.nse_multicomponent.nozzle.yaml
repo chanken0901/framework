@@ -1,0 +1,24 @@
+schema_version: 1
+environment_id: nse_multicomponent_nozzle
+option_catalogs: []
+select:
+  source: framework_relative
+  destination: windows_research_runs
+  model: nse_multicomponent
+  target: windows_gnu_msmpi
+  case: nse_multicomponent_nozzle
+  execution: release
+  scheduler: disabled
+  archive: none
+parallel:
+  use_mpi: true
+  use_openmp: true
+  use_cuda: false
+case:
+  id: case0001
+  label: reactive_nozzle
+  description: Stage-9 planar nozzle with MPI pencils and OpenMP
+  project_name: NSEMulticomponentResearch
+solver:
+  profile: cpu_mpi_reactive_pencil
+  include_tests: true

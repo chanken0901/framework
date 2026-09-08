@@ -15,6 +15,8 @@
 > x方向反応衝撃波管、途中スナップショットと積分履歴を追加しています。
 > Stage 2の共通γモデルも独立profileとして維持しています。
 > Stage 8はMPIペンシル分割とOpenMPに対応します。
+> Stage 9は平面ノズルの静止一般座標に対応します。設定と制約は
+> [一般座標手順書](docs/NSE_MULTICOMPONENT_GEOMETRY.md)を参照してください。
 > 設定・Windows/Linux手順は[多成分並列計算](docs/NSE_MULTICOMPONENT_PARALLEL.md)を参照してください。
 
 MPI＋CUDAで分散HIT初期化またはPetersen–Livescu forcingを使う場合は、

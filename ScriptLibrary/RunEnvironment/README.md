@@ -761,3 +761,6 @@ YAML例、衝撃波前後状態の定義、配置制約、実行手順は
 境界条件、実行手順は
 [`NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md`](../../SolverLibrary/NSE/docs/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md)
 を参照してください。
+Stage 9の平面ノズルは `environment.nse_multicomponent.nozzle.yaml` を使用します。
+形状は `config/geometry.yaml` に分離されます。
+手順と制約は [一般座標手順書](../../SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_GEOMETRY.md) を参照してください。

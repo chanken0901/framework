@@ -2637,6 +2637,8 @@ def render_nse_multicomponent(
         raise CaseInputError("multicomponent species names must be unique")
 
     simulation_mode = _canonical_selector(str(physics.get("mode", "foundation")))
+    if "geometry" in case and simulation_mode != "reactive_navier_stokes":
+        raise CaseInputError("geometry extension currently requires reactive_navier_stokes mode")
     if simulation_mode not in {
         "foundation",
         "passive_scalar",
@@ -3258,7 +3260,35 @@ def render_nse_multicomponent(
         if write_final and not output_file:
             raise CaseInputError("output.filename must not be empty")
 
+        geometry = _mapping(case.get("geometry", {}), "geometry")
+        allowed_geometry = {"type", "inlet_half_height", "throat_half_height", "exit_half_height", "throat_x"}
+        if set(geometry) - allowed_geometry:
+            raise CaseInputError(f"unsupported geometry keys: {sorted(set(geometry) - allowed_geometry)}")
+        geometry_type = geometry.get("type", "cartesian")
+        if geometry_type not in {"cartesian", "planar_nozzle"}:
+            raise CaseInputError("geometry.type must be cartesian or planar_nozzle")
+        geometry_entries = []
+        if geometry_type == "planar_nozzle":
+            if simulation_mode != "reactive_navier_stokes":
+                raise CaseInputError("planar_nozzle currently requires reactive_navier_stokes mode")
+            vals = {key: _positive_float(geometry.get(key), f"geometry.{key}")
+                    for key in ("inlet_half_height", "throat_half_height", "exit_half_height")}
+            throat = _finite_float(geometry.get("throat_x"), "geometry.throat_x")
+            if not extents[0] < throat < extents[1]:
+                raise CaseInputError("geometry.throat_x must be inside the x domain")
+            if abs(extents[2] + 1) > 1e-12 or abs(extents[3] - 1) > 1e-12:
+                raise CaseInputError("planar nozzle grid y_min/y_max must be -1 and 1 (computational coordinates)")
+            faces = boundary_values.get("boundary_face_types", ["periodic"] * 6)
+            if "periodic" in faces[2:4]:
+                raise CaseInputError("planar nozzle y faces cannot be periodic")
+            if faces[0] == "periodic" and abs(vals["inlet_half_height"] - vals["exit_half_height"]) > 1e-12:
+                raise CaseInputError("periodic nozzle x faces must have matching heights")
+            geometry_entries = [("geometry", geometry_type), ("nozzle_throat_x", throat)]
+            geometry_entries += [("nozzle_" + key, value) for key, value in vals.items()]
+        elif set(geometry) - {"type"}:
+            raise CaseInputError("cartesian geometry does not accept nozzle parameters")
         lines.append("&multicomponent_euler")
+        _append(lines, geometry_entries)
         _append(
             lines,
             [

@@ -733,6 +733,36 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
         with self.assertRaisesRegex(CaseInputError, "keys must exactly match"):
             render_nse_multicomponent(case, "cpu_serial_reactor")
 
+    def nozzle_case(self):
+        case = self.reactive_boundary_case()
+        case["grid"].update(y_min=-1.0, y_max=1.0)
+        case["boundary"]["faces"]["y_min"] = {"type": "reflective"}
+        case["boundary"]["faces"]["y_max"] = {"type": "reflective"}
+        case["geometry"] = dict(type="planar_nozzle", inlet_half_height=0.2,
+                                throat_half_height=0.1, exit_half_height=0.25, throat_x=0.5)
+        return case
+
+    def test_nozzle_geometry_namelist(self):
+        text = render_nse_multicomponent(self.nozzle_case(), "cpu_serial_reactive_boundaries")
+        self.assertIn('geometry = "planar_nozzle"', text)
+        self.assertIn("nozzle_throat_half_height = 0.1", text)
+
+    def test_nozzle_invalid_geometry_rejected(self):
+        for key, value in [("type", "cad"), ("throat_half_height", 0),
+                           ("throat_x", 10), ("exit_half_height", float("nan"))]:
+            with self.subTest(key=key):
+                case = self.nozzle_case()
+                case["geometry"][key] = value
+                with self.assertRaises(CaseInputError):
+                    render_nse_multicomponent(case, "cpu_serial_reactive_boundaries")
+
+    def test_nozzle_periodic_wall_rejected(self):
+        case = self.nozzle_case()
+        case["boundary"]["faces"]["y_min"] = {"type": "periodic"}
+        case["boundary"]["faces"]["y_max"] = {"type": "periodic"}
+        with self.assertRaises(CaseInputError):
+            render_nse_multicomponent(case, "cpu_serial_reactive_boundaries")
+
     def test_renders_stage_six_reactive_flow_contract(self) -> None:
         text = render_nse_multicomponent(
             self.reactive_case(), "cpu_serial_reactive"

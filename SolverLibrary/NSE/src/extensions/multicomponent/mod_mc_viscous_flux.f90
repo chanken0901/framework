@@ -1,5 +1,6 @@
 module mod_mc_viscous_flux
   use mod_precision, only : dp
+  use mod_mc_mapped_flux, only: mc_mapped_rhs, mc_mapped_rate
   use mod_mc_state_layout, only : mc_state_layout
   use mod_mc_euler_config, only : mc_euler_config, &
     mc_face_x_min, mc_face_x_max, mc_face_y_min, mc_face_y_max, &
@@ -77,8 +78,15 @@ contains
     type(mc_navier_stokes_workspace), intent(inout) :: work
     real(dp) :: dx, dy, dz
     real(dp) :: face_flux(layout%nvariables)
+    real(dp), allocatable :: mapped_rhs(:,:,:,:)
     integer :: i, j, k, ip, jp, kp
 
+    if(config%geometry /= 'cartesian') then
+      allocate(mapped_rhs, mold=rhs)
+      call mc_mapped_rhs(q,mapped_rhs,layout,config,.true.)
+      rhs=rhs+mapped_rhs
+      return
+    end if
     if (any(shape(rhs) /= shape(q))) then
       error stop 'transport RHS allocation does not match state'
     end if
@@ -536,6 +544,10 @@ contains
             conductivity/(density*(cp_value-gas_constant)))
           rate = 2.0_dp*maximum_diffusivity*( &
             1.0_dp/dx**2+1.0_dp/dy**2+1.0_dp/dz**2)
+          if(config%geometry /= 'cartesian') then
+            ! L1 face-rate bound includes skewness and contraction; conservative for diffusion.
+            rate=2.0_dp*maximum_diffusivity*mc_mapped_rate(config,i,j,k,[0.0_dp,0.0_dp,0.0_dp],1.0_dp)**2
+          end if
           maximum_rate = max(maximum_rate,rate)
         end do
       end do

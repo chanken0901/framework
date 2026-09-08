@@ -56,11 +56,13 @@ components:
     cmake_role: library
     files:
       - src/extensions/multicomponent/providers/mod_mc_transport_none.f90
+      - src/extensions/multicomponent/providers/mod_mc_mapped_transport_none.f90
 
   transport_mixture_averaged:
     cmake_role: library
     files:
       - src/extensions/multicomponent/providers/mod_mc_transport_mixture_averaged.f90
+      - src/extensions/multicomponent/providers/mod_mc_mapped_transport_mixture_averaged.f90
 
   chemistry_none:
     cmake_role: library
@@ -99,6 +101,8 @@ components:
     cmake_role: library
     files:
       - src/extensions/multicomponent/mod_mc_euler_config.f90
+      - src/extensions/multicomponent/mod_mc_geometry.f90
+      - src/extensions/multicomponent/mod_mc_mapped_flux.f90
       - src/extensions/multicomponent/mod_mc_euler_field.f90
       - src/extensions/multicomponent/mod_mc_boundary.f90
       - src/extensions/multicomponent/mod_mc_euler_flux.f90
@@ -180,6 +184,7 @@ components:
   reactive_boundary_tests:
     files:
       - tests/test_multicomponent_reactive_boundaries.f90
+      - tests/test_multicomponent_geometry.f90
       - tests/test_multicomponent_rhs_workspace.f90
       - tests/input_multicomponent_reactive_boundaries.dat
 
@@ -187,6 +192,7 @@ components:
     files:
       - docs/NSE_MULTICOMPONENT_ROADMAP.md
       - docs/NSE_MULTICOMPONENT_PARALLEL.md
+      - docs/NSE_MULTICOMPONENT_GEOMETRY.md
       - docs/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md
 
 profiles:
