@@ -12,7 +12,7 @@ program main_nse_mpi_cuda
   use mod_nse_gpu, only : nse_gpu_context, nse_gpu_initialize, &
     nse_gpu_select_device, nse_gpu_configure_cufftmp, &
     nse_gpu_upload, nse_gpu_download, nse_gpu_compute_dt, &
-    nse_gpu_begin_ssprk3, nse_gpu_advance_ssprk3_stage, &
+    nse_gpu_begin_ssprk3, nse_gpu_advance_ssprk3_stage, nse_gpu_restore_ssprk3, &
     nse_gpu_synchronize, nse_gpu_finalize
   use mod_nse_gpu_mpi, only : nse_gpu_mpi_halo, &
     nse_gpu_mpi_halo_initialize, nse_gpu_mpi_exchange, &
@@ -26,6 +26,8 @@ program main_nse_mpi_cuda
   type(nse_gpu_mpi_halo) :: halo
   real(dp), allocatable :: q(:,:,:,:)
   integer :: js, je, ks, ke, stage, selected_device
+  integer :: retry, step_status, global_status
+  real(dp) :: requested_dt
   integer :: ierror_local, ierr_local, local_cells, minimum_local_cells
   character(len=512) :: input_path
 
@@ -121,10 +123,31 @@ program main_nse_mpi_cuda
     if (sim%dt <= 0.0_dp) exit
 
     call nse_gpu_begin_ssprk3(gpu, sim%dt)
-    do stage = 1, 3
-      call nse_gpu_mpi_exchange(halo, gpu)
-      call nse_gpu_advance_ssprk3_stage(gpu, sim%dt, stage)
+    requested_dt = sim%dt
+    do retry = 0, 20
+      do stage = 1, 3
+        call nse_gpu_mpi_exchange(halo, gpu)
+        call nse_gpu_advance_ssprk3_stage(gpu, sim%dt, stage, step_status)
+        ! Fatal errors outrank a recoverable positivity rejection.
+        if (step_status == 1) step_status = 3
+        call MPI_Allreduce(step_status, global_status, 1, MPI_INTEGER, &
+          MPI_MAX, MPI_COMM_WORLD, ierr_local)
+        if (ierr_local /= 0) call MPI_Abort(MPI_COMM_WORLD, 12, ierr_local)
+        if (global_status /= 0) exit
+      end do
+      if (global_status == 0) exit
+      call nse_gpu_restore_ssprk3(gpu)
+      if (global_status /= 2 .or. sim%use_fixed_dt .or. retry == 20) then
+        if (my_rank == root) write(*,'(A,I0)') &
+          'ERROR: CUDA step rejected; state restored, status=', global_status
+        call MPI_Abort(MPI_COMM_WORLD, 13, ierr_local)
+        error stop 'CUDA positivity retry failed'
+      end if
+      sim%dt = 0.5_dp*sim%dt
     end do
+    if (my_rank == root .and. retry > 0) write(*,'(A,I0,A,2ES16.8)') &
+      '# positivity_retry count=', retry, ' requested/accepted dt=', requested_dt, sim%dt
+    if (sim%t + sim%dt <= sim%t) call MPI_Abort(MPI_COMM_WORLD, 14, ierr_local)
     call nse_gpu_synchronize(gpu)
 
     sim%t = sim%t + sim%dt

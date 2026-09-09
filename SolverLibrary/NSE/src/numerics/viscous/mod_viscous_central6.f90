@@ -29,12 +29,9 @@ contains
       ks-sim%nghost:, :)
     integer :: i, j, k
     real(dp) :: rho, u, v, w, pressure
-    real(dp) :: ux, uy, uz, vx, vy, vz, wx, wy, wz
     real(dp) :: uxx, uyy, uzz, vxx, vyy, vzz, wxx, wyy, wzz
     real(dp) :: uxy, uxz, vxy, vyz, wxz, wyz
     real(dp) :: momentum_x, momentum_y, momentum_z
-    real(dp) :: div_velocity, tau_xx, tau_yy, tau_zz
-    real(dp) :: tau_xy, tau_xz, tau_yz, dissipation
     real(dp) :: lap_temperature, inverse_reynolds, heat_coefficient
 
     if (.not. viscosity_is_enabled(nse)) return
@@ -71,20 +68,6 @@ contains
     do k = ks, ke
       do j = js, je
         do i = 1, sim%nx
-          u = primitive(i,j,k,1)
-          v = primitive(i,j,k,2)
-          w = primitive(i,j,k,3)
-
-          ux = derivative_x(primitive(:,:,:,1), i, j, k, sim, js, ks)
-          uy = derivative_y(primitive(:,:,:,1), i, j, k, sim, js, ks)
-          uz = derivative_z(primitive(:,:,:,1), i, j, k, sim, js, ks)
-          vx = derivative_x(primitive(:,:,:,2), i, j, k, sim, js, ks)
-          vy = derivative_y(primitive(:,:,:,2), i, j, k, sim, js, ks)
-          vz = derivative_z(primitive(:,:,:,2), i, j, k, sim, js, ks)
-          wx = derivative_x(primitive(:,:,:,3), i, j, k, sim, js, ks)
-          wy = derivative_y(primitive(:,:,:,3), i, j, k, sim, js, ks)
-          wz = derivative_z(primitive(:,:,:,3), i, j, k, sim, js, ks)
-
           uxx = second_x(primitive(:,:,:,1), i, j, k, sim, js, ks)
           uyy = second_y(primitive(:,:,:,1), i, j, k, sim, js, ks)
           uzz = second_z(primitive(:,:,:,1), i, j, k, sim, js, ks)
@@ -109,16 +92,6 @@ contains
           momentum_z = wxx + wyy + (4.0_dp/3.0_dp)*wzz + &
             (uxz+vyz)/3.0_dp
 
-          div_velocity = ux + vy + wz
-          tau_xx = 2.0_dp*ux - (2.0_dp/3.0_dp)*div_velocity
-          tau_yy = 2.0_dp*vy - (2.0_dp/3.0_dp)*div_velocity
-          tau_zz = 2.0_dp*wz - (2.0_dp/3.0_dp)*div_velocity
-          tau_xy = uy + vx
-          tau_xz = uz + wx
-          tau_yz = vz + wy
-          dissipation = tau_xx*ux + tau_yy*vy + tau_zz*wz + &
-            tau_xy*(uy+vx) + tau_xz*(uz+wx) + tau_yz*(vz+wy)
-
           lap_temperature = second_x(primitive(:,:,:,4), i, j, k, &
             sim, js, ks) + second_y(primitive(:,:,:,4), i, j, k, &
             sim, js, ks) + second_z(primitive(:,:,:,4), i, j, k, &
@@ -128,13 +101,61 @@ contains
           rhs(i,j,k,3) = rhs(i,j,k,3) + inverse_reynolds*momentum_y
           rhs(i,j,k,4) = rhs(i,j,k,4) + inverse_reynolds*momentum_z
           rhs(i,j,k,5) = rhs(i,j,k,5) + inverse_reynolds * &
-            (u*momentum_x + v*momentum_y + w*momentum_z + &
-             dissipation + heat_coefficient*lap_temperature)
+            (viscous_energy_work(i,j,k,sim,js,ks) + heat_coefficient*lap_temperature)
         end do
       end do
     end do
     !$OMP END DO
   end subroutine add_viscous_rhs
+
+  pure real(dp) function energy_quadratic(p,axis) result(value)
+    integer, intent(in) :: p(3), axis
+    value = 0.5_dp*sum(primitive(p(1),p(2),p(3),1:3)**2) + &
+      primitive(p(1),p(2),p(3),axis)**2/6.0_dp
+  end function
+
+  function viscous_energy_work(i,j,k,sim,js,ks) result(value)
+    integer, intent(in) :: i,j,k,js,ks
+    type(simulation_config), intent(in) :: sim
+    real(dp) :: value, base, plus, minus, da, db, flux, inverse(3)
+    real(dp), parameter :: c2(3) = [1.5_dp,-0.15_dp,1.0_dp/90.0_dp]
+    integer :: center(3), p(3), axis, other, r, sign
+    inverse = [1.0_dp/sim%dx,1.0_dp/sim%dy,1.0_dp/sim%dz]
+    center = [i,j,k]
+    value = 0.0_dp
+    ! Conservative divergence, with cross derivatives only on distinct axes.
+    do axis = 1,3
+      base = energy_quadratic(center,axis)
+      do r = 1,3
+        p = center
+        p(axis) = center(axis)+r
+        plus = energy_quadratic(p,axis)
+        p(axis) = center(axis)-r
+        minus = energy_quadratic(p,axis)
+        value = value+c2(r)*(plus+minus-2.0_dp*base)*inverse(axis)**2
+        do other = 1,3
+          if (other == axis) cycle
+          do sign = -1,1,2
+            p(axis) = center(axis)+sign*r
+            select case(other)
+            case(1)
+              da = derivative_x(primitive(:,:,:,axis),p(1),p(2),p(3),sim,js,ks)
+              db = derivative_x(primitive(:,:,:,other),p(1),p(2),p(3),sim,js,ks)
+            case(2)
+              da = derivative_y(primitive(:,:,:,axis),p(1),p(2),p(3),sim,js,ks)
+              db = derivative_y(primitive(:,:,:,other),p(1),p(2),p(3),sim,js,ks)
+            case(3)
+              da = derivative_z(primitive(:,:,:,axis),p(1),p(2),p(3),sim,js,ks)
+              db = derivative_z(primitive(:,:,:,other),p(1),p(2),p(3),sim,js,ks)
+            end select
+            flux = primitive(p(1),p(2),p(3),other)*da &
+              -(2.0_dp/3.0_dp)*primitive(p(1),p(2),p(3),axis)*db
+            value = value+sign*d1_positive(r)*inverse(axis)*flux
+          end do
+        end do
+      end do
+    end do
+  end function
 
   subroutine viscous_dt_limit(q, dt_limit, sim, nse, js, je, ks, ke)
     type(simulation_config), intent(in) :: sim

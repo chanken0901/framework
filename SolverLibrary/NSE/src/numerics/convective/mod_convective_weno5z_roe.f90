@@ -1,11 +1,12 @@
 module mod_convective_weno5z_roe
+  use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config
   use mod_reconstruction_weno5z, only : reconstruct_weno5z_left, &
     reconstruct_weno5z_right
   use mod_riemann_roe, only : rotate_conserved_to_normal, &
-    rotate_flux_to_global, roe_eigensystem, roe_numerical_flux
+    rotate_flux_to_global, roe_eigensystem, roe_numerical_flux, euler_physical_flux
   implicit none
   private
 
@@ -13,6 +14,7 @@ module mod_convective_weno5z_roe
   public :: compute_weno5z_roe_face_flux
   public :: validate_weno5z_roe_scheme
   public :: weno5z_roe_required_ghost_cells
+  public :: limit_weno_state
 
 contains
 
@@ -62,6 +64,8 @@ contains
     real(dp) :: left_characteristic(5), right_characteristic(5)
     real(dp) :: left_state(5), right_state(5), normal_flux(5)
     real(dp) :: right_matrix(5,5), left_matrix(5,5), eigenvalue(5)
+    real(dp) :: fl(5), fr(5), ul, ur, cl, cr, speed
+    logical :: limited_left, limited_right
     integer :: characteristic, point
 
     call normal_state_at_offset(q, i, j, k, direction, 0, sim, js, ks, &
@@ -93,9 +97,67 @@ contains
 
     left_state = matmul(right_matrix, left_characteristic)
     right_state = matmul(right_matrix, right_characteristic)
-    call roe_numerical_flux(left_state, right_state, nse, normal_flux)
+    call limit_weno_state(center_left, left_state, nse, limited_left)
+    call limit_weno_state(center_right, right_state, nse, limited_right)
+    ul = left_state(2)/left_state(1)
+    ur = right_state(2)/right_state(1)
+    cl = sqrt(nse%gamma*state_pressure(left_state,nse)/left_state(1))
+    cr = sqrt(nse%gamma*state_pressure(right_state,nse)/right_state(1))
+    if (limited_left .or. limited_right .or. ur-ul > 2.0_dp*min(cl,cr)) then
+      call euler_physical_flux(left_state, nse, fl)
+      call euler_physical_flux(right_state, nse, fr)
+      speed = max(abs(ul)+cl, abs(ur)+cr)
+      normal_flux = 0.5_dp*(fl+fr-speed*(right_state-left_state))
+    else
+      call roe_numerical_flux(left_state, right_state, nse, normal_flux)
+    end if
     call rotate_flux_to_global(normal_flux, direction, flux)
   end subroutine compute_weno5z_roe_face_flux
+
+  pure real(dp) function state_pressure(state, nse) result(p)
+    real(dp), intent(in) :: state(5)
+    type(nse_config), intent(in) :: nse
+    p = (nse%gamma-1.0_dp)*(state(5)-0.5_dp*sum(state(2:4)**2)/state(1))
+  end function
+
+  pure logical function admissible_state(state, nse) result(valid)
+    real(dp), intent(in) :: state(5)
+    type(nse_config), intent(in) :: nse
+    real(dp) :: p
+    valid = .false.
+    if (.not. all(ieee_is_finite(state))) return
+    if (state(1) < nse%small_rho) return
+    p = state_pressure(state,nse)
+    valid = ieee_is_finite(p) .and. p >= nse%small_p
+  end function
+
+  pure subroutine limit_weno_state(center, state, nse, limited)
+    real(dp), intent(in) :: center(5)
+    real(dp), intent(inout) :: state(5)
+    type(nse_config), intent(in) :: nse
+    logical, intent(out) :: limited
+    real(dp) :: original(5), low, high, theta
+    integer :: iteration
+    limited = .not. admissible_state(state,nse)
+    if (.not. limited) return
+    if (.not. all(ieee_is_finite(state))) then
+      state = center
+      return
+    end if
+    original = state
+    low = 0.0_dp
+    high = 1.0_dp
+    do iteration = 1, 50
+      theta = 0.5_dp*(low+high)
+      state = center+theta*(original-center)
+      if (admissible_state(state,nse)) then
+        low = theta
+      else
+        high = theta
+      end if
+    end do
+    state = center+(0.99_dp*low)*(original-center)
+  end subroutine
 
   pure subroutine normal_state_at_offset(q, i, j, k, direction, offset, &
       sim, js, ks, state)

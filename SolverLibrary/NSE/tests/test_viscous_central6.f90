@@ -56,6 +56,8 @@ program test_viscous_central6
   !$OMP END PARALLEL
 
   momentum_error = 0.0_dp
+  if (abs(sum(rhs(1:sim%nx,1:sim%ny,1:sim%nz,5))) > 1.0e-12_dp) &
+    error stop 'periodic viscous energy RHS is not conservative'
   energy_error = 0.0_dp
   do k = 1, sim%nz
     do j = 1, sim%ny

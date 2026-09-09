@@ -147,6 +147,7 @@ contains
     real(dp) :: hit_dealias_fraction, hit_isotropy_k_cutoff
     real(dp) :: hit_isotropy_tolerance
     real(dp) :: imported_turbulence_x_start
+    real(dp) :: imported_turbulence_x_length
     real(dp) :: imported_turbulence_velocity_offset_x
     real(dp) :: imported_turbulence_velocity_offset_y
     real(dp) :: imported_turbulence_velocity_offset_z
@@ -241,6 +242,7 @@ contains
       hit_isotropy_k_cutoff, hit_isotropy_tolerance, &
       hit_isotropy_max_iterations, imported_turbulence_file, &
       imported_turbulence_mode, imported_turbulence_x_start, &
+      imported_turbulence_x_length, &
       imported_turbulence_blend_cells, &
       imported_turbulence_velocity_offset_x, &
       imported_turbulence_velocity_offset_y, &
@@ -344,6 +346,7 @@ contains
     imported_turbulence_file = cfg%imported_turbulence_file
     imported_turbulence_mode = cfg%imported_turbulence_mode
     imported_turbulence_x_start = cfg%imported_turbulence_x_start
+    imported_turbulence_x_length = cfg%imported_turbulence_x_length
     imported_turbulence_blend_cells = &
       cfg%imported_turbulence_blend_cells
     imported_turbulence_velocity_offset_x = &
@@ -500,6 +503,7 @@ contains
     cfg%imported_turbulence_file = imported_turbulence_file
     cfg%imported_turbulence_mode = imported_turbulence_mode
     cfg%imported_turbulence_x_start = imported_turbulence_x_start
+    cfg%imported_turbulence_x_length = imported_turbulence_x_length
     cfg%imported_turbulence_blend_cells = &
       imported_turbulence_blend_cells
     cfg%imported_turbulence_velocity_offset_x = &

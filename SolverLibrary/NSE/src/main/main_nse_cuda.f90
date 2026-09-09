@@ -18,6 +18,7 @@ program main_nse_cuda
   type(nse_config) :: nse
   type(nse_gpu_context) :: gpu
   real(dp), allocatable :: q(:,:,:,:)
+  real(dp) :: accepted_dt
   integer :: js, je, ks, ke
   integer(int64) :: clock_start, clock_end, clock_rate
   character(len=512) :: input_path
@@ -74,7 +75,13 @@ program main_nse_cuda
     if (sim%t + sim%dt > sim%t_max) sim%dt = sim%t_max - sim%t
     if (sim%dt <= 0.0_dp) exit
 
-    call nse_gpu_advance_ssprk3(gpu, sim%dt)
+    if (sim%use_fixed_dt) then
+      call nse_gpu_advance_ssprk3(gpu, sim%dt)
+    else
+      call nse_gpu_advance_ssprk3(gpu, sim%dt, accepted_dt)
+      sim%dt = accepted_dt
+    end if
+    if (sim%t + sim%dt <= sim%t) error stop 'time step cannot advance time; review forcing/resolution'
     call nse_gpu_synchronize(gpu)
     sim%t = sim%t + sim%dt
     sim%step = sim%step + 1

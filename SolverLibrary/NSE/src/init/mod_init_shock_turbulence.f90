@@ -26,8 +26,9 @@ contains
     integer :: first_i, last_i, face_index, driver_face
     integer :: i, j, k
 
-    if (trim(adjustl(nse%imported_turbulence_mode)) /= 'embed') then
-      error stop 'shock-turbulence interaction requires embed mode'
+    if (trim(adjustl(nse%imported_turbulence_mode)) /= 'embed' .and. &
+        trim(adjustl(nse%imported_turbulence_mode)) /= 'periodic_embed') then
+      error stop 'shock-turbulence interaction requires embed or periodic_embed mode'
     end if
     if (nse%nv /= nconserved) then
       error stop 'shock-turbulence interaction requires five variables'

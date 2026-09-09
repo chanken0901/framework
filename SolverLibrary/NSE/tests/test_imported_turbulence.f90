@@ -16,8 +16,8 @@ program test_imported_turbulence
   type(simulation_config) :: sim
   type(nse_config) :: nse
   real(dp), allocatable :: q(:,:,:,:)
-  real(dp) :: expected(5)
-  integer :: unit, ios
+  real(dp) :: expected(5), background_test(5)
+  integer :: unit, ios, first_i, last_i
 
   call write_source_slf(source_file)
   call init_simulation_config(sim)
@@ -80,6 +80,32 @@ program test_imported_turbulence
     3.0_dp, nse%gamma, expected)
   call assert_vector_close(q(1,2,2,:), expected, &
     'decomposed y-z source selection')
+
+  ! A six-cell window of a four-cell periodic source: 1,2,3,4,1,2.
+  nse%imported_turbulence_mode = 'periodic_embed'
+  nse%imported_turbulence_x_start = 1.0_dp
+  nse%imported_turbulence_x_length = 6.0_dp
+  call initialize_imported_turbulence(q,sim,nse,2,2,2,2,first_i,last_i)
+  call assert_true(first_i == 2 .and. last_i == 7,'periodic window bounds')
+  call primitive_to_conserved(1.0_dp,0.0_dp,0.0_dp,0.0_dp,2.0_dp,nse%gamma,background_test)
+  call assert_vector_close(q(1,2,2,:),background_test,'periodic window left background')
+  call assert_vector_close(q(8,2,2,:),background_test,'periodic window right background')
+  call primitive_to_conserved(2.0_dp,2.0_dp,0.2_dp,0.4_dp,3.0_dp,nse%gamma,expected)
+  call assert_vector_close(q(2,2,2,:),expected,'periodic window first cell')
+  call assert_vector_close(q(6,2,2,:),expected,'periodic window repeated cell')
+  call primitive_to_conserved(2.0_dp,3.0_dp,0.2_dp,0.4_dp,3.0_dp,nse%gamma,expected)
+  call assert_vector_close(q(7,2,2,:),expected,'periodic window partial last block')
+  nse%imported_turbulence_blend_cells=1
+  call initialize_imported_turbulence(q,sim,nse,2,2,2,2)
+  call assert_vector_close(q(7,2,2,:),0.5_dp*(background_test+expected),'window outer edge blend')
+  call primitive_to_conserved(2.0_dp,2.0_dp,0.2_dp,0.4_dp,3.0_dp,nse%gamma,expected)
+  call assert_vector_close(q(6,2,2,:),expected,'no blend at internal periodic seam')
+  nse%imported_turbulence_blend_cells=0
+  nse%imported_turbulence_x_length=2.0_dp
+  call initialize_imported_turbulence(q,sim,nse,2,2,2,2,first_i,last_i)
+  call assert_true(first_i==2 .and. last_i==3,'window shorter than source')
+  call assert_vector_close(q(4,2,2,:),background_test,'short window background')
+  nse%imported_turbulence_x_length=-1.0_dp
 
   nse%imported_turbulence_mode = 'embed'
   nse%imported_turbulence_x_start = 4.0_dp
@@ -153,6 +179,14 @@ program test_imported_turbulence
   call assert_vector_close(q(4,2,2,:), expected, &
     'turbulence remains ahead of negative-x shock')
 
+  nse%imported_turbulence_mode='periodic_embed'
+  nse%imported_turbulence_x_length=5.0_dp
+  call initialize_shock_turbulence(q,sim,nse,2,2,2,2)
+  call primitive_to_conserved(2.0_dp,1.0_dp,0.2_dp,0.4_dp,3.0_dp,nse%gamma,expected)
+  call assert_vector_close(q(5,2,2,:),expected,'negative-x shock periodic window tail')
+  nse%imported_turbulence_mode='embed'
+  nse%imported_turbulence_x_length=-1.0_dp
+
   nse%imported_turbulence_x_start = 4.0_dp
   nse%imported_turbulence_background_rho = 1.0_dp
   nse%imported_turbulence_background_u = 0.0_dp
@@ -192,6 +226,12 @@ program test_imported_turbulence
     3.0_dp, nse%gamma, expected)
   call assert_vector_close(q(5,2,2,:), expected, &
     'shock-tube turbulence remains in driven region')
+
+  nse%imported_turbulence_mode='periodic_embed'
+  nse%imported_turbulence_x_start=3.0_dp
+  nse%imported_turbulence_x_length=5.0_dp
+  call initialize_nse_state(q,sim,nse,2,2,2,2)
+  call assert_vector_close(q(8,2,2,:),expected,'shock-tube periodic window repeated tail')
 
   call assert_true(imported_turbulence_weight(1, 8, 2) > 0.0_dp, &
     'blend edge weight is positive')

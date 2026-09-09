@@ -10,6 +10,7 @@ program test_weno5z_roe
     euler_physical_flux
   use mod_convective_scheme, only : compute_convective_flux, &
     validate_convective_scheme, convective_required_ghost_cells
+  use mod_convective_weno5z_roe, only : limit_weno_state
   implicit none
 
   call test_scalar_reconstruction_order()
@@ -17,10 +18,36 @@ program test_weno5z_roe
   call test_directional_flux_rotation()
   call test_entropy_wave_order_and_conservation()
   call test_sod_discontinuity_is_finite()
+  call test_positive_reconstruction()
 
   write(*,'(A)') 'WENO5-Z/Roe tests passed'
 
 contains
+
+  subroutine test_positive_reconstruction()
+    type(nse_config) :: nse
+    real(dp) :: center(5), trial(5), original(5), p
+    logical :: limited
+    integer :: mode
+    call init_nse_config(nse)
+    center=[1.0_dp,0.3_dp,0.1_dp,0.0_dp,2.55_dp]
+    trial=center
+    call limit_weno_state(center,trial,nse,limited)
+    if (limited .or. any(trial/=center)) error stop 'limiter changed admissible state'
+    do mode=1,2
+      trial=center
+      if (mode==1) trial(1)=-1.0_dp
+      if (mode==2) trial(5)=0.0_dp
+      original=trial
+      call limit_weno_state(center,trial,nse,limited)
+      if (.not. limited) error stop 'invalid reconstruction was not limited'
+      if (trial(1)<nse%small_rho) error stop 'limiter left negative density'
+      p=(nse%gamma-1)*(trial(5)-0.5_dp*sum(trial(2:4)**2)/trial(1))
+      if (p<nse%small_p) error stop 'limiter left negative pressure'
+      if (any(trial<min(center,original)) .or. any(trial>max(center,original))) &
+        error stop 'limiter is not a convex reconstruction'
+    end do
+  end subroutine
 
   subroutine test_scalar_reconstruction_order()
     real(dp), parameter :: spacing(3) = [0.2_dp, 0.1_dp, 0.05_dp]

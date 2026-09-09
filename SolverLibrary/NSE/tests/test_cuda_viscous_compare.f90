@@ -77,6 +77,9 @@ program test_cuda_viscous_compare
   call nse_gpu_advance_ssprk3(gpu, 1.0e-5_dp)
   call nse_gpu_synchronize(gpu)
   call nse_gpu_download(gpu, q_gpu)
+  if (abs(sum(q_gpu(1:sim%nx,1:sim%ny,1:sim%nz,5)) &
+      -sum(q0(1:sim%nx,1:sim%ny,1:sim%nz,5)))>3.0e-12_dp) &
+    error stop 'periodic CUDA viscous step lost total energy'
   field_error = maxval(abs(q_gpu(1:sim%nx,1:sim%ny,1:sim%nz,:) - &
     q_cpu(1:sim%nx,1:sim%ny,1:sim%nz,:)))
   if (field_error > 3.0e-12_dp) then
