@@ -289,6 +289,37 @@ __device__ inline void rotate_flux_to_global_cuda(
   }
 }
 
+// Test raw conservative variables, not the pressure floored for flux evaluation.
+__device__ inline bool admissible_roe_state_cuda(
+    const double s[5], double gamma, double small_rho, double small_p) {
+  for (int v = 0; v < 5; ++v) if (!isfinite(s[v])) return false;
+  if (s[0] < small_rho) return false;
+  const double p = (gamma-1.0)*(s[4]-0.5*(s[1]*s[1]+s[2]*s[2]+s[3]*s[3])/s[0]);
+  return isfinite(p) && p >= small_p;
+}
+
+__device__ inline bool limit_roe_state_cuda(const double center[5],
+    double state[5], double gamma, double small_rho, double small_p) {
+  if (admissible_roe_state_cuda(state, gamma, small_rho, small_p)) return false;
+  double original[5];
+  for (int v = 0; v < 5; ++v) {
+    if (!isfinite(state[v])) {
+      for (int c = 0; c < 5; ++c) state[c] = center[c];
+      return true;
+    }
+    original[v] = state[v];
+  }
+  double low = 0.0, high = 1.0;
+  for (int iteration = 0; iteration < 50; ++iteration) {
+    const double theta = 0.5*(low+high);
+    for (int v = 0; v < 5; ++v) state[v] = center[v]+theta*(original[v]-center[v]);
+    if (admissible_roe_state_cuda(state, gamma, small_rho, small_p)) low = theta;
+    else high = theta;
+  }
+  for (int v = 0; v < 5; ++v) state[v] = center[v]+(0.99*low)*(original[v]-center[v]);
+  return true;
+}
+
 __device__ inline void weno5z_roe_face_flux_cuda(
     const double* q,
     const GridView& grid,
@@ -348,8 +379,23 @@ __device__ inline void weno5z_roe_face_flux_cuda(
           * right_characteristic[characteristic];
     }
   }
-  roe_numerical_flux_cuda(
-      left_state, right_state, gamma, small_rho, small_p, normal_flux);
+  const bool limited_left = limit_roe_state_cuda(center_left, left_state, gamma, small_rho, small_p);
+  const bool limited_right = limit_roe_state_cuda(center_right, right_state, gamma, small_rho, small_p);
+  double rl, ul, vl, wl, pl, hl, rr, ur, vr, wr, pr, hr;
+  roe_primitive_state_cuda(left_state, gamma, small_rho, small_p, rl, ul, vl, wl, pl, hl);
+  roe_primitive_state_cuda(right_state, gamma, small_rho, small_p, rr, ur, vr, wr, pr, hr);
+  const double cl = sqrt(gamma*pl/rl), cr = sqrt(gamma*pr/rr);
+  if (limited_left || limited_right || ur-ul > 2.0*fmin(cl, cr)) {
+    // Shared local Lax-Friedrichs face flux retains conservation.
+    double fl[5], fr[5];
+    euler_physical_flux_cuda(left_state, gamma, small_rho, small_p, fl);
+    euler_physical_flux_cuda(right_state, gamma, small_rho, small_p, fr);
+    const double speed = fmax(fabs(ul)+cl, fabs(ur)+cr);
+    for (int v = 0; v < 5; ++v)
+      normal_flux[v] = 0.5*(fl[v]+fr[v]-speed*(right_state[v]-left_state[v]));
+  } else {
+    roe_numerical_flux_cuda(left_state, right_state, gamma, small_rho, small_p, normal_flux);
+  }
   rotate_flux_to_global_cuda(normal_flux, direction, flux);
 }
 

@@ -747,6 +747,27 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
         self.assertIn('geometry = "planar_nozzle"', text)
         self.assertIn("nozzle_throat_half_height = 0.1", text)
 
+    def test_cuda_reactive_nozzle_profiles(self):
+        manifest = load_yaml(FRAMEWORK_ROOT / "SolverLibrary/NSE/solver_manifest_multicomponent.yaml")
+        for profile, mpi in [("cuda_single_reactive", False), ("cuda_mpi_reactive_pencil", True)]:
+            with self.subTest(profile=profile):
+                case = self.nozzle_case()
+                case["solver"] = dict(profile=profile, use_mpi=mpi, use_cuda=True,
+                                      use_openmp=False, mpi_processes=2 if mpi else 1,
+                                      decomposition="pencil", process_grid=[0, 0])
+                _validate_solver_selection(case, manifest, profile)
+                text = render_nse_multicomponent(case, profile)
+                self.assertIn('geometry = "planar_nozzle"', text)
+                self.assertIn("&reactive_navier_stokes", text)
+                self.assertEqual("&multicomponent_parallel" in text, mpi)
+                case["solver"]["use_cuda"] = False
+                with self.assertRaisesRegex(CaseInputError, "use_cuda"):
+                    _validate_solver_selection(case, manifest, profile)
+
+    def test_cuda_requires_reactive_mode(self):
+        with self.assertRaisesRegex(CaseInputError, "requires.*reactive_navier_stokes"):
+            render_nse_multicomponent(self.viscous_case(), "cuda_single_reactive")
+
     def test_nozzle_invalid_geometry_rejected(self):
         for key, value in [("type", "cad"), ("throat_half_height", 0),
                            ("throat_x", 10), ("exit_half_height", float("nan"))]:
@@ -1425,6 +1446,47 @@ class NseCaseInputTests(unittest.TestCase):
         self.assertIn("imported_turbulence_velocity_offset_x = 0.5", text)
         self.assertIn("imported_turbulence_background_u = 0.5", text)
         self.assertIn("imported_turbulence_background_p = 0.75", text)
+
+    def periodic_embed_case(self) -> dict:
+        case = self.case()
+        case["grid"].update(nx=16, x_min=0.0, x_max=16.0)
+        case["flow"] = {"type": "imported_turbulence", "imported_turbulence": {
+            "file": "initial_data/turbulence.slf", "mode": "periodic_embed",
+            "x_start": 2.0, "x_length": 7.0, "blend_cells": 2}}
+        return case
+
+    def test_renders_periodic_embed(self) -> None:
+        for profile in ("cpu_mpi", "cuda_single"):
+            with self.subTest(profile=profile):
+                text = render_nse(self.periodic_embed_case(), self.manifest, profile)
+                self.assertIn('imported_turbulence_mode = "periodic_embed"', text)
+                self.assertIn("imported_turbulence_x_length = 7", text)
+
+    def test_rejects_invalid_periodic_embed(self) -> None:
+        for key, value in (("x_length", None), ("x_length", 0), ("x_length", -1),
+                           ("x_length", float("nan")), ("x_length", True),
+                           ("x_length", 7.5), ("x_length", 15),
+                           ("x_start", -1), ("x_start", 2.5), ("blend_cells", 4)):
+            with self.subTest(key=key, value=value):
+                case = self.periodic_embed_case()
+                case["flow"]["imported_turbulence"][key] = value
+                with self.assertRaises(CaseInputError):
+                    render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_rejects_length_for_old_import_modes(self) -> None:
+        for mode in ("embed", "tile"):
+            case = self.periodic_embed_case()
+            case["flow"]["imported_turbulence"].update(mode=mode, blend_cells=0)
+            with self.assertRaisesRegex(CaseInputError, "x_length requires"):
+                render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_periodic_embed_with_shock_initial_conditions(self) -> None:
+        for factory in (self.shock_turbulence_case, self.shock_tube_turbulence_case):
+            case = factory()
+            dx = (case["grid"]["x_max"]-case["grid"]["x_min"])/case["grid"]["nx"]
+            case["flow"]["imported_turbulence"].update(mode="periodic_embed", x_length=3*dx)
+            text = render_nse(case, self.manifest, "cpu_mpi")
+            self.assertIn('imported_turbulence_mode = "periodic_embed"', text)
 
     def test_resolves_imported_turbulence_file_from_case_directory(self) -> None:
         case = self.case()

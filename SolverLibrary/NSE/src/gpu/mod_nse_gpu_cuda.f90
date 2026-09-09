@@ -3,6 +3,7 @@ module mod_nse_gpu
     c_int, c_double, c_char, c_null_char, c_size_t
   use, intrinsic :: iso_fortran_env, only : error_unit
   use mod_precision, only : dp
+  use module_mpi, only : nprocs, mp_stop
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config, nse_boundary_face_count
   use mod_nse_boundary, only : validate_boundary_scheme
@@ -38,6 +39,7 @@ module mod_nse_gpu
   public :: nse_gpu_compute_dt
   public :: nse_gpu_advance_ssprk3
   public :: nse_gpu_begin_ssprk3
+  public :: nse_gpu_restore_ssprk3
   public :: nse_gpu_advance_ssprk3_stage
   public :: nse_gpu_apply_local_boundary
   public :: nse_gpu_apply_local_periodic
@@ -186,6 +188,19 @@ module mod_nse_gpu
       integer(c_int), value :: stage
       integer(c_int) :: status
     end function c_nse_cuda_advance_stage
+
+    function c_nse_cuda_restore(handle) bind(C, name="nse_cuda_restore_ssprk3") result(status)
+      import :: c_ptr, c_int
+      type(c_ptr), value :: handle
+      integer(c_int) :: status
+    end function
+
+    function c_nse_cuda_adaptive(handle, dt) bind(C, name="nse_cuda_advance_adaptive") result(status)
+      import :: c_ptr, c_int, c_double
+      type(c_ptr), value :: handle
+      real(c_double), intent(inout) :: dt
+      integer(c_int) :: status
+    end function
 
     function c_nse_cuda_synchronize(handle) &
         bind(C, name="nse_cuda_synchronize") result(status)
@@ -540,13 +555,21 @@ contains
     dt = c_dt
   end subroutine nse_gpu_compute_dt
 
-  subroutine nse_gpu_advance_ssprk3(context, dt)
+  subroutine nse_gpu_advance_ssprk3(context, dt, accepted_dt)
     type(nse_gpu_context), intent(in) :: context
     real(dp), intent(in) :: dt
+    real(dp), optional, intent(out) :: accepted_dt
+    real(c_double) :: trial_dt
     integer(c_int) :: status
 
     call require_context(context)
-    status = c_nse_cuda_advance(context%handle, dt)
+    if (present(accepted_dt)) then
+      trial_dt = dt
+      status = c_nse_cuda_adaptive(context%handle, trial_dt)
+      accepted_dt = trial_dt
+    else
+      status = c_nse_cuda_advance(context%handle, dt)
+    end if
     call require_success(status, "advance CUDA SSPRK3 step")
   end subroutine nse_gpu_advance_ssprk3
 
@@ -560,14 +583,27 @@ contains
     call require_success(status, "begin distributed CUDA SSPRK3 step")
   end subroutine nse_gpu_begin_ssprk3
 
-  subroutine nse_gpu_advance_ssprk3_stage(context, dt, stage)
+  subroutine nse_gpu_restore_ssprk3(context)
+    type(nse_gpu_context), intent(in) :: context
+    integer(c_int) :: status
+    call require_context(context)
+    status = c_nse_cuda_restore(context%handle)
+    call require_success(status, "restore rejected CUDA step")
+  end subroutine
+
+  subroutine nse_gpu_advance_ssprk3_stage(context, dt, stage, step_status)
     type(nse_gpu_context), intent(in) :: context
     real(dp), intent(in) :: dt
     integer, intent(in) :: stage
+    integer, optional, intent(out) :: step_status
     integer(c_int) :: status
 
     call require_context(context)
     status = c_nse_cuda_advance_stage(context%handle, dt, int(stage, c_int))
+    if (present(step_status)) then
+      step_status = int(status)
+      return
+    end if
     call require_success(status, "advance distributed CUDA SSPRK3 stage")
   end subroutine nse_gpu_advance_ssprk3_stage
 
@@ -612,6 +648,8 @@ contains
     end do
     write(error_unit,'(3a)') "CUDA error during ", trim(operation), &
       ": " // trim(message)
+    flush(error_unit)
+    if (nprocs > 1) call mp_stop(11)
     error stop "NSE CUDA backend failure"
   end subroutine require_success
 

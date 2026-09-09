@@ -48,7 +48,7 @@ mainは計算手順だけを制御し、流束式、初期条件式、境界処�
 | 初期条件選択 | `src/init/mod_nse_initial_conditions.f90` | `initialize_nse_state` |
 | Taylor–Green | `src/init/mod_init_taylor_green.f90` | `initialize_taylor_green` |
 | 分散FFT HIT | `src/init/mod_init_hit_spectral_2decomp.f90` | `initialize_hit_spectral` |
-| 保存乱流場 | `src/init/mod_init_imported_turbulence.f90` | 可搬SLFの`embed`/`tile`配置 |
+| 保存乱流場 | `src/init/mod_init_imported_turbulence.f90` | 可搬SLFの`embed`/`tile`/`periodic_embed`配置 |
 | 平面衝撃波–乱流 | `src/init/mod_init_shock_turbulence.f90` | 形成済み衝撃波とDirichletドライバーの配置 |
 | 有限高圧室–乱流 | `src/init/mod_init_shock_tube_turbulence.f90` | 隔膜、高圧室、低圧域、局所乱流の配置 |
 | CPU面別境界 | `src/boundary/mod_boundary_runtime.f90` | 周期／特性無反射／鏡像／Dirichletの実行時dispatch |

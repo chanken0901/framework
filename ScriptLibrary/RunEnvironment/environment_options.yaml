@@ -61,7 +61,7 @@ options:
         name: nse
     nse_multicomponent:
       label: 多成分NSE基盤
-      description: 多成分・反応流拡張の基盤からstage-3温度・組成依存熱力学までを提供する。
+      description: 多成分・反応流、ノズル写像、CPU並列とGPU常駐CUDAを別profileで提供する。
       values:
         name: nse_multicomponent
     gpe:

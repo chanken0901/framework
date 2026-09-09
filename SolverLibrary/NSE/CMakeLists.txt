@@ -52,6 +52,7 @@ set(
   "GPU backend: none or cuda"
 )
 set_property(CACHE NSE_GPU_BACKEND PROPERTY STRINGS none cuda)
+option(NSE_MC_CUDA "Build the separate resident multicomponent CUDA bridge" OFF)
 set(
   NSE_CUDA_ARCHITECTURES ""
   CACHE STRING
@@ -533,7 +534,12 @@ if(NSE_INIT_FFT_BACKEND STREQUAL "cufftmp")
 endif()
 
 if(NSE_GPU_BACKEND STREQUAL "cuda")
-  add_library(nse_cuda_bridge SHARED src/gpu/nse_cuda_bridge.cu)
+  if(NSE_MC_CUDA)
+    add_library(nse_cuda_bridge SHARED src/extensions/multicomponent/gpu/mc_cuda.cu)
+    target_compile_options(nse_cuda_bridge PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
+  else()
+    add_library(nse_cuda_bridge SHARED src/gpu/nse_cuda_bridge.cu)
+  endif()
   set_target_properties(
     nse_cuda_bridge
     PROPERTIES
@@ -1014,7 +1020,62 @@ if(BUILD_TESTING AND NSE_TEST_SUITE STREQUAL "multicomponent_passive_scalar")
   )
 endif()
 
+if(BUILD_TESTING AND NSE_MC_CUDA)
+  add_executable(nse_test_mc_cuda_species tests/test_multicomponent_cuda_species.f90)
+  set_target_properties(nse_test_mc_cuda_species PROPERTIES
+    Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/mc_cuda_species_test"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+  target_link_libraries(nse_test_mc_cuda_species PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_mc_cuda_species)
+  add_test(NAME nse_mc_cuda_species COMMAND $<TARGET_FILE:nse_test_mc_cuda_species>)
+  set_tests_properties(nse_mc_cuda_species PROPERTIES
+    PASS_REGULAR_EXPRESSION "CUDA variable species comparison passed"
+    FAIL_REGULAR_EXPRESSION "ERROR STOP")
+  add_executable(nse_test_mc_cuda tests/test_multicomponent_cuda.f90)
+  set_target_properties(nse_test_mc_cuda PROPERTIES
+    Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/mc_cuda_test"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+  target_link_libraries(nse_test_mc_cuda PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_mc_cuda)
+  add_test(NAME nse_mc_cuda_cpu_comparison COMMAND $<TARGET_FILE:nse_test_mc_cuda>
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_multicomponent_reactive_boundaries.dat")
+  foreach(failure IN ITEMS bad_device bad_state bad_temperature substep_limit)
+    add_test(NAME nse_mc_cuda_reject_${failure} COMMAND $<TARGET_FILE:nse_test_mc_cuda>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_multicomponent_reactive_boundaries.dat" ${failure})
+    set_tests_properties(nse_mc_cuda_reject_${failure} PROPERTIES WILL_FAIL TRUE TIMEOUT 30)
+  endforeach()
+  set_tests_properties(nse_mc_cuda_cpu_comparison PROPERTIES
+    PASS_REGULAR_EXPRESSION "Resident CUDA CPU comparison passed"
+    FAIL_REGULAR_EXPRESSION "ERROR STOP;MC CUDA .*error")
+  if(NSE_USE_MPI)
+    add_executable(nse_test_mc_cuda_mpi tests/test_multicomponent_cuda_mpi.f90)
+    set_target_properties(nse_test_mc_cuda_mpi PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/mc_cuda_mpi_test"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+    target_link_libraries(nse_test_mc_cuda_mpi PRIVATE NSE::core)
+    nse_apply_fortran_options(nse_test_mc_cuda_mpi)
+    foreach(np IN ITEMS 1 2 3 4)
+      add_test(NAME nse_mc_cuda_pencil_${np} COMMAND "${MPIEXEC_EXECUTABLE}"
+        ${MPIEXEC_NUMPROC_FLAG} ${np} ${MPIEXEC_PREFLAGS}
+        $<TARGET_FILE:nse_test_mc_cuda_mpi> ${MPIEXEC_POSTFLAGS}
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_multicomponent_reactive_boundaries.dat")
+      set_tests_properties(nse_mc_cuda_pencil_${np} PROPERTIES
+        TIMEOUT 120 RUN_SERIAL TRUE
+        PASS_REGULAR_EXPRESSION "Resident CUDA MPI pencil comparison passed")
+    endforeach()
+  endif()
+endif()
+
 if(NSE_TEST_SUITE STREQUAL "legacy")
+if(BUILD_TESTING AND NSE_USE_MPI AND
+   (NSE_GPU_BACKEND STREQUAL "none" OR NSE_ENABLE_MULTI_GPU_TESTS))
+  add_test(NAME nse_mpi_positivity_retry
+    COMMAND "${MPIEXEC_EXECUTABLE}" ${MPIEXEC_NUMPROC_FLAG} 2 ${MPIEXEC_PREFLAGS}
+      $<TARGET_FILE:nse_solver> ${MPIEXEC_POSTFLAGS}
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_positivity_retry.dat")
+  set_tests_properties(nse_mpi_positivity_retry PROPERTIES
+    TIMEOUT 60)
+endif()
 if(BUILD_TESTING AND NSE_ENABLE_CUFFTMP_CONTRACT_TESTS)
   add_test(
     NAME nse_cufftmp_forcing_contract
@@ -1095,6 +1156,17 @@ if(BUILD_TESTING)
   )
 endif()
 if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "none")
+  if(NOT NSE_USE_MPI)
+    add_executable(nse_test_positivity tests/test_nse_positivity.f90)
+    set_target_properties(nse_test_positivity PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+    target_link_libraries(nse_test_positivity PRIVATE NSE::core)
+    nse_apply_fortran_options(nse_test_positivity)
+    add_test(NAME nse_positivity COMMAND $<TARGET_FILE:nse_test_positivity>)
+    add_test(NAME nse_positivity_fixed_reject COMMAND $<TARGET_FILE:nse_test_positivity> fixed-reject)
+    set_tests_properties(nse_positivity_fixed_reject PROPERTIES WILL_FAIL TRUE)
+  endif()
   add_executable(nse_test_hit_isotropy_math tests/test_hit_isotropy_math.f90)
   set_target_properties(
     nse_test_hit_isotropy_math
@@ -1398,6 +1470,18 @@ if(BUILD_TESTING AND NSE_USE_MPI AND
   )
 endif()
 if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda" AND NOT NSE_USE_MPI)
+  if(NSE_FORCING_FFT_BACKEND STREQUAL "cufft")
+    add_executable(nse_test_cuda_positivity tests/test_cuda_positivity.f90)
+    set_target_properties(nse_test_cuda_positivity PROPERTIES
+      Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}"
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+    target_link_libraries(nse_test_cuda_positivity PRIVATE NSE::core)
+    nse_apply_fortran_options(nse_test_cuda_positivity)
+    add_test(NAME nse_cuda_positivity COMMAND $<TARGET_FILE:nse_test_cuda_positivity>)
+    add_test(NAME nse_cuda_positivity_fixed_reject
+      COMMAND $<TARGET_FILE:nse_test_cuda_positivity> fixed-reject)
+    set_tests_properties(nse_cuda_positivity_fixed_reject PROPERTIES WILL_FAIL TRUE)
+  endif()
   add_executable(
     nse_test_cuda_boundary_dirichlet
     tests/test_cuda_boundary_dirichlet.f90

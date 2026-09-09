@@ -1,5 +1,8 @@
 # 統計的定常乱流のForcing
 
+負圧対策と外力を含む更新前の時間刻み検査は
+[`NSE_POSITIVITY.md`](NSE_POSITIVITY.md)を参照。
+
 > Windows（PowerShell）とLinux（bash）のコマンド対応は[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 ## 実装範囲

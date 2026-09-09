@@ -1,4 +1,4 @@
-# Additive multicomponent foundation through stage-8 MPI/OpenMP pencils.
+# Additive multicomponent solver through stage-10 resident CUDA.
 # The production single-component NSE remains in solver_manifest.yaml.
 schema_version: 1
 solver_id: nse_multicomponent
@@ -7,6 +7,8 @@ model: nse_multicomponent
 runtime_profile_selection: false
 default_profiles:
   serial: cpu_serial_viscous
+  cuda: cuda_single_reactive
+  mpi_cuda: cuda_mpi_reactive_pencil
 build_adapter: nse_cmake_v1
 cmake_file: CMakeLists.txt
 
@@ -20,6 +22,32 @@ distribution:
     - cmake/NSEMPI.cmake
 
 components:
+  cuda_core:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/gpu/mod_mc_cuda.f90
+  cuda_mpi_core:
+    cmake_role: library
+    files:
+      - src/extensions/multicomponent/gpu/mod_mc_cuda_mpi.f90
+  main_cuda_mpi:
+    cmake_role: executable
+    files:
+      - src/extensions/multicomponent/gpu/main_nse_multicomponent_cuda_mpi.f90
+  cuda_tests:
+    files:
+      - tests/test_multicomponent_cuda.f90
+      - tests/test_multicomponent_cuda_species.f90
+  cuda_mpi_tests:
+    files:
+      - tests/test_multicomponent_cuda_mpi.f90
+  cuda_sources:
+    files:
+      - src/extensions/multicomponent/gpu/mc_cuda.cu
+  main_cuda:
+    cmake_role: executable
+    files:
+      - src/extensions/multicomponent/gpu/main_nse_multicomponent_cuda.f90
   mpi_pencil_core:
     cmake_role: library
     files:
@@ -193,6 +221,7 @@ components:
       - docs/NSE_MULTICOMPONENT_ROADMAP.md
       - docs/NSE_MULTICOMPONENT_PARALLEL.md
       - docs/NSE_MULTICOMPONENT_GEOMETRY.md
+      - docs/NSE_MULTICOMPONENT_CUDA.md
       - docs/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md
 
 profiles:
@@ -607,6 +636,122 @@ profiles:
       NSE_USE_MPI: true
       NSE_ENABLE_OPENMP: true
       NSE_GPU_BACKEND: none
+      NSE_CONVECTIVE_BACKEND: runtime
+      NSE_VISCOUS_SCHEME: none
+      NSE_BOUNDARY_SCHEME: runtime
+      NSE_INIT_FFT_BACKEND: none
+      NSE_FORCING_FFT_BACKEND: none
+      NSE_TEST_SUITE: multicomponent_reactive_boundaries
+
+  cuda_single_reactive:
+    description: Stage-10 GPU-resident reactive flow with Cartesian or planar-nozzle geometry
+    capabilities:
+      - multicomponent_foundation
+      - reactive_multicomponent_navier_stokes
+      - thermally_perfect_ideal_gas_mixture
+      - nasa7_thermodynamics
+      - mixture_averaged_species_diffusion
+      - newtonian_viscosity
+      - fourier_heat_conduction
+      - one_step_irreversible_arrhenius
+      - strang_splitting
+      - chemistry_subcycling
+      - reactive_shock_tube
+      - face_specific_boundaries
+      - characteristic_non_reflecting_boundary
+      - reflective_boundary
+      - dirichlet_boundary
+      - transient_snapshots
+      - integral_history
+      - rusanov1
+      - ssprk3
+    components:
+      - foundation_core
+      - thermodynamics_thermally_perfect
+      - transport_mixture_averaged
+      - chemistry_one_step_arrhenius
+      - chemistry_integrator_core
+      - euler_core
+      - viscous_core
+      - reactive_core
+      - foundation_docs
+      - cuda_core
+      - cuda_sources
+      - main_cuda
+    test_components:
+      - foundation_tests
+      - reactive_tests
+      - reactive_boundary_tests
+      - cuda_tests
+    executable: nse_multicomponent
+    execution:
+      use_mpi: false
+      use_openmp: false
+    cmake:
+      NSE_USE_MPI: false
+      NSE_ENABLE_OPENMP: false
+      NSE_GPU_BACKEND: cuda
+      NSE_MC_CUDA: true
+      NSE_CONVECTIVE_BACKEND: runtime
+      NSE_VISCOUS_SCHEME: none
+      NSE_BOUNDARY_SCHEME: runtime
+      NSE_INIT_FFT_BACKEND: none
+      NSE_FORCING_FFT_BACKEND: none
+      NSE_TEST_SUITE: multicomponent_reactive_boundaries
+
+  cuda_mpi_reactive_pencil:
+    description: Stage-10 GPU-resident reactive flow with Cartesian or planar-nozzle geometry
+    capabilities:
+      - multicomponent_foundation
+      - reactive_multicomponent_navier_stokes
+      - thermally_perfect_ideal_gas_mixture
+      - nasa7_thermodynamics
+      - mixture_averaged_species_diffusion
+      - newtonian_viscosity
+      - fourier_heat_conduction
+      - one_step_irreversible_arrhenius
+      - strang_splitting
+      - chemistry_subcycling
+      - reactive_shock_tube
+      - face_specific_boundaries
+      - characteristic_non_reflecting_boundary
+      - reflective_boundary
+      - dirichlet_boundary
+      - transient_snapshots
+      - integral_history
+      - rusanov1
+      - ssprk3
+    components:
+      - foundation_core
+      - thermodynamics_thermally_perfect
+      - transport_mixture_averaged
+      - chemistry_one_step_arrhenius
+      - chemistry_integrator_core
+      - euler_core
+      - viscous_core
+      - reactive_core
+      - foundation_docs
+      - cuda_core
+      - cuda_sources
+      - mpi_pencil_core
+      - cuda_mpi_core
+      - main_cuda_mpi
+    test_components:
+      - foundation_tests
+      - reactive_tests
+      - reactive_boundary_tests
+      - cuda_tests
+      - mpi_pencil_tests
+      - cuda_mpi_tests
+    executable: nse_multicomponent
+    execution:
+      use_mpi: true
+      use_openmp: false
+    cmake:
+      NSE_USE_MPI: true
+      NSE_ENABLE_OPENMP: false
+      NSE_GPU_BACKEND: cuda
+      NSE_MC_CUDA: true
       NSE_CONVECTIVE_BACKEND: runtime
       NSE_VISCOUS_SCHEME: none
       NSE_BOUNDARY_SCHEME: runtime

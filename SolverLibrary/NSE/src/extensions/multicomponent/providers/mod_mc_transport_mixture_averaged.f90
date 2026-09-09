@@ -22,8 +22,17 @@ module mod_mc_transport_provider
   public :: mc_dynamic_viscosity
   public :: mc_thermal_conductivity
   public :: mc_species_diffusivities
+  public :: mc_export_transport
 
 contains
+
+  subroutine mc_export_transport(n,controls,data)
+    integer,intent(in)::n
+    real(dp),intent(out)::controls(2),data(n)
+    if(n/=configured_species .or. n<1) error stop 'transport export before configuration'
+    controls=[reference_dynamic_viscosity,prandtl_number]
+    data=species_diffusivities(1:n)
+  end subroutine
 
   subroutine validate_mc_transport_provider(requested_model)
     character(len=*), intent(in) :: requested_model

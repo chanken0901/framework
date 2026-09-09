@@ -7,10 +7,43 @@
 `flow.type: imported_turbulence`は、NSEのrank別SLF出力を一つの可搬SLFへ
 変換して読み込み、より長いx方向計算領域へ初期乱流場を配置する。
 
-次の二方式を選択できる。
+次の三方式を選択できる。
 
 - `embed`: 乱流場をx方向の一領域へ配置し、それ以外を指定した背景場にする。
 - `tile`: 乱流場をx方向へ周期的に繰り返し、領域全体を埋める。
+- `periodic_embed`: 指定長さの区間だけ乱流場を周期的に繰り返し、外側は背景場にする。
+
+### 指定長さの局所乱流：periodic_embed
+
+既存の`flow.imported_turbulence`設定で、`mode`を変更して`x_length`を追加する。
+以下は配置部分の例であり、背景状態などの既存設定はそのまま併記する。
+
+```yaml
+flow:
+  type: imported_turbulence
+  imported_turbulence:
+    file: initial_data/turbulence.slf
+    mode: periodic_embed
+    x_start: 4.0
+    x_length: 10.0
+    blend_cells: 4
+```
+
+この例では`4.0 <= x < 14.0`だけに乱流を配置する。先頭から元データを読み、
+末尾に達したら先頭へ戻る。`x_length`は元データの長さの整数倍でなくてもよく、
+元データより短くてもよい。ただし開始位置はセル境界、長さは読込み先の`dx`の
+正の整数倍とし、区間全体を計算領域内に収める。格子間隔・y/z領域などの互換条件は従来と同じ。
+
+`blend_cells`は指定区間全体の両端だけに適用し、反復の継ぎ目には適用しない。
+区間のセル数の半分以下を指定する。`0`では背景への接続が不連続になる場合がある。
+同じ周期データの反復であり、独立した乱流を新たに生成する機能ではない。
+元データはx方向に周期的な場を用意する（SLFから周期性を自動判定しない）。
+
+`shock_turbulence_interaction`と`shock_tube_turbulence_interaction`でも同じ指定が可能。
+既存の衝撃波／高圧室設定を維持し、乱流区間が衝撃波背後や高圧室に重ならないようにする。
+`embed`と`tile`の動作は変更しない。`x_length`は`periodic_embed`専用である。
+変更後は`input.dat`を再生成し、本機能を含むソルバーを再ビルドする。
+既に生成済みの実行環境にはライブラリ更新が自動反映されないため、実行環境の更新も必要。
 
 CPU MPI/OpenMP版、単一GPU CUDA版、MPI＋CUDA版で利用できる。MPI版では各rankが
 自分のy-z局所領域だけをファイルから読み込む。初期データ生成時と本計算時の

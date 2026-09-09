@@ -44,7 +44,7 @@ contains
     real(dp) :: background_rho, background_p, x_start, weight
     real(dp) :: source_dx, source_dy, source_dz
     integer :: unit, ios, i, j, k, ivar, iq, source_i
-    integer :: first_i, last_i, offset_cells
+    integer :: first_i, last_i, offset_cells, region_cells
     integer :: variable_map(nconserved)
     integer(int64) :: element_offset, byte_position, bytes_per_real
 
@@ -71,6 +71,11 @@ contains
     mode = lowercase(trim(adjustl(nse%imported_turbulence_mode)))
     x_start = nse%imported_turbulence_x_start
     if (x_start < -1.0e250_dp) x_start = sim%x_min
+    if (.not. ieee_is_finite(x_start)) error stop 'imported turbulence x_start must be finite'
+    if (mode == 'periodic_embed') then
+      if (x_start < sim%x_min .or. x_start >= sim%x_max) &
+        error stop 'periodic_embed x_start lies outside the target x domain'
+    end if
     offset_cells = nint((x_start - sim%x_min) / sim%dx)
     if (.not. nearly_equal(x_start, &
         sim%x_min + real(offset_cells, dp) * sim%dx)) then
@@ -78,6 +83,23 @@ contains
     end if
 
     select case (mode)
+    case ('periodic_embed')
+      if (.not. ieee_is_finite(nse%imported_turbulence_x_length)) &
+        error stop 'periodic_embed x_length must be finite'
+      if (nse%imported_turbulence_x_length <= 0.0_dp .or. &
+          nse%imported_turbulence_x_length > sim%x_max-sim%x_min) &
+        error stop 'periodic_embed x_length must be positive and fit in the x domain'
+      region_cells = nint(nse%imported_turbulence_x_length/sim%dx)
+      if (region_cells < 1 .or. .not. nearly_equal(nse%imported_turbulence_x_length, &
+          real(region_cells,dp)*sim%dx)) &
+        error stop 'periodic_embed x_length must be an integer multiple of dx'
+      first_i = offset_cells+1
+      last_i = offset_cells+region_cells
+      if (first_i < 1 .or. last_i > sim%nx) &
+        error stop 'periodic_embed interval lies outside the target x domain'
+      if (nse%imported_turbulence_blend_cells < 0 .or. &
+          nse%imported_turbulence_blend_cells > region_cells/2) &
+        error stop 'invalid periodic_embed blend cell count'
     case ('embed')
       first_i = offset_cells + 1
       last_i = first_i + header%nx - 1
@@ -150,6 +172,10 @@ contains
 
         do i = first_i, last_i
           select case (mode)
+          case ('periodic_embed')
+            source_i = modulo(i-first_i,header%nx)+1
+            weight = imported_turbulence_weight(i-first_i+1,region_cells, &
+              nse%imported_turbulence_blend_cells)
           case ('embed')
             source_i = i - first_i + 1
             weight = imported_turbulence_weight(source_i, header%nx, &

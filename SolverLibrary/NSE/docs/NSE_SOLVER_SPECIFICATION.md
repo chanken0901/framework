@@ -640,11 +640,12 @@ NSEのCPU/MPI生成環境には互換profileを同梱し、`case.yaml`の要求�
 | `physics.nse.prandtl_number` | Prandtl数 |
 | `flow.type` | `taylor_green`, `hit`, `imported_turbulence`, `shock_turbulence_interaction`, `shock_tube_turbulence_interaction` |
 | `flow.imported_turbulence.file` | ghostなしの可搬NSE SLF |
-| `flow.imported_turbulence.mode` | `embed`または`tile` |
+| `flow.imported_turbulence.mode` | `embed`（1ブロック）、`tile`（全域反復）、`periodic_embed`（指定区間内反復） |
 | `flow.imported_turbulence.x_start` | 元乱流セル列を開始するxセル境界座標 |
-| `flow.imported_turbulence.blend_cells` | `embed`両端の混合セル数 |
+| `flow.imported_turbulence.x_length` | `periodic_embed`専用の区間長。正のdx整数倍、領域内に収める |
+| `flow.imported_turbulence.blend_cells` | `embed`／`periodic_embed`の配置区間両端の混合セル数 |
 | `flow.imported_turbulence.velocity_offset` | 読込み速度へ加える一定速度3成分 |
-| `flow.imported_turbulence.background` | `embed`外側の密度、速度、圧力 |
+| `flow.imported_turbulence.background` | `embed`／`periodic_embed`外側の密度、速度、圧力 |
 | `flow.planar_shock.position` | 対象格子のxセル境界上にある初期衝撃波位置 |
 | `flow.planar_shock.propagation_direction` | `positive_x`または`negative_x` |
 | `flow.planar_shock.upstream` | 衝撃波前方の密度、速度3成分、圧力 |

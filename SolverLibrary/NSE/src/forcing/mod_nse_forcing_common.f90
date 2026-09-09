@@ -1,4 +1,5 @@
 module mod_nse_forcing_common
+  use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
   use mod_precision, only : dp
   use mod_model_config, only : nse_config
   implicit none
@@ -81,6 +82,9 @@ contains
     real(dp), intent(out) :: target_s, target_d
     real(dp) :: ratio, dilatational_numerator
 
+    if (.not. all(ieee_is_finite([solenoidal_denominator, &
+        dilatational_denominator, pressure_dilatation]))) &
+      error stop 'non-finite forcing denominator or pressure dilatation'
     ratio = nse%forcing_dilatational_ratio
     target_s = nse%forcing_target_dissipation / (1.0_dp + ratio)
     target_d = nse%forcing_target_dissipation - target_s
@@ -103,6 +107,8 @@ contains
       coefficient_d = dilatational_numerator / dilatational_denominator
     end if
 
+    if (.not. all(ieee_is_finite([coefficient_s,coefficient_d]))) &
+      error stop 'non-finite forcing coefficient'
     if (nse%forcing_max_coefficient > 0.0_dp) then
       coefficient_s = max(-nse%forcing_max_coefficient, &
         min(nse%forcing_max_coefficient, coefficient_s))

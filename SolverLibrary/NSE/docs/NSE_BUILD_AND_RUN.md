@@ -285,7 +285,7 @@ python3 ./SolverLibrary/NSE/tools/nse_prepare_imported_turbulence.py \
   --output ./cases/caseNNNN/initial_data/turbulence.slf
 ```
 
-続いて`case.yaml`の`flow.type`を`imported_turbulence`へ変更する。`embed`と`tile`の
+続いて`case.yaml`の`flow.type`を`imported_turbulence`へ変更する。`embed`、`tile`、`periodic_embed`の
 入力例、CPU/CUDA別のWindows／Linux実行手順、格子互換条件、平均速度の追加方法は
 [`NSE_IMPORTED_TURBULENCE.md`](NSE_IMPORTED_TURBULENCE.md)を参照する。
 

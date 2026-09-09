@@ -138,6 +138,7 @@ NSE_KEYS = (
     "imported_turbulence_file",
     "imported_turbulence_mode",
     "imported_turbulence_x_start",
+    "imported_turbulence_x_length",
     "imported_turbulence_blend_cells",
     "imported_turbulence_velocity_offset_x",
     "imported_turbulence_velocity_offset_y",
@@ -884,6 +885,7 @@ def _resolve_nse_imported_turbulence(
         "file",
         "mode",
         "x_start",
+        "x_length",
         "blend_cells",
         "velocity_offset",
         "background",
@@ -911,10 +913,19 @@ def _resolve_nse_imported_turbulence(
     shock_interaction = planar_shock_interaction or shock_tube_interaction
     implied_mode = "tile" if flow_type == "turbulence_tile" else "embed"
     mode = _canonical_selector(str(imported.get("mode", implied_mode)))
-    if mode not in {"embed", "tile"}:
+    if mode not in {"embed", "tile", "periodic_embed"}:
         raise CaseInputError(
-            "flow.imported_turbulence.mode must be EMBED or TILE"
+            "flow.imported_turbulence.mode must be EMBED, TILE or PERIODIC_EMBED"
         )
+    length_values = {}
+    if mode == "periodic_embed":
+        if isinstance(imported.get("x_length"), bool):
+            raise CaseInputError("flow.imported_turbulence.x_length must be a positive length")
+        length_values["imported_turbulence_x_length"] = _positive_float(
+            imported.get("x_length"), "flow.imported_turbulence.x_length"
+        )
+    elif "x_length" in imported:
+        raise CaseInputError("flow.imported_turbulence.x_length requires mode: periodic_embed")
 
     blend_cells = imported.get("blend_cells", 0)
     if (
@@ -929,9 +940,9 @@ def _resolve_nse_imported_turbulence(
         raise CaseInputError(
             "flow.imported_turbulence tile mode requires blend_cells: 0"
         )
-    if shock_interaction and mode != "embed":
+    if shock_interaction and mode not in {"embed", "periodic_embed"}:
         raise CaseInputError(
-            "shock-turbulence interaction requires imported_turbulence.mode=EMBED"
+            "shock-turbulence interaction requires imported_turbulence.mode=EMBED or PERIODIC_EMBED"
         )
 
     background_reference = None
@@ -1009,6 +1020,22 @@ def _resolve_nse_imported_turbulence(
         imported.get("x_start", nested(case, "grid.x_min", 0.0)),
         "flow.imported_turbulence.x_start",
     )
+    if mode == "periodic_embed":
+        x_min = _finite_float(nested(case, "grid.x_min", 0.0), "grid.x_min")
+        x_max = _finite_float(nested(case, "grid.x_max"), "grid.x_max")
+        nx = nested(case, "grid.nx")
+        if isinstance(nx, bool) or not isinstance(nx, int) or nx <= 0 or x_max <= x_min:
+            raise CaseInputError("periodic_embed requires positive grid.nx and x_max > x_min")
+        dx = (x_max-x_min)/nx
+        length = length_values["imported_turbulence_x_length"]
+        if x_start < x_min or length > x_max-x_start:
+            raise CaseInputError("periodic_embed interval lies outside the target x domain")
+        for label, cells in (("x_start", (x_start-x_min)/dx), ("x_length", length/dx)):
+            if not math.isclose(cells, round(cells), rel_tol=0.0, abs_tol=1.0e-9):
+                raise CaseInputError(f"periodic_embed {label} must align with target cell boundaries")
+        region_cells = round(length/dx)
+        if region_cells < 1 or 2*blend_cells > region_cells:
+            raise CaseInputError("periodic_embed requires at least one cell and 2*blend_cells <= region cells")
     if background_reference is not None:
         actual = (background_rho, background_velocity, background_pressure)
         flattened_actual = (actual[0], *actual[1], actual[2])
@@ -1049,6 +1076,7 @@ def _resolve_nse_imported_turbulence(
         "imported_turbulence_file": source_file,
         "imported_turbulence_mode": mode,
         "imported_turbulence_x_start": x_start,
+        **length_values,
         "imported_turbulence_blend_cells": blend_cells,
         "imported_turbulence_velocity_offset_x": velocity_offset[0],
         "imported_turbulence_velocity_offset_y": velocity_offset[1],
@@ -1486,7 +1514,7 @@ def _profile_settings(
     if gpu_backend == "cufftmp":
         backend = "cufftmp"
     elif gpu_backend == "cuda":
-        if model == "nse":
+        if model in {"nse", "nse_multicomponent"}:
             backend = "cuda_mpi" if use_mpi else "cuda"
         else:
             backend = "cufft"
@@ -2669,6 +2697,8 @@ def render_nse_multicomponent(
         "cpu_serial_reactive_boundaries": "reactive_navier_stokes",
         "cpu_openmp_reactive": "reactive_navier_stokes",
         "cpu_mpi_reactive_pencil": "reactive_navier_stokes",
+        "cuda_single_reactive": "reactive_navier_stokes",
+        "cuda_mpi_reactive_pencil": "reactive_navier_stokes",
     }
     if profile_name in expected_modes and simulation_mode != expected_modes[profile_name]:
         raise CaseInputError(
@@ -2743,11 +2773,14 @@ def render_nse_multicomponent(
     }
     if (
         simulation_mode == "reactive_navier_stokes"
-        and profile_name in {"cpu_serial_reactive_boundaries", "cpu_openmp_reactive", "cpu_mpi_reactive_pencil"}
+        and profile_name in {"cpu_serial_reactive_boundaries", "cpu_openmp_reactive", "cpu_mpi_reactive_pencil",
+                             "cuda_single_reactive", "cuda_mpi_reactive_pencil"}
     ):
         stage_names[simulation_mode] = (
             "Stage-7 reactive initial/boundary/output extension"
         )
+    if profile_name in {"cuda_single_reactive", "cuda_mpi_reactive_pencil"}:
+        stage_names[simulation_mode] = "Stage-10 GPU-resident reactive flow"
     lines = [
         "! Automatically generated from case.yaml and referenced extensions.",
         f"! {stage_names[simulation_mode]}.",
@@ -2961,7 +2994,8 @@ def render_nse_multicomponent(
         }[simulation_mode]
         if (
             simulation_mode == "reactive_navier_stokes"
-            and profile_name in {"cpu_serial_reactive_boundaries", "cpu_openmp_reactive", "cpu_mpi_reactive_pencil"}
+            and profile_name in {"cpu_serial_reactive_boundaries", "cpu_openmp_reactive", "cpu_mpi_reactive_pencil",
+                                 "cuda_single_reactive", "cuda_mpi_reactive_pencil"}
         ):
             stage_number = 7
         flow = _mapping(nested(case, "flow", {}), "flow")
@@ -3353,7 +3387,7 @@ def render_nse_multicomponent(
             lines.append("&reactive_navier_stokes")
             _append(lines, list(reactive_settings.items()))
             lines.extend(["/", ""])
-    if profile_name == "cpu_mpi_reactive_pencil":
+    if profile_name in {"cpu_mpi_reactive_pencil", "cuda_mpi_reactive_pencil"}:
         solver = _mapping(case.get("solver", {}), "solver")
         if solver.get("decomposition", "pencil") != "pencil":
             raise CaseInputError("Stage-8 MPI requires solver.decomposition=pencil")

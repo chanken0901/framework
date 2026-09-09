@@ -39,8 +39,21 @@ module mod_mc_thermodynamics_provider
   public :: mc_temperature
   public :: mc_sound_speed
   public :: mc_total_energy_from_primitive
+  public :: mc_export_thermodynamics
 
 contains
+
+  ! Immutable coefficient snapshot for accelerator backends (same validated input).
+  subroutine mc_export_thermodynamics(n,controls,data)
+    integer,intent(in)::n
+    real(dp),intent(out)::controls(4),data(16,n)
+    if(n/=configured_species .or. n<1) error stop 'thermodynamics export before configuration'
+    controls=[universal_gas_constant,temperature_min,temperature_max,temperature_tolerance]
+    data(1,:)=molecular_weights(1:n)
+    data(2,:)=temperature_midpoints(1:n)
+    data(3:9,:)=nasa_low_coefficients(:,1:n)
+    data(10:16,:)=nasa_high_coefficients(:,1:n)
+  end subroutine
 
   subroutine mc_get_species_molecular_weights(nspecies,weights)
     integer, intent(in) :: nspecies

@@ -935,6 +935,57 @@ __global__ void rhs_keep_kernel(
 #include "nse_cuda_weno5z_roe.cuh"
 #include "nse_cuda_hybrid.cuh"
 
+
+__device__ inline double energy_quadratic(
+    const double* primitive, const GridView& grid,
+    int i, int j, int k, int axis) {
+  const auto cell = cell_index(grid, i, j, k);
+  double value = 0.0;
+  for (int c = 0; c < 3; ++c) {
+    const double u = primitive[cell + c * grid.cell_count];
+    value += (0.5 + (c == axis ? 1.0 / 6.0 : 0.0)) * u * u;
+  }
+  return value;
+}
+
+__device__ inline double viscous_energy_work_cuda(
+    const double* primitive, const GridView& grid,
+    int i, int j, int k, double idx, double idy, double idz) {
+  // Conservative divergence of viscous work; cross derivatives only use
+  // distinct axes, so the existing three-cell (including corner) halo suffices.
+  constexpr double c1[3] = {0.75, -0.15, 1.0 / 60.0};
+  constexpr double c2[3] = {1.5, -0.15, 1.0 / 90.0};
+  const double inverse[3] = {idx, idy, idz};
+  const int center[3] = {i, j, k};
+  double value = 0.0;
+  for (int axis = 0; axis < 3; ++axis) {
+    const double base = energy_quadratic(primitive, grid, i, j, k, axis);
+    for (int r = 1; r <= 3; ++r) {
+      int p[3] = {i, j, k};
+      p[axis] += r;
+      const double plus = energy_quadratic(primitive, grid, p[0], p[1], p[2], axis);
+      p[axis] = center[axis] - r;
+      const double minus = energy_quadratic(primitive, grid, p[0], p[1], p[2], axis);
+      value += c2[r-1] * (plus + minus - 2.0 * base) * inverse[axis] * inverse[axis];
+      for (int other = 0; other < 3; ++other) {
+        if (other == axis) continue;
+        for (int sign = -1; sign <= 1; sign += 2) {
+          p[axis] = center[axis] + sign * r;
+          const auto cell = cell_index(grid, p[0], p[1], p[2]);
+          const double da = first_derivative(primitive + axis * grid.cell_count,
+              grid, p[0], p[1], p[2], other, inverse[other]);
+          const double db = first_derivative(primitive + other * grid.cell_count,
+              grid, p[0], p[1], p[2], other, inverse[other]);
+          const double flux = primitive[cell + other * grid.cell_count] * da
+              - (2.0 / 3.0) * primitive[cell + axis * grid.cell_count] * db;
+          value += sign * c1[r-1] * inverse[axis] * flux;
+        }
+      }
+    }
+  }
+  return value;
+}
+
 __global__ void viscous_central6_kernel(
     const double* primitive,
     double* rhs,
@@ -964,28 +1015,6 @@ __global__ void viscous_central6_kernel(
   const double inverse_dx2 = inverse_dx * inverse_dx;
   const double inverse_dy2 = inverse_dy * inverse_dy;
   const double inverse_dz2 = inverse_dz * inverse_dz;
-
-  const double u = u_field[center];
-  const double v = v_field[center];
-  const double w = w_field[center];
-  const double ux =
-      first_derivative(u_field, grid, i, j, k, 0, inverse_dx);
-  const double uy =
-      first_derivative(u_field, grid, i, j, k, 1, inverse_dy);
-  const double uz =
-      first_derivative(u_field, grid, i, j, k, 2, inverse_dz);
-  const double vx =
-      first_derivative(v_field, grid, i, j, k, 0, inverse_dx);
-  const double vy =
-      first_derivative(v_field, grid, i, j, k, 1, inverse_dy);
-  const double vz =
-      first_derivative(v_field, grid, i, j, k, 2, inverse_dz);
-  const double wx =
-      first_derivative(w_field, grid, i, j, k, 0, inverse_dx);
-  const double wy =
-      first_derivative(w_field, grid, i, j, k, 1, inverse_dy);
-  const double wz =
-      first_derivative(w_field, grid, i, j, k, 2, inverse_dz);
 
   const double uxx =
       second_derivative(u_field, grid, i, j, k, 0, inverse_dx2);
@@ -1026,18 +1055,6 @@ __global__ void viscous_central6_kernel(
   const double momentum_z =
       wxx + wyy + (4.0 / 3.0) * wzz + (uxz + vyz) / 3.0;
 
-  const double div_velocity = ux + vy + wz;
-  const double tau_xx = 2.0 * ux - (2.0 / 3.0) * div_velocity;
-  const double tau_yy = 2.0 * vy - (2.0 / 3.0) * div_velocity;
-  const double tau_zz = 2.0 * wz - (2.0 / 3.0) * div_velocity;
-  const double tau_xy = uy + vx;
-  const double tau_xz = uz + wx;
-  const double tau_yz = vz + wy;
-  const double dissipation =
-      tau_xx * ux + tau_yy * vy + tau_zz * wz
-      + tau_xy * (uy + vx) + tau_xz * (uz + wx)
-      + tau_yz * (vz + wy);
-
   const double lap_temperature =
       second_derivative(
           temperature_field, grid, i, j, k, 0, inverse_dx2)
@@ -1052,8 +1069,9 @@ __global__ void viscous_central6_kernel(
   rhs[center + 2 * grid.cell_count] += inverse_reynolds * momentum_y;
   rhs[center + 3 * grid.cell_count] += inverse_reynolds * momentum_z;
   rhs[center + 4 * grid.cell_count] += inverse_reynolds * (
-      u * momentum_x + v * momentum_y + w * momentum_z
-      + dissipation + heat_coefficient * lap_temperature);
+      viscous_energy_work_cuda(primitive, grid, i, j, k,
+          inverse_dx, inverse_dy, inverse_dz)
+      + heat_coefficient * lap_temperature);
 }
 
 #if defined(NSE_FORCING_CUFFT) || defined(NSE_FORCING_CUFFTMP)
@@ -1587,6 +1605,11 @@ bool launch_forcing(NseCudaContext* context) {
   }
   pressure_dilatation /= point_count;
 
+  if (!std::isfinite(denominator_s) || !std::isfinite(denominator_d)
+      || !std::isfinite(pressure_dilatation)) {
+    set_error("non-finite forcing denominator or pressure dilatation");
+    return false;
+  }
   const double ratio = context->forcing_dilatational_ratio;
   const double target_s =
       context->forcing_target_dissipation / (1.0 + ratio);
@@ -1605,6 +1628,10 @@ bool launch_forcing(NseCudaContext* context) {
     }
   } else {
     coefficient_d = numerator_d / denominator_d;
+  }
+  if (!std::isfinite(coefficient_s) || !std::isfinite(coefficient_d)) {
+    set_error("non-finite forcing coefficient");
+    return false;
   }
   if (context->forcing_max_coefficient > 0.0) {
     coefficient_s = std::clamp(
@@ -1832,6 +1859,11 @@ bool launch_forcing_distributed(NseCudaContext* context) {
   }
   pressure_dilatation /= point_count;
 
+  if (!std::isfinite(denominator_s) || !std::isfinite(denominator_d)
+      || !std::isfinite(pressure_dilatation)) {
+    set_error("non-finite forcing denominator or pressure dilatation");
+    return false;
+  }
   const double ratio = context->forcing_dilatational_ratio;
   const double target_s =
       context->forcing_target_dissipation / (1.0 + ratio);
@@ -1849,6 +1881,10 @@ bool launch_forcing_distributed(NseCudaContext* context) {
     }
   } else {
     coefficient_d = (target_d - pressure_dilatation) / denominator_d;
+  }
+  if (!std::isfinite(coefficient_s) || !std::isfinite(coefficient_d)) {
+    set_error("non-finite forcing coefficient");
+    return false;
   }
   if (context->forcing_max_coefficient > 0.0) {
     coefficient_s = std::clamp(
@@ -2075,6 +2111,108 @@ bool launch_rhs(NseCudaContext* context) {
 #endif
 }
 
+
+__global__ void invalid_state_kernel(const double* q, double* invalid,
+    GridView grid, double gamma, double small_rho, double small_p,
+    std::size_t count) {
+  const auto linear = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (linear >= count) return;
+  const int i = linear % grid.nx;
+  const int j = (linear / grid.nx) % grid.ny;
+  const int k = linear / (static_cast<std::size_t>(grid.nx) * grid.ny);
+  const auto cell = cell_index(grid, i + grid.nghost, j + grid.nghost, k + grid.nghost);
+  const double rho = q[cell];
+  bool valid = isfinite(rho) && rho >= small_rho;
+  double kinetic = 0.0;
+  for (int c = 1; c <= 3; ++c) {
+    const double m = q[cell + c * grid.cell_count];
+    valid = valid && isfinite(m);
+    kinetic += m * m / (2.0 * rho);
+  }
+  const double energy = q[cell + 4 * grid.cell_count];
+  const double pressure = (gamma - 1.0) * (energy - kinetic);
+  valid = valid && isfinite(energy) && isfinite(pressure) && pressure >= small_p;
+  invalid[linear] = valid ? 0.0 : static_cast<double>(linear + 1);
+}
+
+bool validate_state(NseCudaContext* context, int stage) {
+  invalid_state_kernel<<<block_count(context->physical_count), 256>>>(
+      context->q, context->speed, context->grid, context->gamma,
+      context->small_rho, context->small_p, context->physical_count);
+  if (!check_cuda(cudaGetLastError(), "validate conserved state")
+      || !check_cuda(cub::DeviceReduce::Max(context->reduce_storage,
+          context->reduce_storage_bytes, context->speed, context->max_speed,
+          static_cast<int>(context->physical_count)), "reduce invalid state")) return false;
+  double invalid = 0.0;
+  if (!check_cuda(cudaMemcpy(&invalid, context->max_speed, sizeof(double),
+          cudaMemcpyDeviceToHost), "read invalid state")) return false;
+  if (invalid == 0.0) return true;
+  const auto linear = static_cast<std::size_t>(invalid) - 1;
+  const int i = linear % context->grid.nx;
+  const int j = (linear / context->grid.nx) % context->grid.ny;
+  const int k = linear / (static_cast<std::size_t>(context->grid.nx) * context->grid.ny);
+  // Compute the flat address on the host (cell_index is device-only).
+  const auto cell = static_cast<std::size_t>(i + context->grid.nghost)
+      + static_cast<std::size_t>(context->grid.nx_total) *
+      (j + context->grid.nghost + static_cast<std::size_t>(context->grid.ny_total)
+          * (k + context->grid.nghost));
+  double state[5];
+  for (int c = 0; c < 5; ++c) {
+    if (!check_cuda(cudaMemcpy(&state[c], context->q + cell + c * context->grid.cell_count,
+        sizeof(double), cudaMemcpyDeviceToHost), "read invalid cell")) return false;
+  }
+  const double p = (context->gamma - 1.0) * (state[4]
+      - (state[1]*state[1] + state[2]*state[2] + state[3]*state[3]) / (2.0*state[0]));
+  char message[384];
+  std::snprintf(message, sizeof(message),
+      "invalid conserved state: RK stage=%d local cell=(%d,%d,%d) rho=%.17g p=%.17g E=%.17g; "
+      "check resolution, CFL and forcing (state was not clipped)",
+      stage, i+1, j+1, k+1, state[0], p, state[4]);
+  set_error(message);
+  return false;
+}
+
+// SSPRK3 is a convex combination of forward Euler states. Check the full
+// Euler increment (including forcing and viscous work) BEFORE modifying Q.
+__global__ void euler_budget_kernel(const double* q, const double* rhs,
+    double* rejected, GridView grid, double dt, double gamma,
+    double small_rho, double small_p, std::size_t count) {
+  const auto linear = static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+  if (linear >= count) return;
+  const auto cell = cell_index(grid, linear%grid.nx+grid.nghost,
+      (linear/grid.nx)%grid.ny+grid.nghost,
+      linear/(static_cast<std::size_t>(grid.nx)*grid.ny)+grid.nghost);
+  double old[5], trial[5];
+  for (int v = 0; v < 5; ++v) {
+    old[v] = q[cell+v*grid.cell_count];
+    const double rate = rhs[cell+v*grid.cell_count];
+    if (!isfinite(rate)) { rejected[linear] = 2.0; return; }
+    trial[v] = old[v]+dt*rate;
+  }
+  const double old_p = (gamma-1.0)*(old[4]
+      -0.5*(old[1]*old[1]+old[2]*old[2]+old[3]*old[3])/old[0]);
+  // Retain a 10% reserve, rather than accepting a step onto the pressure floor.
+  rejected[linear] = admissible_roe_state_cuda(trial, gamma,
+      fmax(small_rho, 0.1*old[0]), fmax(small_p, 0.1*old_p)) ? 0.0 : 1.0;
+}
+
+int check_euler_budget(NseCudaContext* context, double dt) {
+  euler_budget_kernel<<<block_count(context->physical_count), 256>>>(
+      context->q, context->rhs, context->speed, context->grid, dt,
+      context->gamma, context->small_rho, context->small_p, context->physical_count);
+  if (!check_cuda(cudaGetLastError(), "Euler positivity budget")
+      || !check_cuda(cub::DeviceReduce::Max(context->reduce_storage,
+          context->reduce_storage_bytes, context->speed, context->max_speed,
+          static_cast<int>(context->physical_count)), "reduce positivity budget")) return 1;
+  double rejected = 0.0;
+  if (!check_cuda(cudaMemcpy(&rejected, context->max_speed, sizeof(double),
+          cudaMemcpyDeviceToHost), "read positivity budget")) return 1;
+  if (rejected == 0.0) return 0;
+  if (rejected > 1.0) { set_error("non-finite RHS; time-step retry is not applicable"); return 1; }
+  set_error("time step exceeds density/internal-energy budget (including forcing); state not clipped");
+  return 2; // Recoverable: retry the WHOLE step, not just this RK stage.
+}
+
 bool launch_stage(NseCudaContext* context, double dt, int stage) {
   ssprk_stage_kernel<<<block_count(context->physical_count), 256>>>(
       context->q,
@@ -2084,7 +2222,8 @@ bool launch_stage(NseCudaContext* context, double dt, int stage) {
       dt,
       stage,
       context->physical_count);
-  return check_cuda(cudaGetLastError(), "SSPRK3 stage kernel");
+  return check_cuda(cudaGetLastError(), "SSPRK3 stage kernel")
+      && validate_state(context, stage);
 }
 
 }  // namespace
@@ -2976,6 +3115,7 @@ NSE_CUDA_EXPORT int nse_cuda_compute_dt(void* handle, double* dt) {
     return 1;
   }
 
+  if (!validate_state(context, 0)) return 1;
   wave_speed_kernel<<<block_count(context->physical_count), 256>>>(
       context->q,
       context->speed,
@@ -3037,7 +3177,7 @@ NSE_CUDA_EXPORT int nse_cuda_begin_ssprk3(void* handle, double dt) {
   return check_cuda(
       cudaMemcpy(context->q0, context->q, context->state_bytes,
                  cudaMemcpyDeviceToDevice),
-      "copy Q to Q0") ? 0 : 1;
+      "copy Q to Q0") && validate_state(context, 0) ? 0 : 1;
 }
 
 NSE_CUDA_EXPORT int nse_cuda_advance_ssprk3_stage(
@@ -3049,9 +3189,10 @@ NSE_CUDA_EXPORT int nse_cuda_advance_ssprk3_stage(
     set_error("invalid CUDA SSPRK3 stage request");
     return 1;
   }
-  if (!launch_rhs(context) || !launch_stage(context, dt, stage)) {
-    return 1;
-  }
+  if (!launch_rhs(context)) return 1;
+  const int budget_status = check_euler_budget(context, dt);
+  if (budget_status != 0) return budget_status;
+  if (!launch_stage(context, dt, stage)) return 1;
   return 0;
 }
 
@@ -3067,12 +3208,54 @@ NSE_CUDA_EXPORT int nse_cuda_advance_ssprk3(void* handle, double dt) {
   }
 
   for (int stage = 1; stage <= 3; ++stage) {
-    if (!launch_boundary(context)
-        || nse_cuda_advance_ssprk3_stage(handle, dt, stage) != 0) {
-      return 1;
+    if (!launch_boundary(context)) return 1;
+    const int status = nse_cuda_advance_ssprk3_stage(handle, dt, stage);
+    if (status != 0) {
+      const std::string reason = last_error;
+      if (!check_cuda(cudaMemcpy(context->q, context->q0, context->state_bytes,
+              cudaMemcpyDeviceToDevice), "restore rejected fixed step")) return 1;
+      set_error(reason);
+      return status;
     }
   }
   return 0;
+}
+
+NSE_CUDA_EXPORT int nse_cuda_restore_ssprk3(void* handle) {
+  auto* context = static_cast<NseCudaContext*>(handle);
+  if (context == nullptr) { set_error("invalid CUDA context"); return 1; }
+  return check_cuda(cudaMemcpy(context->q, context->q0, context->state_bytes,
+      cudaMemcpyDeviceToDevice), "restore rejected SSPRK3 step") ? 0 : 1;
+}
+
+NSE_CUDA_EXPORT int nse_cuda_advance_adaptive(void* handle, double* dt) {
+  auto* context = static_cast<NseCudaContext*>(handle);
+  if (context == nullptr || dt == nullptr) { set_error("invalid adaptive step request"); return 1; }
+  if (context->distributed_y || context->distributed_z) {
+    set_error("distributed retry must be coordinated by the MPI driver"); return 1;
+  }
+  if (nse_cuda_begin_ssprk3(handle, *dt) != 0) return 1;
+  const double requested_dt = *dt;
+  for (int retry = 0; retry <= 20; ++retry) {
+    int status = 0;
+    for (int stage = 1; stage <= 3; ++stage) {
+      if (!launch_boundary(context)) return 1;
+      status = nse_cuda_advance_ssprk3_stage(handle, *dt, stage);
+      if (status != 0) break;
+    }
+    if (status == 0) {
+      if (retry > 0) std::printf("# positivity_retry count=%d requested_dt=%.9g accepted_dt=%.9g\n",
+          retry, requested_dt, *dt);
+      return 0;
+    }
+    const std::string reason = last_error;
+    if (nse_cuda_restore_ssprk3(handle) != 0) return 1;
+    if (status != 2) { set_error(reason); return status; }
+    if (retry == 20) break;
+    *dt *= 0.5;
+  }
+  set_error("positivity retry exhausted (20 halvings); review forcing/resolution; original state restored");
+  return 1;
 }
 
 NSE_CUDA_EXPORT int nse_cuda_synchronize(void* handle) {

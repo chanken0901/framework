@@ -71,6 +71,7 @@ module mod_model_config
     character(len=512) :: imported_turbulence_file = ''
     character(len=32) :: imported_turbulence_mode = 'embed'
     real(dp) :: imported_turbulence_x_start = -1.0e300_dp
+    real(dp) :: imported_turbulence_x_length = -1.0_dp
     integer :: imported_turbulence_blend_cells = 0
     real(dp) :: imported_turbulence_velocity_offset_x = 0.0_dp
     real(dp) :: imported_turbulence_velocity_offset_y = 0.0_dp
@@ -296,6 +297,8 @@ contains
         trim(cfg%imported_turbulence_mode)
       write(u,'(A,ES16.8)') 'imported_turbulence_x_start = ', &
         cfg%imported_turbulence_x_start
+      write(u,'(A,ES16.8)') 'imported_turbulence_x_length = ', &
+        cfg%imported_turbulence_x_length
       write(u,'(A,I10)') 'imported_turbulence_blend_cells = ', &
         cfg%imported_turbulence_blend_cells
       write(u,'(A,3ES16.8)') 'imported_turbulence_velocity_offset = ', &

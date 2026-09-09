@@ -57,11 +57,12 @@ contains
     first=c*(n/p)+min(c,mod(n,p))+1
   end subroutine
 
-  subroutine initialize_mc_pencil(domain,global,layout,process_grid)
+  subroutine initialize_mc_pencil(domain,global,layout,process_grid,allocate_host_halo)
     type(mc_pencil_domain),intent(out) :: domain
     type(mc_euler_config),intent(in) :: global
     type(mc_state_layout),intent(in) :: layout
     integer,intent(in) :: process_grid(2)
+    logical,intent(in),optional :: allocate_host_halo
     logical :: periods(2)
     integer :: ierr,d,extent(2),rank,n(3),buffer_size
     real(dp) :: spacing(2),origin(2),lo(2),hi(2)
@@ -125,6 +126,9 @@ contains
       if (domain%upper(d) > 0) domain%padded%boundary_face_types(2*d+2)='reflective'
     end do
     n=[global%nx,domain%padded%ny,domain%padded%nz]
+    if(present(allocate_host_halo))then
+      if(.not.allocate_host_halo)return
+    end if
     allocate(domain%halo(n(1),n(2),n(3),layout%nvariables))
     allocate(domain%halo_rhs,mold=domain%halo)
     buffer_size=2*n(1)*max(n(2),n(3))*layout%nvariables

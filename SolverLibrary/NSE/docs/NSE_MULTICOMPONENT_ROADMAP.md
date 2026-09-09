@@ -1,6 +1,6 @@
 # NSE多成分・反応流拡張仕様
 
-更新日: 2026-09-07
+更新日: 2026-09-08
 
 ## 1. 目的と実装状態
 
@@ -21,6 +21,8 @@
 | `nse_multicomponent` | `cpu_serial_reactive_boundaries` | Stage 7反応流境界・初期条件・時系列出力 |
 | `nse_multicomponent` | `cpu_openmp_reactive` | Stage 8 OpenMP反応流 |
 | `nse_multicomponent` | `cpu_mpi_reactive_pencil` | Stage 8 MPIペンシル分割・OpenMP併用 |
+| `nse_multicomponent` | `cuda_single_reactive` | Stage 10 GPU常駐反応流・ノズル |
+| `nse_multicomponent` | `cuda_mpi_reactive_pencil` | Stage 10 GPU常駐・MPIペンシル（haloのみCPU経由） |
 
 多成分profileの実行ファイル名はすべて`nse_multicomponent`である。profileごとに
 main programとコンパイル対象を切り替えるため、各Stageの実行内容は混在しない。
@@ -704,7 +706,10 @@ Stage 8のMPI/OpenMPを実装した。MPIはx方向を保持しy・zを分割す
 9. 一般座標: 静止・単一ブロックの平面ノズル写像を実装。
    設定・制約・Windows/Linux手順は [Stage 9手順書](NSE_MULTICOMPONENT_GEOMETRY.md) を参照。
    任意外部格子、軸対称、移動格子、非滑り壁は未対応。
-10. CUDA
+10. CUDA: GPU常駐型の単一GPU／MPIペンシル反応流を実装。
+    熱力学・輸送・反応・境界・時間積分・時間刻み集約をGPU上で計算する。
+    GPU間直接MPI通信は未実装。複数GPU実機とLinux実機は未検証。
+    設定・実行・検証範囲は [Stage 10手順書](NSE_MULTICOMPONENT_CUDA.md) を参照。
 
 ## 16. 必須回帰条件
 

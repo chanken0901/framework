@@ -103,7 +103,7 @@ time:
 - `driver.velocity`のx成分は0にします。これは静止した閉端高圧室と`reflective`
   境界を整合させるためです。
 - `diaphragm_position`は`x_min < x_d < x_max`のxセル境界上に置きます。
-- 乱流は`mode: embed`で、`diaphragm_position <= x_start`とします。
+- 乱流は`mode: embed`または`mode: periodic_embed`で、`diaphragm_position <= x_start`とします。後者は`x_length`で区間長を指定します（[配置手順](NSE_IMPORTED_TURBULENCE.md)）。
 - `imported_turbulence.background`は`shock_tube.driven`と同じ状態にします。省略すれば
   自動的に同じ値になります。
 - `x_min`は`reflective`、`x_max`は`non_reflecting`にし、後者の参照状態には

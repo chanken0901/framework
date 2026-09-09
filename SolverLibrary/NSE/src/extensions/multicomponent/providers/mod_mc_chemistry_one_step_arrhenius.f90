@@ -26,8 +26,19 @@ module mod_mc_chemistry_provider
   public :: configure_mc_chemistry
   public :: compute_mc_chemistry_source
   public :: compute_mc_chemistry_timestep
+  public :: mc_export_chemistry
 
 contains
+
+  subroutine mc_export_chemistry(n,controls,data)
+    integer,intent(in)::n
+    real(dp),intent(out)::controls(3),data(3,n)
+    if(n/=configured_species .or. n<1) error stop 'chemistry export before configuration'
+    controls=[pre_exponential_factor,temperature_exponent,activation_temperature]
+    data(1,:)=reactant_stoich(1:n)
+    data(2,:)=product_stoich(1:n)
+    data(3,:)=reaction_orders(1:n)
+  end subroutine
 
   subroutine validate_mc_chemistry_provider(requested_model)
     character(len=*), intent(in) :: requested_model

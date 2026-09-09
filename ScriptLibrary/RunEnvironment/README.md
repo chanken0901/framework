@@ -619,7 +619,7 @@ flow:
   type: imported_turbulence
   imported_turbulence:
     file: initial_data/turbulence.slf
-    mode: embed  # embed または tile
+    mode: embed  # embed / tile / periodic_embed（後者はx_lengthも指定）
     x_start: 2.0
     blend_cells: 8
     velocity_offset: [0.5, 0.0, 0.0]
@@ -630,7 +630,8 @@ flow:
 ```
 
 `embed`は一つの乱流ブロックを背景場へ滑らかに接続し、`tile`はx方向へ
-周期反復します。CPU/CUDA別のコピー可能なPowerShell手順、格子互換条件、
+周期反復します。`periodic_embed`は`x_start`から`x_length`の区間内だけ周期反復し、
+外側を背景場にします。CPU/CUDA別のコピー可能なPowerShell手順、格子互換条件、
 正常終了の確認方法は
 [`NSE_IMPORTED_TURBULENCE.md`](../../SolverLibrary/NSE/docs/NSE_IMPORTED_TURBULENCE.md)
 を参照してください。
@@ -762,5 +763,8 @@ YAML例、衝撃波前後状態の定義、配置制約、実行手順は
 [`NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md`](../../SolverLibrary/NSE/docs/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md)
 を参照してください。
 Stage 9の平面ノズルは `environment.nse_multicomponent.nozzle.yaml` を使用します。
+Stage 10のGPU常駐反応流は `environment.nse_multicomponent.cuda.yaml` を使用します。
+単一GPU／MPIペンシルの指定とWindows/Linux手順は
+[CUDA手順書](../../SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_CUDA.md) を参照してください。
 形状は `config/geometry.yaml` に分離されます。
 手順と制約は [一般座標手順書](../../SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_GEOMETRY.md) を参照してください。

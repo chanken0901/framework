@@ -140,7 +140,7 @@ u2 = u1 + s M_s c1 (1 - 1/r)
 - `planar_shock.position` は `x_min < position < x_max` を満たし、対象格子のセル境界 `x_min + n*dx` 上になければなりません。
 - `positive_x` では衝撃波を乱流ブロックの左外側へ置き、`x_min` を Dirichlet にします。
 - `negative_x` では衝撃波を乱流ブロックの右外側へ置き、`x_max` を Dirichlet にします。
-- 乱流読込みモードは `embed` のみです。`tile` は使用できません。
+- 乱流読込みモードは `embed` または `periodic_embed` です。後者は`x_length`で区間長を指定します（[配置手順](NSE_IMPORTED_TURBULENCE.md)）。`tile` は使用できません。
 - 読込み SLF と対象格子の `ny`、`nz`、`dx` は一致させます。実行時の MPI プロセス数や CPU/CUDA の種類は、SLF 作成時と一致させる必要はありません。
 - `imported_turbulence.background` は衝撃波前方状態と一致させます。省略すれば自動的に一致します。
 - `blend_cells: 0` は保存乱流をそのまま配置します。滑らかな接続が必要なら正の値を使用できますが、乱流ブロック端の変動が減衰します。
