@@ -62,9 +62,15 @@ flow:
     file: initial_data/turbulence.slf
     # embed: place one turbulence block in a longer x domain.
     # tile: periodically repeat it; target nx must be a multiple of source nx.
+    # periodic_embed: repeat only within [x_start, x_start + x_length).
+    # Shock / shock-tube interaction supports embed and periodic_embed, not tile.
     mode: embed
     # Physical x coordinate of the source block's lower cell boundary.
     x_start: 0.0
+    # Physical length, NOT the number of repetitions. Required for periodic_embed.
+    # Replace null with a positive multiple of dx; the interval must fit in the domain.
+    # Leave null for embed/tile (unused). No physical length is chosen automatically.
+    x_length: null
     # Raised-cosine transition cells at both x ends; use 0 for an exact copy.
     blend_cells: 8
     # Added to the velocity stored in the source field, e.g. a mean x flow.

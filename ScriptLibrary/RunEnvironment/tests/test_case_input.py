@@ -1476,8 +1476,24 @@ class NseCaseInputTests(unittest.TestCase):
     def test_rejects_length_for_old_import_modes(self) -> None:
         for mode in ("embed", "tile"):
             case = self.periodic_embed_case()
+            case["flow"]["imported_turbulence"].update(mode=mode, blend_cells=0, x_length=None)
+            self.assertNotIn("imported_turbulence_x_length", render_nse(case, self.manifest, "cpu_mpi"))
+        for mode in ("embed", "tile"):
+            case = self.periodic_embed_case()
             case["flow"]["imported_turbulence"].update(mode=mode, blend_cells=0)
             with self.assertRaisesRegex(CaseInputError, "x_length requires"):
+                render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_periodic_embed_reports_missing_length(self) -> None:
+        for missing in (True, False):
+            case = self.periodic_embed_case()
+            if missing:
+                del case["flow"]["imported_turbulence"]["x_length"]
+            else:
+                case["flow"]["imported_turbulence"]["x_length"] = None
+            with self.subTest(missing=missing), self.assertRaisesRegex(
+                CaseInputError, "x_length is required when mode=periodic_embed"
+            ):
                 render_nse(case, self.manifest, "cpu_mpi")
 
     def test_periodic_embed_with_shock_initial_conditions(self) -> None:

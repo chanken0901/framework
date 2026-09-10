@@ -59,6 +59,7 @@ GPE_KEYS = (
 )
 
 NSE_KEYS = (
+    "fh_enabled", "fh_boltzmann_number", "fh_seed",
     "nv",
     "nghost",
     "gamma",
@@ -919,12 +920,18 @@ def _resolve_nse_imported_turbulence(
         )
     length_values = {}
     if mode == "periodic_embed":
+        if imported.get("x_length") is None:
+            raise CaseInputError(
+                "flow.imported_turbulence.x_length is required when mode=periodic_embed; "
+                "replace x_length: null (or add x_length) with the desired positive "
+                "physical length, an integer multiple of grid dx"
+            )
         if isinstance(imported.get("x_length"), bool):
             raise CaseInputError("flow.imported_turbulence.x_length must be a positive length")
         length_values["imported_turbulence_x_length"] = _positive_float(
             imported.get("x_length"), "flow.imported_turbulence.x_length"
         )
-    elif "x_length" in imported:
+    elif imported.get("x_length") is not None:
         raise CaseInputError("flow.imported_turbulence.x_length requires mode: periodic_embed")
 
     blend_cells = imported.get("blend_cells", 0)
@@ -1654,6 +1661,48 @@ def _common_values(
     return values
 
 
+def _resolve_nse_fh(case, nse, backend):
+    label = "physics.fluctuating_hydrodynamics"
+    if any(key.startswith("fh_") for key in nse):
+        raise CaseInputError(f"use {label}, not physics.nse.fh_* overrides")
+    raw = nested(case, label)
+    if raw is None:
+        return {}
+    config = _mapping(raw, label)
+    unknown = set(config) - {"enabled", "model", "boltzmann_number", "seed"}
+    if unknown:
+        raise CaseInputError(f"unknown {label} keys: {sorted(unknown)}")
+    enabled = config.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise CaseInputError(f"{label}.enabled must be boolean")
+    if config.get("model", "landau_lifshitz") != "landau_lifshitz":
+        raise CaseInputError(f"{label}.model must be landau_lifshitz")
+    if not enabled:
+        return {"fh_enabled": False}
+    if any(token in backend.lower() for token in ("cuda", "gpu", "cufft")):
+        raise CaseInputError("Landau-Lifshitz extension currently supports CPU only")
+    if nested(case, "time.use_fixed_dt", True) is not True:
+        raise CaseInputError("Landau-Lifshitz extension requires fixed dt")
+    _positive_float(nested(case, "time.dt"), "time.dt")
+    if nse.get("convective_scheme", "keep6") != "keep6" or nse.get("viscous_scheme") != "central6":
+        raise CaseInputError("Landau-Lifshitz extension requires KEEP6 and CENTRAL6 (matched transport override)")
+    for face in NSE_BOUNDARY_FACES:
+        if nse.get(f"boundary_{face}", "periodic") != "periodic":
+            raise CaseInputError("Landau-Lifshitz extension requires periodic boundaries")
+    if nse.get("boundary_condition", "periodic") != "periodic":
+        raise CaseInputError("Landau-Lifshitz extension requires periodic boundaries")
+    _positive_float(nse.get("reynolds"), "physics.nse.reynolds")
+    _positive_float(nse.get("prandtl", 0.72), "physics.nse.prandtl")
+    beta = config.get("boltzmann_number")
+    if isinstance(beta, bool):
+        raise CaseInputError(f"{label}.boltzmann_number must be numeric")
+    beta = _positive_float(beta, f"{label}.boltzmann_number", allow_zero=True)
+    seed = config.get("seed", 13579)
+    if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 2147483647:
+        raise CaseInputError(f"{label}.seed must be an integer in [0, 2147483647]")
+    return {"fh_enabled": True, "fh_boltzmann_number": beta, "fh_seed": seed}
+
+
 def render_nse(
     case: dict[str, Any],
     manifest: dict[str, Any],
@@ -1874,6 +1923,7 @@ def render_nse(
             nse.pop(key, None)
     if nse.get("time_integrator") in {"rk3", "ssp_rk3", "ssp-rk3"}:
         nse["time_integrator"] = "ssprk3"
+    nse.update(_resolve_nse_fh(case, nse, backend))
     lines = [
         "! Automatically generated from case.yaml and referenced extensions.",
         "! Edit the YAML sources and regenerate this file.",
@@ -1892,6 +1942,8 @@ def render_nse(
 def render_gpe(
     case: dict[str, Any], manifest: dict[str, Any], profile_name: str
 ) -> str:
+    if nested(case, "physics.fluctuating_hydrodynamics") is not None:
+        raise CaseInputError("Landau-Lifshitz extension is available only for single-component NSE")
     _, use_mpi, use_openmp, backend = _profile_settings(manifest, profile_name)
     gpe = dict(_mapping(nested(case, "physics.gpe", {}), "physics.gpe"))
     for source, target in GPE_ALIASES.items():
@@ -2645,6 +2697,8 @@ def _reactive_navier_stokes_settings(
 def render_nse_multicomponent(
     case: dict[str, Any], profile_name: str | None = None
 ) -> str:
+    if nested(case, "physics.fluctuating_hydrodynamics") is not None:
+        raise CaseInputError("Landau-Lifshitz extension is available only for single-component NSE")
     physics = _mapping(
         nested(case, "physics.multicomponent", {}),
         "physics.multicomponent",

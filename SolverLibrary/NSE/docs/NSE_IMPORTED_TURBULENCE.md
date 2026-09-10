@@ -15,7 +15,10 @@
 
 ### 指定長さの局所乱流：periodic_embed
 
-既存の`flow.imported_turbulence`設定で、`mode`を変更して`x_length`を追加する。
+標準テンプレートには`x_length: null`を明示している。`periodic_embed`を選ぶ場合は
+`null`を希望する正の物理長さへ変更する。古いケースに項目がなければ追加する。
+長さを自動決定することはない。`embed`／`tile`では省略または`null`のままにする。
+数値を指定できるのは`periodic_embed`のみである。
 以下は配置部分の例であり、背景状態などの既存設定はそのまま併記する。
 
 ```yaml
