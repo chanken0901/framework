@@ -22,6 +22,7 @@ class CaseConfigurationError(ValueError):
 # Register extension ownership explicitly. Adding an extension must not silently
 # change how an existing YAML key is interpreted.
 EXTENSION_TARGETS: dict[str, tuple[str, ...]] = {
+    "fluctuating_hydrodynamics": ("physics", "fluctuating_hydrodynamics"),
     "multicomponent": ("physics", "multicomponent"),
     "thermodynamics": ("thermodynamics",),
     "transport": ("transport",),

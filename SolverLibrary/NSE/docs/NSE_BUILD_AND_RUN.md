@@ -2,9 +2,17 @@
 
 > OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通のパス、Python、CMake、MPIの対応表は[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
-更新日: 2026-09-02
+更新日: 2026-09-10
+
+単成分Landau–Lifshitz計算には`environment.nse_fluctuating.yaml`を使用する。
+CUDA版は`environment.nse_fluctuating.cuda.yaml`を使い、`parallel.use_mpi`で単一GPU／MPI＋CUDAを切り替える。
+別YAMLの生成、無次元ボルツマン数、専用輸送と固定dtの制約は
+[揺らぎ拡張の手順](NSE_FLUCTUATING_HYDRODYNAMICS.md)を参照。
 
 ## 1. 推奨フロー
+
+単成分MPI＋CUDAのGPUバッファ直接通信は[CUDA-aware MPI手順](NSE_CUDA_AWARE_MPI.md)を参照。
+ビルド時`NSE_ENABLE_CUDA_AWARE_MPI=ON`、実行時`NSE_CUDA_MPI_TRANSPORT=device`で必須化する。
 
 通常の計算では、ローカル`FrameWork`を編集元とし、
 `ScriptLibrary/RunEnvironment`から`ResearchRuns`へ外部実行環境を生成する。

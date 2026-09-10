@@ -1,0 +1,13 @@
+&simulation
+  equation='NSE', initial_condition='taylor_green'
+  nx=8, ny=8, nz=8, nghost=3
+  x_max=6.283185307179586, y_max=6.283185307179586, z_max=6.283185307179586
+  dt=0.0001, t_max=0.0003, nsteps=3, use_fixed_dt=.true.
+  output_frequency=0, write_initial=.false., write_meta=.false.
+/
+&nse
+  gamma=1.4, mach=0.1, reynolds=100, prandtl=0.72
+  convective_scheme='keep6', viscous_scheme='central6'
+  boundary_condition='periodic', time_integrator='ssprk3'
+  fh_enabled=.true., fh_boltzmann_number=1.e-8, fh_seed=42
+/

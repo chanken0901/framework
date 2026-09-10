@@ -3,10 +3,11 @@ module mod_nse_gpu_mpi
   use mod_model_config, only : nse_config, nse_face_y_min, nse_face_z_min
   use mod_nse_gpu, only : nse_gpu_context, nse_gpu_apply_local_boundary, &
     nse_gpu_halo_count, nse_gpu_pack_halo, nse_gpu_unpack_halo, &
+    nse_gpu_device_mpi_available, nse_gpu_exchange_device_halo, &
     nse_gpu_halo_y, nse_gpu_halo_z, nse_gpu_halo_low, nse_gpu_halo_high
   use module_mpi, only : ndiv_ny, ndiv_nz, j_myrank, k_myrank, itable, &
     mp_sendrecv_r8, MPI_COMM_WORLD, MPI_DOUBLE_PRECISION, MPI_STATUS_SIZE, &
-    MPI_PROC_NULL
+    MPI_PROC_NULL, mp_allmaxi, mp_stop, my_rank
   implicit none
   private
 
@@ -19,6 +20,8 @@ module mod_nse_gpu_mpi
     private
     integer :: y_count = 0
     integer :: z_count = 0
+    logical :: initialized = .false.
+    logical :: device_transport = .false.
     logical :: periodic_y = .true.
     logical :: periodic_z = .true.
     real(dp), allocatable :: send_low(:)
@@ -37,9 +40,10 @@ contains
     type(nse_gpu_mpi_halo), intent(inout) :: halo
     type(nse_gpu_context), intent(in) :: context
     type(nse_config), intent(in) :: nse
-    integer :: max_count
+    integer :: max_count, env_status, mode, mode_max, mode_neg, unavailable
+    character(len=32) :: transport
 
-    if (allocated(halo%send_low)) then
+    if (halo%initialized) then
       error stop 'NSE MPI+CUDA halo workspace is already initialized'
     end if
     halo%y_count = 0
@@ -54,15 +58,47 @@ contains
     if (max_count <= 0) then
       error stop 'MPI+CUDA requires at least one distributed direction'
     end if
-    allocate(halo%send_low(max_count), halo%send_high(max_count))
-    allocate(halo%recv_low(max_count), halo%recv_high(max_count))
+    transport='auto'
+    call get_environment_variable('NSE_CUDA_MPI_TRANSPORT',transport,status=env_status)
+    if(env_status==1) transport='auto'
+    mode=-1
+    if(env_status>=0 .or. env_status==1) then
+      select case(trim(transport))
+      case('auto'); mode=0
+      case('staged'); mode=1
+      case('device'); mode=2
+      end select
+    end if
+    mode_max=mode; mode_neg=-mode
+    call mp_allmaxi(mode_max)
+    call mp_allmaxi(mode_neg)
+    if(mode<0 .or. mode_max/=-mode_neg) then
+      write(*,'(a)') 'NSE_CUDA_MPI_TRANSPORT must be auto/staged/device and identical on all ranks'
+      call mp_stop(16)
+    end if
+    unavailable=0
+    if(.not. nse_gpu_device_mpi_available()) unavailable=1
+    call mp_allmaxi(unavailable)
+    if(mode==2 .and. unavailable/=0) then
+      write(*,'(a)') 'Device MPI requested but unavailable: enable CUDA-aware build and CUDA-aware Open MPI'
+      call mp_stop(16)
+    end if
+    halo%device_transport=mode/=1 .and. unavailable==0
+    if(halo%device_transport) then
+      if(my_rank==0) write(*,'(a)') 'NSE CUDA MPI halo transport: device (CUDA-aware MPI)'
+    else
+      if(my_rank==0) write(*,'(a)') 'NSE CUDA MPI halo transport: staged (host buffers)'
+      allocate(halo%send_low(max_count), halo%send_high(max_count))
+      allocate(halo%recv_low(max_count), halo%recv_high(max_count))
+    end if
+    halo%initialized=.true.
   end subroutine nse_gpu_mpi_halo_initialize
 
   subroutine nse_gpu_mpi_exchange(halo, context)
     type(nse_gpu_mpi_halo), intent(inout) :: halo
     type(nse_gpu_context), intent(in) :: context
 
-    if (.not. allocated(halo%send_low)) then
+    if (.not. halo%initialized) then
       error stop 'NSE MPI+CUDA halo workspace is not initialized'
     end if
 
@@ -86,6 +122,12 @@ contains
     else
       rank_low = itable(j_myrank-1, k_myrank)
       rank_high = itable(j_myrank+1, k_myrank)
+    end if
+    if(halo%device_transport) then
+      call nse_gpu_exchange_device_halo(context,nse_gpu_halo_y, &
+        merge(-1,rank_low,rank_low==MPI_PROC_NULL),merge(-1,rank_high,rank_high==MPI_PROC_NULL), &
+        MPI_COMM_WORLD,tag_y_low)
+      return
     end if
     call nse_gpu_pack_halo(context, nse_gpu_halo_y, nse_gpu_halo_low, &
       halo%send_low(1:halo%y_count))
@@ -124,6 +166,12 @@ contains
       rank_low = itable(j_myrank, k_myrank-1)
       rank_high = itable(j_myrank, k_myrank+1)
     end if
+    if(halo%device_transport) then
+      call nse_gpu_exchange_device_halo(context,nse_gpu_halo_z, &
+        merge(-1,rank_low,rank_low==MPI_PROC_NULL),merge(-1,rank_high,rank_high==MPI_PROC_NULL), &
+        MPI_COMM_WORLD,tag_z_low)
+      return
+    end if
     call nse_gpu_pack_halo(context, nse_gpu_halo_z, nse_gpu_halo_low, &
       halo%send_low(1:halo%z_count))
     call nse_gpu_pack_halo(context, nse_gpu_halo_z, nse_gpu_halo_high, &
@@ -159,6 +207,8 @@ contains
     halo%z_count = 0
     halo%periodic_y = .true.
     halo%periodic_z = .true.
+    halo%initialized = .false.
+    halo%device_transport = .false.
   end subroutine nse_gpu_mpi_halo_finalize
 
 end module mod_nse_gpu_mpi

@@ -1,5 +1,11 @@
 #include <cuda_runtime.h>
 #include <cub/device/device_reduce.cuh>
+#if defined(NSE_CUDA_AWARE_MPI)
+#include <mpi.h>
+#if defined(OPEN_MPI)
+#include <mpi-ext.h>
+#endif
+#endif
 #if defined(NSE_FORCING_CUFFTMP) || defined(NSE_INIT_CUFFTMP)
 #include <cufftMp.h>
 #include <mpi.h>
@@ -91,6 +97,11 @@ struct NseCudaContext {
   double dy = 0.0;
   double dz = 0.0;
   bool viscous_enabled = false;
+  bool fh_enabled = false;
+  double fh_beta = 0.0;
+  int fh_seed = 0, fh_step = 0, fh_begin_step = 0;
+  double* fh_flux = nullptr;
+  double* fh_noise = nullptr;
   bool forcing_enabled = false;
   int forcing_spectrum = 0;
   int forcing_report_interval = 0;
@@ -109,6 +120,7 @@ struct NseCudaContext {
   double* speed = nullptr;
   double* max_speed = nullptr;
   double* halo_buffer = nullptr;
+  double* halo_device_recv = nullptr;
   std::size_t halo_buffer_count = 0;
   void* reduce_storage = nullptr;
   std::size_t reduce_storage_bytes = 0;
@@ -216,9 +228,12 @@ void release_context(NseCudaContext* context) {
 #endif
   cudaFree(context->reduce_storage);
   cudaFree(context->halo_buffer);
+  cudaFree(context->halo_device_recv);
   cudaFree(context->max_speed);
   cudaFree(context->speed);
   cudaFree(context->primitive);
+  cudaFree(context->fh_flux);
+  cudaFree(context->fh_noise);
   cudaFree(context->rhs);
   cudaFree(context->q0);
   cudaFree(context->q);
@@ -2023,6 +2038,8 @@ bool launch_boundary(NseCudaContext* context) {
   return check_cuda(cudaGetLastError(), "boundary halo kernel");
 }
 
+#include "nse_cuda_fluctuating.cuh"
+
 bool launch_rhs(NseCudaContext* context) {
   if (context->convective_scheme == convective_hybrid) {
     rhs_hybrid_kernel<<<block_count(context->physical_count), 256>>>(
@@ -2072,7 +2089,9 @@ bool launch_rhs(NseCudaContext* context) {
   if (!check_cuda(cudaGetLastError(), "convective right-hand-side kernel")) {
     return false;
   }
-  if (context->viscous_enabled) {
+  if (context->fh_enabled) {
+    if (!launch_fh(context,false,1.0)) return false;
+  } else if (context->viscous_enabled) {
     primitive_kernel<<<block_count(context->grid.cell_count), 256>>>(
         context->q,
         context->primitive,
@@ -3107,6 +3126,63 @@ NSE_CUDA_EXPORT int nse_cuda_unpack_halo(
   return check_cuda(cudaGetLastError(), "unpack CUDA MPI halo") ? 0 : 1;
 }
 
+// All ranks negotiate the transport before entering this path. No probing with
+// device buffers on an MPI implementation whose CUDA support is unknown.
+NSE_CUDA_EXPORT int nse_cuda_device_mpi_available() {
+#if defined(NSE_CUDA_AWARE_MPI) && defined(OMPI_HAVE_MPI_EXT_CUDA) && OMPI_HAVE_MPI_EXT_CUDA
+  int initialized=0;
+  MPI_Initialized(&initialized);
+  return initialized ? MPIX_Query_cuda_support() : 0;
+#else
+  return 0;
+#endif
+}
+
+NSE_CUDA_EXPORT int nse_cuda_exchange_device_halo(void* handle, int direction,
+    int low, int high, int communicator, int tag) {
+  last_error.clear();
+#if defined(NSE_CUDA_AWARE_MPI)
+  auto* c=static_cast<NseCudaContext*>(handle);
+  if(!nse_cuda_device_mpi_available() || !valid_halo_request(c,direction,halo_side_low)) {
+    set_error("CUDA-aware MPI unavailable or invalid device halo request"); return 1;
+  }
+  const std::size_t count=halo_value_count(c,direction);
+  if(count>c->halo_buffer_count || count>static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    set_error("device MPI halo count overflow"); return 1;
+  }
+  if(!c->halo_device_recv && !check_cuda(cudaMalloc(reinterpret_cast<void**>(&c->halo_device_recv),
+      c->halo_buffer_count*sizeof(double)),"allocate device MPI receive buffer")) return 1;
+  MPI_Comm comm=MPI_Comm_f2c(static_cast<MPI_Fint>(communicator));
+  // Fortran MPI_PROC_NULL is normalized to -1 by the wrapper, not assumed ABI-compatible.
+  const int peers[2]={low<0?MPI_PROC_NULL:low, high<0?MPI_PROC_NULL:high};
+  for(int pass=0;pass<2;++pass) {
+    const int side=pass==0?halo_side_low:halo_side_high;
+    if(direction==halo_direction_y)
+      pack_y_halo_kernel<<<block_count(count),256>>>(c->q,c->halo_buffer,c->grid,c->nvar,side,count);
+    else
+      pack_z_halo_kernel<<<block_count(count),256>>>(c->q,c->halo_buffer,c->grid,c->nvar,side,count);
+    // MPI is not stream-aware. Complete packing before MPI reads device memory.
+    if(!check_cuda(cudaGetLastError(),"pack device MPI halo") ||
+       !check_cuda(cudaDeviceSynchronize(),"synchronize before device MPI")) return 1;
+    int err=MPI_Sendrecv(c->halo_buffer,static_cast<int>(count),MPI_DOUBLE,peers[pass],tag+pass,
+        c->halo_device_recv,static_cast<int>(count),MPI_DOUBLE,peers[1-pass],tag+pass,comm,MPI_STATUS_IGNORE);
+    if(err!=MPI_SUCCESS) { set_error("device MPI_Sendrecv failed"); return 1; }
+    if(peers[1-pass]!=MPI_PROC_NULL) {
+      if(direction==halo_direction_y)
+        unpack_y_halo_kernel<<<block_count(count),256>>>(c->q,c->halo_device_recv,c->grid,c->nvar,-side,count);
+      else
+        unpack_z_halo_kernel<<<block_count(count),256>>>(c->q,c->halo_device_recv,c->grid,c->nvar,-side,count);
+      // Do not let the next receive overwrite a buffer still read by a kernel.
+      if(!check_cuda(cudaGetLastError(),"unpack device MPI halo") ||
+         !check_cuda(cudaDeviceSynchronize(),"complete device MPI unpack")) return 1;
+    }
+  }
+  return 0;
+#else
+  set_error("rebuild with NSE_ENABLE_CUDA_AWARE_MPI=ON for device MPI"); return 1;
+#endif
+}
+
 NSE_CUDA_EXPORT int nse_cuda_compute_dt(void* handle, double* dt) {
   last_error.clear();
   auto* context = static_cast<NseCudaContext*>(handle);
@@ -3163,6 +3239,24 @@ NSE_CUDA_EXPORT int nse_cuda_compute_dt(void* handle, double* dt) {
   return 0;
 }
 
+NSE_CUDA_EXPORT int nse_cuda_configure_fh(void* handle, double beta, int seed, int step) {
+  auto* c=static_cast<NseCudaContext*>(handle);
+  if(!c || !std::isfinite(beta) || beta<0 || seed<0 || step<0 || c->fh_enabled ||
+      !c->viscous_enabled || c->convective_scheme!=convective_keep6) {
+    set_error("invalid LLNS CUDA configuration"); return 1;
+  }
+  for(int face=0;face<boundary_face_count;++face) if(c->boundary.type[face]!=0) {
+    set_error("LLNS requires periodic boundaries"); return 1;
+  }
+  if(c->grid.cell_count>std::numeric_limits<std::size_t>::max()/(12*sizeof(double))) {
+    set_error("LLNS allocation size overflow"); return 1;
+  }
+  if(!check_cuda(cudaMalloc(reinterpret_cast<void**>(&c->fh_flux),12*c->grid.cell_count*sizeof(double)),"allocate LLNS flux") ||
+      !check_cuda(cudaMalloc(reinterpret_cast<void**>(&c->fh_noise),c->state_bytes),"allocate LLNS increment")) return 1;
+  c->fh_beta=beta; c->fh_seed=seed; c->fh_step=step; c->fh_enabled=true;
+  return 0;
+}
+
 NSE_CUDA_EXPORT int nse_cuda_begin_ssprk3(void* handle, double dt) {
   last_error.clear();
   auto* context = static_cast<NseCudaContext*>(handle);
@@ -3173,6 +3267,14 @@ NSE_CUDA_EXPORT int nse_cuda_begin_ssprk3(void* handle, double dt) {
   if (!std::isfinite(dt) || dt <= 0.0) {
     set_error("SSPRK3 time step must be positive and finite");
     return 1;
+  }
+  if(context->fh_enabled) {
+    double limit=0;
+    if(nse_cuda_compute_dt(handle,&limit)!=0) return 1;
+    if(dt>limit || context->fh_step==std::numeric_limits<int>::max()) {
+      set_error("LLNS fixed dt exceeds stability bound or step counter exhausted"); return 1;
+    }
+    context->fh_begin_step=context->fh_step;
   }
   return check_cuda(
       cudaMemcpy(context->q0, context->q, context->state_bytes,
@@ -3189,10 +3291,18 @@ NSE_CUDA_EXPORT int nse_cuda_advance_ssprk3_stage(
     set_error("invalid CUDA SSPRK3 stage request");
     return 1;
   }
+  // Called after the MPI halo exchange (or local periodic fill). Capture the
+  // beginning-of-step Ito increment before any RK update; keep it on device.
+  if(context->fh_enabled && stage==1 && !launch_fh(context,true,dt)) return 1;
   if (!launch_rhs(context)) return 1;
   const int budget_status = check_euler_budget(context, dt);
   if (budget_status != 0) return budget_status;
   if (!launch_stage(context, dt, stage)) return 1;
+  if(context->fh_enabled && stage==3) {
+    fh_kick_kernel<<<block_count(context->physical_count),256>>>(context->q,context->fh_noise,context->grid,dt);
+    if(!check_cuda(cudaGetLastError(),"LLNS Ito kick") || !validate_state(context,4)) return 1;
+    ++context->fh_step;
+  }
   return 0;
 }
 
@@ -3224,6 +3334,7 @@ NSE_CUDA_EXPORT int nse_cuda_advance_ssprk3(void* handle, double dt) {
 NSE_CUDA_EXPORT int nse_cuda_restore_ssprk3(void* handle) {
   auto* context = static_cast<NseCudaContext*>(handle);
   if (context == nullptr) { set_error("invalid CUDA context"); return 1; }
+  if(context->fh_enabled) context->fh_step=context->fh_begin_step;
   return check_cuda(cudaMemcpy(context->q, context->q0, context->state_bytes,
       cudaMemcpyDeviceToDevice), "restore rejected SSPRK3 step") ? 0 : 1;
 }
@@ -3231,6 +3342,7 @@ NSE_CUDA_EXPORT int nse_cuda_restore_ssprk3(void* handle) {
 NSE_CUDA_EXPORT int nse_cuda_advance_adaptive(void* handle, double* dt) {
   auto* context = static_cast<NseCudaContext*>(handle);
   if (context == nullptr || dt == nullptr) { set_error("invalid adaptive step request"); return 1; }
+  if(context->fh_enabled) { set_error("LLNS requires fixed dt; no stochastic retries"); return 1; }
   if (context->distributed_y || context->distributed_z) {
     set_error("distributed retry must be coordinated by the MPI driver"); return 1;
   }

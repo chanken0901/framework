@@ -91,6 +91,21 @@ options:
         machine_profile: ScriptLibrary/RunEnvironment/machine_profiles/linux_hpc_slurm.yaml
 
   case:
+    nse_fluctuating:
+      label: Single-component Landau-Lifshitz NSE
+      description: CPU/CUDA周期境界のLLNS拡張。専用の揺動散逸整合輸送演算子と固定dtを使用。
+      requires:
+        model.name: nse
+      values:
+        create: true
+        template: ScriptLibrary/RunEnvironment/case_templates/nse_fluctuating.yaml
+        extension_templates:
+          fluctuating_hydrodynamics: ScriptLibrary/RunEnvironment/case_templates/extensions/fluctuating_hydrodynamics.yaml
+        id: case0001
+        label: landau_lifshitz_tgv
+        description: Landau-Lifshitz single-component periodic demonstration
+        project_name: NSEResearch
+        data_root: results
     nse_case:
       label: NSE case
       description: 流れ場条件をcase.yamlで選択するNSE共通caseを生成する。

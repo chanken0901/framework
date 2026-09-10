@@ -5,6 +5,8 @@ module mod_nse_time_integration
   use mod_model_config, only : nse_config
   use mod_nse_spatial_operator, only : compute_nse_rhs
   use mod_viscous_scheme, only : viscous_dt_limit
+  use mod_nse_fluctuating, only : add_fh_noise
+  use mod_nse_boundary, only : apply_nse_boundary
   use module_mpi, only : mp_barrier, mp_allminr8
   implicit none
   private
@@ -60,6 +62,15 @@ contains
     real(dp), intent(inout) :: fface(0:, js-1:, ks-1:, :)
     real(dp), intent(inout) :: dt
     integer :: i, j, k, retry, stage
+    real(dp) :: fh_dt_limit
+
+    if (nse%fh_enabled) then
+      !$OMP MASKED
+      call compute_nse_dt(q,fh_dt_limit,sim,nse,js,je,ks,ke)
+      if (dt>fh_dt_limit) error stop 'FH fixed dt exceeds advective/diffusive bound; reduce dt and restart'
+      !$OMP END MASKED
+      !$OMP BARRIER
+    end if
 
     !$OMP DO collapse(2) schedule(static)
     do k = ks-sim%nghost, ke+sim%nghost
@@ -96,6 +107,31 @@ contains
         !$OMP END DO
       end do
       if (budget_status == 0.0_dp) then
+        if (nse%fh_enabled) then
+          ! Ito coefficients are evaluated at the beginning of the step.
+          ! Never redraw/reject a stochastic increment to enforce positivity:
+          ! fixed-dt failures restore the old state and terminate below.
+          call apply_nse_boundary(q0,sim,nse,js,je,ks,ke)
+          !$OMP DO collapse(2) schedule(static)
+          do k=ks,ke
+            do j=js,je
+              do i=1,sim%nx
+                rhs(i,j,k,:)=0.0_dp
+              end do
+            end do
+          end do
+          !$OMP END DO
+          call add_fh_noise(q0,rhs,dt,sim,nse,js,je,ks,ke)
+          !$OMP DO collapse(2) schedule(static)
+          do k=ks,ke
+            do j=js,je
+              do i=1,sim%nx
+                q(i,j,k,:)=q(i,j,k,:)+dt*rhs(i,j,k,:)
+              end do
+            end do
+          end do
+          !$OMP END DO
+        end if
         call check_step_budget(q,rhs,0.0_dp,sim,nse,js,je,ks,ke,.true.)
         if (budget_status == 0.0_dp) exit
       end if

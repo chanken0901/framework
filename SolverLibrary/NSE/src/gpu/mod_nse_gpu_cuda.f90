@@ -7,6 +7,7 @@ module mod_nse_gpu
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config, nse_boundary_face_count
   use mod_nse_boundary, only : validate_boundary_scheme
+  use mod_nse_fluctuating, only : validate_fh
   use mod_nse_forcing_common, only : forcing_is_enabled, &
     validate_forcing_parameters
   implicit none
@@ -46,11 +47,30 @@ module mod_nse_gpu
   public :: nse_gpu_halo_count
   public :: nse_gpu_pack_halo
   public :: nse_gpu_unpack_halo
+  public :: nse_gpu_device_mpi_available, nse_gpu_exchange_device_halo
   public :: nse_gpu_synchronize
   public :: nse_gpu_finalize
   public :: validate_nse_gpu_configuration
 
   interface
+    function c_device_mpi_available() bind(C,name="nse_cuda_device_mpi_available") result(status)
+      import :: c_int
+      integer(c_int) :: status
+    end function
+    function c_exchange_device_halo(handle,direction,low,high,comm,tag) &
+        bind(C,name="nse_cuda_exchange_device_halo") result(status)
+      import :: c_int,c_ptr
+      type(c_ptr), value :: handle
+      integer(c_int), value :: direction,low,high,comm,tag
+      integer(c_int) :: status
+    end function
+    function c_nse_cuda_configure_fh(handle,beta,seed,step) bind(C,name="nse_cuda_configure_fh") result(status)
+      import :: c_ptr,c_int,c_double
+      type(c_ptr), value :: handle
+      real(c_double), value :: beta
+      integer(c_int), value :: seed,step
+      integer(c_int) :: status
+    end function
     function c_nse_cuda_set_device(device) &
         bind(C, name="nse_cuda_set_device") result(status)
       import :: c_int
@@ -266,6 +286,7 @@ contains
       end if
     end if
     call validate_boundary_scheme(sim, nse)
+    call validate_fh(sim,nse)
     if (trim(adjustl(nse%time_integrator)) /= "ssprk3") then
       error stop "CUDA backend currently supports time_integrator=ssprk3"
     end if
@@ -397,6 +418,11 @@ contains
       nse%forcing_denominator_floor, nse%forcing_max_coefficient, &
       nse%hybrid_sensor_onset, nse%hybrid_sensor_full)
     call require_success(status, "initialize NSE CUDA context")
+    if(nse%fh_enabled) then
+      status=c_nse_cuda_configure_fh(context%handle,nse%fh_boltzmann_number, &
+        int(nse%fh_seed,c_int),int(sim%step,c_int))
+      call require_success(status,"configure resident Landau-Lifshitz extension")
+    end if
   end subroutine nse_gpu_initialize
 
   subroutine nse_gpu_configure_cufftmp(context, global_ny, global_nz, &
@@ -496,6 +522,19 @@ contains
     ! configured periodic/non-reflecting boundary on each physical face.
     call nse_gpu_apply_local_boundary(context)
   end subroutine nse_gpu_apply_local_periodic
+
+  logical function nse_gpu_device_mpi_available()
+    nse_gpu_device_mpi_available = c_device_mpi_available() == 1_c_int
+  end function
+
+  subroutine nse_gpu_exchange_device_halo(context,direction,low,high,comm,tag)
+    type(nse_gpu_context), intent(in) :: context
+    integer, intent(in) :: direction,low,high,comm,tag
+    integer(c_int) :: status
+    status=c_exchange_device_halo(context%handle,int(direction,c_int),int(low,c_int), &
+      int(high,c_int),int(comm,c_int),int(tag,c_int))
+    call require_success(status,'exchange device MPI halo')
+  end subroutine
 
   integer function nse_gpu_halo_count(context, direction) result(count)
     type(nse_gpu_context), intent(in) :: context

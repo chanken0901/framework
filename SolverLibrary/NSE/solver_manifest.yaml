@@ -28,6 +28,8 @@ components:
       - src/common/mod_constants.f90
       - src/common/mod_common_config.f90
       - src/common/mod_model_config.f90
+      - src/extensions/fluctuating/mod_fh_random.f90
+      - src/extensions/fluctuating/mod_nse_fluctuating.f90
       - src/forcing/mod_nse_forcing_common.f90
       - src/grid/mod_grid_fvm.f90
       - src/field/mod_field_nse.f90
@@ -152,6 +154,7 @@ components:
       - docs/NSE_CUDA.md
       - docs/NSE_CUFFTMP.md
       - docs/NSE_FORCING.md
+      - docs/NSE_FLUCTUATING_HYDRODYNAMICS.md
       - docs/NSE_HIT_DISTRIBUTED_FFT.md
       - docs/NSE_MODULE_DESIGN.md
       - docs/NSE_WENO5Z_ROE.md
@@ -166,6 +169,7 @@ components:
     files:
       - src/gpu/mod_nse_gpu_cuda.f90
       - src/gpu/nse_cuda_bridge.cu
+      - src/gpu/nse_cuda_fluctuating.cuh
       - src/gpu/nse_cuda_weno5z_roe.cuh
       - src/gpu/nse_cuda_hybrid.cuh
 
@@ -191,6 +195,11 @@ components:
 
   tests_cuda:
     files:
+      - tests/test_hit_parameter_resolution.f90
+      - tests/test_cuda_positivity.f90
+      - tests/input_positivity_retry.dat
+      - tests/test_fluctuating.f90
+      - tests/input_fluctuating.dat
       - tests/test_imported_turbulence.f90
       - tests/test_cuda_keep.f90
       - tests/test_cuda_boundary_non_reflecting.f90
@@ -207,6 +216,7 @@ components:
       - tests/input_tgv_dirichlet_small.dat
       - tests/input_tgv_cuda_forcing_small.dat
       - tests/input_hit_cuda_small.dat
+      - tests/input_hit_targets_small.dat
       - tests/test_forcing_coefficients.f90
       - src/numerics/reconstruction/mod_reconstruction_weno5z.f90
       - src/numerics/riemann/mod_riemann_roe.f90
@@ -217,8 +227,29 @@ components:
       - src/numerics/convective/mod_convective_dispatch.f90
       - src/numerics/viscous/mod_viscous_central6.f90
 
+  tests_cuda_mpi:
+    files:
+      - tests/check_cuda_mpi_transport_reject.cmake
+      - tests/test_cuda_fluctuating_mpi.f90
+      - tests/test_fluctuating.f90
+      - tests/input_fluctuating.dat
+      - tests/test_hit_parameter_resolution.f90
+      - tests/test_imported_turbulence.f90
+      - tests/test_forcing_coefficients.f90
+      - tests/input_positivity_retry.dat
+      - tests/input_tgv_cuda_small.dat
+      - tests/input_tgv_non_reflecting_small.dat
+      - tests/input_tgv_non_reflecting_all_faces_small.dat
+      - tests/input_tgv_reflective_small.dat
+      - tests/input_tgv_dirichlet_small.dat
+
   tests_cpu:
     files:
+      - tests/test_hit_parameter_resolution.f90
+      - tests/test_nse_positivity.f90
+      - tests/input_positivity_retry.dat
+      - tests/test_fluctuating.f90
+      - tests/input_fluctuating.dat
       - tests/test_imported_turbulence.f90
       - tests/test_prepare_imported_turbulence.py
       - tests/test_keep6_accuracy.f90
@@ -346,7 +377,7 @@ profiles:
       NSE_FORCING_FFT_BACKEND: cufft
 
   cuda_mpi:
-    description: One MPI rank per GPU with staged CUDA halo exchange
+    description: One MPI rank per GPU with staged or optional CUDA-aware MPI halo exchange
     capabilities:
       - nse_basic
       - multi_gpu
@@ -361,6 +392,8 @@ profiles:
       - cuda_mpi_halo
       - runtime_tools
       - main_cuda_mpi
+    test_components:
+      - tests_cuda_mpi
     executable: nse_mpi_cuda
     execution:
       use_mpi: true
@@ -396,6 +429,8 @@ profiles:
       - forcing_cufftmp_contract
       - runtime_tools
       - main_cuda_mpi
+    test_components:
+      - tests_cuda_mpi
     executable: nse_mpi_cuda
     execution:
       use_mpi: true

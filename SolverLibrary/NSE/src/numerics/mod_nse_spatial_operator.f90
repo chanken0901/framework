@@ -10,6 +10,7 @@ module mod_nse_spatial_operator
   use mod_viscous_scheme, only : add_viscous_rhs, validate_viscous_scheme, &
     viscous_required_ghost_cells
   use mod_nse_forcing, only : add_nse_forcing_rhs, validate_nse_forcing
+  use mod_nse_fluctuating, only : validate_fh, add_fh_transport
   implicit none
   private
 
@@ -80,7 +81,11 @@ contains
     end do
     !$OMP END DO
 
-    call add_viscous_rhs(q, rhs, sim, nse, js, je, ks, ke)
+    if (nse%fh_enabled) then
+      call add_fh_transport(q, rhs, sim, nse, js, je, ks, ke)
+    else
+      call add_viscous_rhs(q, rhs, sim, nse, js, je, ks, ke)
+    end if
     call add_nse_forcing_rhs(q, rhs, sim, nse, js, je, ks, ke)
   end subroutine compute_nse_rhs
 
@@ -93,6 +98,7 @@ contains
     call validate_convective_scheme(nse)
     call validate_viscous_scheme(nse)
     call validate_nse_forcing(nse)
+    call validate_fh(sim,nse)
 
     required = required_nse_ghost_cells()
     if (sim%nghost < required) then

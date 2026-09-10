@@ -4,6 +4,7 @@ program test_cuda_viscous_compare
   use mod_model_config, only : nse_config, init_nse_config
   use mod_convective_scheme, only : compute_convective_flux
   use mod_viscous_scheme, only : add_viscous_rhs, viscous_dt_limit
+  use mod_nse_fluctuating, only : add_fh_transport, add_fh_noise
   use mod_nse_gpu, only : nse_gpu_context, nse_gpu_initialize, &
     nse_gpu_upload, nse_gpu_download, nse_gpu_compute_dt, &
     nse_gpu_advance_ssprk3, nse_gpu_synchronize, nse_gpu_finalize
@@ -16,7 +17,8 @@ program test_cuda_viscous_compare
   real(dp), allocatable :: q0(:,:,:,:), rhs(:,:,:,:), fface(:,:,:,:)
   real(dp) :: pi, x, y, z, rho, u, v, w, pressure
   real(dp) :: gpu_dt, cpu_dt, field_error
-  integer :: i, j, k, g
+  integer :: i, j, k, g, iteration, iterations
+  character(len=32) :: mode
 
   call init_simulation_config(sim)
   call init_nse_config(nse)
@@ -32,6 +34,15 @@ program test_cuda_viscous_compare
   nse%viscous_scheme = 'central6'
   nse%reynolds = 25.0_dp
   nse%prandtl = 0.72_dp
+  iterations=1
+  if(command_argument_count()>0) then
+    call get_command_argument(1,mode)
+    if(trim(mode)=='fluctuating' .or. trim(mode)=='fh_zero') then
+      nse%fh_enabled=.true.; nse%fh_boltzmann_number=1.e-4_dp
+      if(trim(mode)=='fh_zero') nse%fh_boltzmann_number=0
+      iterations=4
+    end if
+  end if
 
   g = sim%nghost
   allocate(q_cpu(1-g:sim%nx+g,1-g:sim%ny+g,1-g:sim%nz+g,nse%nv))
@@ -73,8 +84,11 @@ program test_cuda_viscous_compare
     error stop 'CUDA viscous CFL differs from CPU reference'
   end if
 
-  call reference_ssprk3(q_cpu, q0, rhs, fface, 1.0e-5_dp, sim, nse)
-  call nse_gpu_advance_ssprk3(gpu, 1.0e-5_dp)
+  do iteration=1,iterations
+    call reference_ssprk3(q_cpu, q0, rhs, fface, 1.0e-5_dp, sim, nse)
+    call nse_gpu_advance_ssprk3(gpu, 1.0e-5_dp)
+    sim%step=sim%step+1
+  end do
   call nse_gpu_synchronize(gpu)
   call nse_gpu_download(gpu, q_gpu)
   if (abs(sum(q_gpu(1:sim%nx,1:sim%ny,1:sim%nz,5)) &
@@ -88,6 +102,7 @@ program test_cuda_viscous_compare
   end if
 
   call nse_gpu_finalize(gpu)
+  if(nse%fh_enabled) write(*,'(A,ES16.8)') 'Resident CUDA LLNS comparison passed; max error=',field_error
   deallocate(q_cpu, q_gpu, q0, rhs, fface)
   write(*,'(A,ES16.8)') &
     'CUDA central6 comparison passed; max error = ', field_error
@@ -161,6 +176,7 @@ contains
     real(dp), intent(inout) :: flux(0:,0:,0:,:)
     real(dp), intent(in) :: dt
 
+    call apply_periodic(q,config)
     q_initial = q
     call reference_rhs(q, local_rhs, flux, config, fluid)
     q(1:config%nx,1:config%ny,1:config%nz,:) = &
@@ -178,6 +194,12 @@ contains
       (1.0_dp/3.0_dp)*q_initial(1:config%nx,1:config%ny,1:config%nz,:) + &
       (2.0_dp/3.0_dp)*(q(1:config%nx,1:config%ny,1:config%nz,:) + &
       dt*local_rhs(1:config%nx,1:config%ny,1:config%nz,:))
+    if(fluid%fh_enabled) then
+      local_rhs=0
+      call add_fh_noise(q_initial,local_rhs,dt,config,fluid,1,config%ny,1,config%nz)
+      q(1:config%nx,1:config%ny,1:config%nz,:)=q(1:config%nx,1:config%ny,1:config%nz,:) &
+        +dt*local_rhs(1:config%nx,1:config%ny,1:config%nz,:)
+    end if
   end subroutine reference_ssprk3
 
   subroutine reference_rhs(q, local_rhs, flux, config, fluid)
@@ -224,8 +246,12 @@ contains
         end do
       end do
     end do
-    call add_viscous_rhs(q, local_rhs, config, fluid, &
-      1, config%ny, 1, config%nz)
+    if(fluid%fh_enabled) then
+      call add_fh_transport(q,local_rhs,config,fluid,1,config%ny,1,config%nz)
+    else
+      call add_viscous_rhs(q, local_rhs, config, fluid, &
+        1, config%ny, 1, config%nz)
+    end if
   end subroutine reference_rhs
 
 end program test_cuda_viscous_compare

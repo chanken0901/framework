@@ -1,5 +1,15 @@
 # NSEモジュール設計
 
+単成分の熱揺らぎは`src/extensions/fluctuating/`に分離する。
+`mod_fh_random`が座標・ステップ依存乱数、`mod_nse_fluctuating`がLL応力／熱流束と
+対応する散逸演算子を提供する。空間演算子と時間積分から有効時のみ呼ぶ。
+CUDA版は`src/gpu/nse_cuda_fluctuating.cuh`に同じ乱数・輸送対を実装し、
+`nse_cuda_bridge.cu`から呼ぶ。流束・確率増分はGPU常駐、MPIは既存halo交換を使う。
+単成分halo交換は`mod_nse_gpu_mpi`で全rankの通信方式を合意し、staged経路または
+`nse_cuda_exchange_device_halo`のCUDA-aware MPI経路へ分岐する。
+[GPU直接通信仕様](NSE_CUDA_AWARE_MPI.md)を参照。
+[LLNS仕様と制約](NSE_FLUCTUATING_HYDRODYNAMICS.md)を参照。
+
 > テスト・生成コマンドのWindows（PowerShell）／Linux（bash）対応は[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 実装済みのKEEP/WENOハイブリッド流束と、ハイブリッド／非ハイブリッドの

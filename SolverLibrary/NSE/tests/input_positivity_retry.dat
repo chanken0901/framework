@@ -1,0 +1,16 @@
+! Deliberately excessive CFL to exercise whole-step rollback; NOT a production setting.
+&simulation
+  equation="NSE"
+  initial_condition="taylor_green"
+  nx=8, ny=8, nz=8, nghost=3
+  x_max=6.283185307179586, y_max=6.283185307179586, z_max=6.283185307179586
+  t_max=100.0, nsteps=2, use_fixed_dt=.false.
+  output_frequency=0, write_initial=.false., write_meta=.false.
+  cuda_device=0
+/
+&nse
+  nv=5, nghost=3, gamma=1.4, rho0=1.0, mach=0.5, cfl=100.0
+  small_rho=1.e-12, small_p=1.e-12
+  convective_scheme="weno5z_roe", viscous_scheme="none"
+  boundary_condition="periodic", time_integrator="ssprk3"
+/

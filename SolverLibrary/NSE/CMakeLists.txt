@@ -18,6 +18,7 @@ include(NSEMPI)
 option(NSE_ENABLE_WARNINGS "Enable additional Fortran compiler warnings" ON)
 option(NSE_ENABLE_OPENMP "Enable OpenMP support" ON)
 option(NSE_USE_MPI "Build the MPI domain-decomposition backend" ON)
+option(NSE_ENABLE_CUDA_AWARE_MPI "Enable single-component CUDA device-buffer MPI halo exchange" OFF)
 set(
   NSE_TEST_SUITE "legacy"
   CACHE STRING
@@ -338,6 +339,9 @@ endif()
 set(NSE_GPU_FORTRAN_SOURCE "")
 set(NSE_DEFAULT_MAIN_SOURCE src/main/main_nse.f90)
 set(NSE_DEFAULT_OUTPUT_NAME solver)
+if(NSE_ENABLE_CUDA_AWARE_MPI AND NOT NSE_GPU_BACKEND STREQUAL "cuda")
+  message(FATAL_ERROR "NSE_ENABLE_CUDA_AWARE_MPI requires NSE_GPU_BACKEND=cuda")
+endif()
 if(NSE_GPU_BACKEND STREQUAL "cuda")
   set(NSE_GPU_FORTRAN_SOURCE src/gpu/mod_nse_gpu_cuda.f90)
   if(NSE_USE_MPI)
@@ -499,6 +503,17 @@ set(
   "RelWithDebInfo Fortran flags"
 )
 
+# Keep optional FH sources available even in previously configured build trees
+# whose NSE_CORE_SOURCES cache predates this extension.
+if("${NSE_CORE_SOURCES}" MATCHES "mod_nse_spatial_operator[.]f90|mod_nse_gpu_cuda[.]f90")
+  if(NOT "${NSE_CORE_SOURCES}" MATCHES "mod_fh_random[.]f90")
+    list(APPEND NSE_CORE_SOURCES src/extensions/fluctuating/mod_fh_random.f90)
+  endif()
+  if(NOT "${NSE_CORE_SOURCES}" MATCHES "mod_nse_fluctuating[.]f90")
+    list(APPEND NSE_CORE_SOURCES src/extensions/fluctuating/mod_nse_fluctuating.f90)
+  endif()
+endif()
+list(REMOVE_DUPLICATES NSE_CORE_SOURCES)
 add_library(nse_core STATIC ${NSE_CORE_SOURCES})
 add_library(NSE::core ALIAS nse_core)
 
@@ -563,6 +578,16 @@ if(NSE_GPU_BACKEND STREQUAL "cuda")
     )
   endif()
   target_link_libraries(nse_cuda_bridge PRIVATE CUDA::cudart)
+  if(NSE_ENABLE_CUDA_AWARE_MPI)
+    if(NOT NSE_USE_MPI OR NSE_MPI_PROVIDER_RESOLVED STREQUAL "MSMPI" OR
+       NSE_TEST_SUITE MATCHES "^multicomponent")
+      message(FATAL_ERROR "CUDA-aware halo exchange requires single-component NSE and SYSTEM MPI (not MS-MPI)")
+    endif()
+    enable_language(C)
+    find_package(MPI REQUIRED COMPONENTS C)
+    target_compile_definitions(nse_cuda_bridge PRIVATE NSE_CUDA_AWARE_MPI=1 OMPI_SKIP_MPICXX=1 MPICH_SKIP_MPICXX=1)
+    target_link_libraries(nse_cuda_bridge PRIVATE MPI::MPI_C)
+  endif()
   if(NSE_FORCING_FFT_BACKEND STREQUAL "cufft")
     target_compile_definitions(nse_cuda_bridge PRIVATE NSE_FORCING_CUFFT=1)
   endif()
@@ -1089,6 +1114,39 @@ if(BUILD_TESTING AND NSE_ENABLE_CUFFTMP_CONTRACT_TESTS)
   )
 endif()
 if(BUILD_TESTING)
+  add_executable(nse_test_fluctuating tests/test_fluctuating.f90)
+  target_link_libraries(nse_test_fluctuating PRIVATE NSE::core)
+  set_target_properties(nse_test_fluctuating PROPERTIES
+    Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/fh_test"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+  nse_apply_fortran_options(nse_test_fluctuating)
+  add_test(NAME nse_fluctuating COMMAND $<TARGET_FILE:nse_test_fluctuating>)
+  set_tests_properties(nse_fluctuating PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=2" TIMEOUT 120)
+  foreach(failure IN ITEMS adaptive boundary inviscid negative_beta seed weno)
+    add_test(NAME nse_fh_reject_${failure} COMMAND $<TARGET_FILE:nse_test_fluctuating> ${failure})
+    set_tests_properties(nse_fh_reject_${failure} PROPERTIES WILL_FAIL TRUE TIMEOUT 30)
+  endforeach()
+  if(NSE_GPU_BACKEND STREQUAL "none" AND NSE_VISCOUS_SCHEME STREQUAL "central6")
+    if(NOT NSE_USE_MPI)
+    add_test(NAME nse_fluctuating_smoke COMMAND $<TARGET_FILE:nse_solver>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_fluctuating.dat")
+    set_tests_properties(nse_fluctuating_smoke PROPERTIES
+      ENVIRONMENT "OMP_NUM_THREADS=2" PASS_REGULAR_EXPRESSION "completed successfully" TIMEOUT 60)
+    endif()
+    if(NSE_USE_MPI)
+      add_test(NAME nse_fluctuating_mpi_smoke COMMAND "${MPIEXEC_EXECUTABLE}"
+        ${MPIEXEC_NUMPROC_FLAG} 2 ${MPIEXEC_PREFLAGS} $<TARGET_FILE:nse_solver> ${MPIEXEC_POSTFLAGS}
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_fluctuating.dat")
+      set_tests_properties(nse_fluctuating_mpi_smoke PROPERTIES
+        ENVIRONMENT "OMP_NUM_THREADS=2" PASS_REGULAR_EXPRESSION "completed successfully" TIMEOUT 60)
+    endif()
+  endif()
+  if(NSE_GPU_BACKEND STREQUAL "cuda" AND NOT NSE_USE_MPI)
+    add_test(NAME nse_fluctuating_cuda_smoke COMMAND $<TARGET_FILE:nse_solver>
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_fluctuating.dat")
+    set_tests_properties(nse_fluctuating_cuda_smoke PROPERTIES
+      PASS_REGULAR_EXPRESSION "completed successfully" TIMEOUT 30)
+  endif()
   add_executable(
     nse_test_imported_turbulence
     tests/test_imported_turbulence.f90
@@ -1628,6 +1686,12 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda" AND NOT NSE_USE_MPI)
   nse_apply_fortran_options(nse_test_cuda_viscous_compare)
   add_test(NAME nse_cuda_viscous_compare
     COMMAND $<TARGET_FILE:nse_test_cuda_viscous_compare>)
+  foreach(mode IN ITEMS fluctuating fh_zero)
+    add_test(NAME nse_cuda_${mode}_compare
+      COMMAND $<TARGET_FILE:nse_test_cuda_viscous_compare> ${mode})
+    set_tests_properties(nse_cuda_${mode}_compare PROPERTIES
+      PASS_REGULAR_EXPRESSION "Resident CUDA LLNS comparison passed" TIMEOUT 60)
+  endforeach()
   set_tests_properties(
     nse_cuda_viscous_compare
     PROPERTIES PASS_REGULAR_EXPRESSION "CUDA central6 comparison passed"
@@ -1743,6 +1807,38 @@ endif()
 
 if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda" AND NSE_USE_MPI AND
    NSE_ENABLE_MULTI_GPU_TESTS)
+  add_executable(nse_test_cuda_fluctuating_mpi tests/test_cuda_fluctuating_mpi.f90)
+  set_target_properties(nse_test_cuda_fluctuating_mpi PROPERTIES
+    Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/fh_mpi_test"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+  target_link_libraries(nse_test_cuda_fluctuating_mpi PRIVATE NSE::core)
+  nse_apply_fortran_options(nse_test_cuda_fluctuating_mpi)
+  foreach(np IN ITEMS 2 4)
+    add_test(NAME nse_cuda_fh_mpi_${np} COMMAND "${MPIEXEC_EXECUTABLE}"
+      ${MPIEXEC_NUMPROC_FLAG} ${np} ${MPIEXEC_PREFLAGS}
+      $<TARGET_FILE:nse_test_cuda_fluctuating_mpi> ${MPIEXEC_POSTFLAGS})
+    set_tests_properties(nse_cuda_fh_mpi_${np} PROPERTIES
+      PASS_REGULAR_EXPRESSION "MPI resident LLNS matches" TIMEOUT 120 RUN_SERIAL TRUE)
+    if(NSE_ENABLE_CUDA_AWARE_MPI)
+      set_tests_properties(nse_cuda_fh_mpi_${np} PROPERTIES ENVIRONMENT "NSE_CUDA_MPI_TRANSPORT=device")
+    endif()
+  endforeach()
+  if(NOT NSE_ENABLE_CUDA_AWARE_MPI)
+    foreach(mode IN ITEMS device invalid)
+      add_test(NAME nse_cuda_mpi_transport_reject_${mode}
+        COMMAND "${CMAKE_COMMAND}" "-DLAUNCHER=${MPIEXEC_EXECUTABLE}"
+          "-DNP_FLAG=${MPIEXEC_NUMPROC_FLAG}" "-DSOLVER=$<TARGET_FILE:nse_solver>"
+          "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/tests/input_fluctuating.dat" "-DMODE=${mode}"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cuda_mpi_transport_reject.cmake")
+      set_tests_properties(nse_cuda_mpi_transport_reject_${mode} PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+    endforeach()
+  endif()
+  add_test(NAME nse_cuda_fh_mpi_smoke COMMAND "${MPIEXEC_EXECUTABLE}"
+    ${MPIEXEC_NUMPROC_FLAG} ${NSE_MULTI_GPU_TEST_PROCESSES} ${MPIEXEC_PREFLAGS}
+    $<TARGET_FILE:nse_solver> ${MPIEXEC_POSTFLAGS}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_fluctuating.dat")
+  set_tests_properties(nse_cuda_fh_mpi_smoke PROPERTIES
+    PASS_REGULAR_EXPRESSION "completed successfully" TIMEOUT 60)
   add_test(
     NAME nse_mpi_cuda_tgv_smoke
     COMMAND "${MPIEXEC_EXECUTABLE}" ${MPIEXEC_NUMPROC_FLAG}

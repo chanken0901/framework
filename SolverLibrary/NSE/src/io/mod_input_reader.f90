@@ -135,6 +135,9 @@ contains
     type(nse_config), intent(inout) :: cfg
 
     integer :: nv, nghost
+    logical :: fh_enabled
+    real(dp) :: fh_boltzmann_number
+    integer :: fh_seed
     real(dp) :: gamma, cfl, small_rho, small_p, rho0, mach, reynolds, prandtl
     real(dp) :: hit_turbulent_mach, hit_turbulent_reynolds
     real(dp) :: hit_rms_velocity, hit_peak_wavenumber
@@ -210,7 +213,8 @@ contains
     character(len=32) :: forcing_scheme, forcing_spectrum, forcing_fft_backend
     integer :: u, ios
     logical :: exists, any_boundary_face, all_boundary_faces
-    namelist /nse/ nv, nghost, gamma, cfl, small_rho, small_p, rho0, mach, &
+    namelist /nse/ fh_enabled, fh_boltzmann_number, fh_seed, &
+      nv, nghost, gamma, cfl, small_rho, small_p, rho0, mach, &
       reynolds, prandtl, convective_scheme, hybrid_smooth_scheme, &
       hybrid_shock_scheme, hybrid_sensor, hybrid_sensor_onset, &
       hybrid_sensor_full, viscous_scheme, &
@@ -273,6 +277,9 @@ contains
     gamma = cfg%gamma; cfl = cfg%cfl
     small_rho = cfg%small_rho; small_p = cfg%small_p
     rho0 = cfg%rho0; mach = cfg%mach; reynolds = cfg%reynolds; prandtl = cfg%prandtl
+    fh_enabled = cfg%fh_enabled
+    fh_boltzmann_number = cfg%fh_boltzmann_number
+    fh_seed = cfg%fh_seed
     convective_scheme = cfg%convective_scheme
     hybrid_smooth_scheme = cfg%hybrid_smooth_scheme
     hybrid_shock_scheme = cfg%hybrid_shock_scheme
@@ -414,6 +421,9 @@ contains
     cfg%gamma = gamma; cfg%cfl = cfl
     cfg%small_rho = small_rho; cfg%small_p = small_p
     cfg%rho0 = rho0; cfg%mach = mach; cfg%reynolds = reynolds; cfg%prandtl = prandtl
+    cfg%fh_enabled = fh_enabled
+    cfg%fh_boltzmann_number = fh_boltzmann_number
+    cfg%fh_seed = fh_seed
     cfg%convective_scheme = convective_scheme
     cfg%hybrid_smooth_scheme = hybrid_smooth_scheme
     cfg%hybrid_shock_scheme = hybrid_shock_scheme

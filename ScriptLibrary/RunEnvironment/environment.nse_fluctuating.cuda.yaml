@@ -1,0 +1,23 @@
+schema_version: 1
+environment_id: nse_landau_lifshitz_cuda
+option_catalogs: []
+select:
+  source: framework_relative
+  destination: windows_research_runs
+  model: nse
+  target: windows_gnu_msmpi
+  case: nse_fluctuating
+  execution: release
+  scheduler: disabled
+  archive: none
+parallel:
+  # Set use_mpi: true for one rank per GPU. Keep use_openmp: false.
+  use_mpi: false
+  use_openmp: false
+  use_cuda: true
+case:
+  label: landau_lifshitz_tgv_cuda
+  description: GPU-resident Landau-Lifshitz single-component periodic demonstration
+  project_name: NSEResearch
+solver:
+  include_tests: true

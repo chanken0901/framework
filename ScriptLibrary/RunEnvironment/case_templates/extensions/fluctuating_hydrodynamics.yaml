@@ -1,0 +1,9 @@
+schema_version: 1
+extension: fluctuating_hydrodynamics
+config:
+  enabled: true
+  model: landau_lifshitz
+  # Demonstration ONLY. Set beta = k_B / (rho_ref * R_specific * L_ref^3).
+  # This is NOT the dimensional Boltzmann constant 1.380649e-23.
+  boltzmann_number: 1.0e-8
+  seed: 13579

@@ -27,7 +27,7 @@ program main_nse_mpi_cuda
   real(dp), allocatable :: q(:,:,:,:)
   integer :: js, je, ks, ke, stage, selected_device
   integer :: retry, step_status, global_status
-  real(dp) :: requested_dt
+  real(dp) :: requested_dt, fh_dt_limit
   integer :: ierror_local, ierr_local, local_cells, minimum_local_cells
   character(len=512) :: input_path
 
@@ -121,6 +121,15 @@ program main_nse_mpi_cuda
     end if
     if (sim%t + sim%dt > sim%t_max) sim%dt = sim%t_max - sim%t
     if (sim%dt <= 0.0_dp) exit
+
+    if(nse%fh_enabled) then
+      call nse_gpu_compute_dt(gpu,fh_dt_limit)
+      call mp_allminr8(fh_dt_limit)
+      if(sim%dt>fh_dt_limit) then
+        if(my_rank==root) write(*,'(A)') 'ERROR: LLNS fixed dt exceeds global stability bound'
+        call MPI_Abort(MPI_COMM_WORLD,15,ierr_local)
+      end if
+    end if
 
     call nse_gpu_begin_ssprk3(gpu, sim%dt)
     requested_dt = sim%dt

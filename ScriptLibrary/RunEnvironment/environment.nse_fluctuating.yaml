@@ -1,0 +1,22 @@
+schema_version: 1
+environment_id: nse_landau_lifshitz_cpu
+option_catalogs: []
+select:
+  source: local_framework
+  destination: windows_research_runs
+  model: nse
+  target: windows_gnu_msmpi
+  case: nse_fluctuating
+  execution: release
+  scheduler: disabled
+  archive: none
+parallel:
+  use_mpi: true
+  use_openmp: true
+  use_cuda: false
+case:
+  label: landau_lifshitz_tgv
+  description: Landau-Lifshitz single-component periodic CPU demonstration
+  project_name: NSEResearch
+solver:
+  include_tests: true

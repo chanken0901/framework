@@ -22,6 +22,9 @@ module mod_model_config
     character(len=5) :: 'x_min', 'x_max', 'y_min', 'y_max', 'z_min', 'z_max']
 
   type :: nse_config
+    logical :: fh_enabled = .false.
+    real(dp) :: fh_boltzmann_number = 0.0_dp
+    integer :: fh_seed = 13579
     integer :: nv = 5
     real(dp) :: gamma = 1.4_dp
     real(dp) :: cfl = 0.5_dp
@@ -224,6 +227,12 @@ contains
     write(u,'(A,ES16.8)') 'mach   = ', cfg%mach
     write(u,'(A,ES16.8)') 'reynolds   = ', cfg%reynolds
     write(u,'(A,ES16.8)') 'prandtl   = ', cfg%prandtl
+    write(u,'(A,L1)') 'fh_enabled = ', cfg%fh_enabled
+    if (cfg%fh_enabled) then
+      write(u,'(A,ES16.8)') 'fh_boltzmann_number = ', cfg%fh_boltzmann_number
+      write(u,'(A,I0)') 'fh_seed = ', cfg%fh_seed
+      write(u,'(A)') 'FH: forward/adjoint transport, SSPRK3 + Ito kick (weak order 1), periodic CPU/CUDA'
+    end if
     write(u,'(A,A)') 'convective_scheme = ', trim(cfg%convective_scheme)
     write(u,'(A,A)') 'hybrid_smooth_scheme = ', &
       trim(cfg%hybrid_smooth_scheme)

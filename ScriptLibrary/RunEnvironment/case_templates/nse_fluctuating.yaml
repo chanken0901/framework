@@ -1,0 +1,64 @@
+schema_version: 2
+case_id: {{case_id}}
+case_label: {{case_label}}
+status: development
+description: {{description}}
+created_at: {{created_at}}
+project:
+  name: {{project_name}}
+physics:
+  model: {{physics_model}}
+  nse:
+    nv: 5
+    gamma: 1.4
+    rho0: 1.0
+    mach_number: 0.1
+    reynolds_number: 100.0
+    prandtl_number: 0.72
+extensions:
+  fluctuating_hydrodynamics: config/fluctuating_hydrodynamics.yaml
+flow:
+  type: taylor_green
+grid:
+  nx: 16
+  ny: 16
+  nz: 16
+  nghost: 3
+  x_min: 0.0
+  x_max: 6.283185307179586
+  y_min: 0.0
+  y_max: 6.283185307179586
+  z_min: 0.0
+  z_max: 6.283185307179586
+boundary:
+  faces:
+    x_min: {type: periodic}
+    x_max: {type: periodic}
+    y_min: {type: periodic}
+    y_max: {type: periodic}
+    z_min: {type: periodic}
+    z_max: {type: periodic}
+time:
+  cfl: 0.5
+  dt: 1.0e-4
+  t_max: 0.01
+  nsteps: 100
+  output_frequency: 100
+  use_fixed_dt: true
+solver:
+  type: nse_fvm
+  use_openmp: {{use_openmp}}
+  mpi_processes: {{mpi_processes}}
+  omp_threads: {{omp_threads}}
+numerics:
+  convective_scheme: keep6
+  viscous_scheme: central6  # FH enabled: paired forward/adjoint transport replaces this operator.
+  time_integrator: ssprk3   # FH enabled: deterministic SSPRK3 plus one Ito kick, weak order 1.
+output:
+  directory: output
+  format: slf
+  precision: float64
+  write_initial: true
+  write_meta: true
+storage:
+  raw_data_location: {{raw_data_location}}

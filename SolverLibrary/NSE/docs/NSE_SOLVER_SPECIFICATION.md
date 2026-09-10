@@ -1,8 +1,13 @@
 # NSEソルバー総合仕様書
 
-更新日: 2026-09-01
+更新日: 2026-09-10
 仕様区分: 現行実装準拠
 対象: `FrameWork/SolverLibrary/NSE` および `ScriptLibrary/RunEnvironment`
+
+単成分NSEのオプションとして[Landau–Lifshitz揺らぎ拡張](NSE_FLUCTUATING_HYDRODYNAMICS.md)を追加。
+以下の通常NSE仕様に対し、有効時だけ専用輸送演算子と確率増分を用いる。
+CPU MPI/OpenMPおよびGPU常駐CUDA／MPI＋CUDA・全周期境界・固定dtに対応し、輸送は空間一次精度、確率積分は弱一次精度。
+非周期境界／反応流への揺らぎ追加は未対応。無効時の従来演算経路は変更しない。
 
 ## 1. 目的と適用範囲
 
@@ -602,12 +607,12 @@ rankあたりOpenMPスレッド数は実行時に変更できる。
 ### 11.3 MPI＋CUDAマルチGPU
 
 - x全域×局所y×局所zを1 MPI rankのGPU 1台へ保持
-- SSPRK3の各段でy面、続いてz面をhost staging方式で交換
+- SSPRK3の各段でy面、続いてz面を交換。host staging／CUDA-aware MPI直接通信を選択可能
 - y交換後にz交換することで面だけでなく辺・角ghostも完成
 - CFL時間刻みは全rankの最小値へ同期
 - GPU番号はノード内rankから自動選択。1 GPUだけがrankへ公開された場合はdevice 0を使用
 - 各局所y/zブロックは`nghost`セル以上
-- CUDA-aware MPIは不要
+- host stagingにはCUDA-aware MPI不要。直接通信の要件と選択は[NSE_CUDA_AWARE_MPI.md](NSE_CUDA_AWARE_MPI.md)を参照
 - `cuda_mpi_cufftmp`でcuFFTMpによる分散HIT初期化とFFT forcingを実装
 
 ### 11.4 profile
@@ -867,7 +872,7 @@ Reynolds応力、等方性誤差、積分スケール、散逸率、Taylor長、
 - positivity-preserving limiterは未実装。
 - `small_rho`、`small_p`は評価保護であり、保存状態の修復ではない。
 - CUDA版は単一GPUとMPI＋CUDAマルチGPUに対応する。MPI＋CUDAのhalo通信は
-  host staging方式であり、分散HIT初期化とFFT forcingにはLinux上のcuFFTMpが必要である。
+  host staging／CUDA-aware MPIを選択でき、分散HIT初期化とFFT forcingにはLinux上のcuFFTMpが必要である。
 - CPU版は最低4 MPIプロセスを要求し、CPU逐次profileはない。
 
 ## 16. 実装ファイル対応表

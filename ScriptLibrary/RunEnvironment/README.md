@@ -1,5 +1,12 @@
 # 外部実行環境ジェネレーター
 
+単成分NSEのLandau–Lifshitz揺らぎ拡張は`environment.nse_fluctuating.yaml`を使用する。
+必要なケースだけ`config/fluctuating_hydrodynamics.yaml`を生成する。
+CPU MPI/OpenMPおよびGPU常駐CUDA／MPI＋CUDA・全周期境界・固定dtに対応し、非周期境界は未対応。
+CUDA用設計書は`environment.nse_fluctuating.cuda.yaml`。`parallel.use_mpi: true`でMPI＋CUDAを選択する。
+有効時には専用の揺動散逸整合輸送演算子を使う（通常の六次精度粘性ではない）。
+物理量の設定と精度上の制約は[LLNS仕様書](../../SolverLibrary/NSE/docs/NSE_FLUCTUATING_HYDRODYNAMICS.md)を参照。
+
 Stage 8の多成分MPIペンシル/OpenMP環境は`environment.nse_multicomponent.parallel.yaml`、
 OpenMP単独は`environment.nse_multicomponent.openmp.yaml`を使用する。
 設定とWindows/Linux手順は[多成分並列計算](../../SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_PARALLEL.md)を参照。
@@ -83,6 +90,10 @@ numerics:
 旧項目が残っている場合は、設定を黙って無視せず移行エラーを表示する。
 
 ## NSE CUDA（単一GPU／MPI＋マルチGPU）
+
+単成分NSEでは[CUDA-aware MPIによるGPU直接通信](../../SolverLibrary/NSE/docs/NSE_CUDA_AWARE_MPI.md)も選択できる。
+生成後のビルド設計書で`NSE_ENABLE_CUDA_AWARE_MPI: true`を追加し、実行時に
+`NSE_CUDA_MPI_TRANSPORT=device`を指定する。CUDA対応Open MPIが必要で、MS-MPIでは従来のstaged経路を使用する。
 
 NSEのCPU/MPI版、単一GPU版、MPI＋CUDA版は、いずれも`environment.nse.yaml`を設計書の
 ひな型にします。`select.model`は物理モデルの`nse`だけを指定し、
