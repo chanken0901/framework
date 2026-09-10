@@ -1679,8 +1679,6 @@ def _resolve_nse_fh(case, nse, backend):
         raise CaseInputError(f"{label}.model must be landau_lifshitz")
     if not enabled:
         return {"fh_enabled": False}
-    if any(token in backend.lower() for token in ("cuda", "gpu", "cufft")):
-        raise CaseInputError("Landau-Lifshitz extension currently supports CPU only")
     if nested(case, "time.use_fixed_dt", True) is not True:
         raise CaseInputError("Landau-Lifshitz extension requires fixed dt")
     _positive_float(nested(case, "time.dt"), "time.dt")
