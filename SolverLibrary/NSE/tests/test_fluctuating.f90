@@ -27,6 +27,8 @@ program test_fluctuating
     call get_command_argument(1,failure)
     select case(trim(failure))
     case('adaptive'); sim%use_fixed_dt=.false.
+    case('dt'); sim%use_fixed_dt=.true.; sim%dt=-1
+    case('transport'); nse%viscous_scheme='none'
     case('boundary'); nse%boundary_face_type(1)='reflective'
     case('inviscid'); nse%reynolds=0
     case('negative_beta'); nse%fh_boltzmann_number=-1
@@ -38,6 +40,12 @@ program test_fluctuating
     stop 0  ! CTest WILL_FAIL detects a missing rejection.
   end if
   call validate_fh(sim,nse)
+  ! A fixed random key scales flux as dt^-1/2, hence increments as sqrt(dt).
+  call fh_sample(1,1,1,sim,nse,1.0_dp,dt,s,heat)
+  v=[s(1,1),s(2,2),s(1,2),heat(1)]
+  call fh_sample(1,1,1,sim,nse,1.0_dp,dt/4,s,heat)
+  if(maxval(abs([s(1,1),s(2,2),s(1,2),heat(1)]-2*v))>1.e-14_dp) &
+    error stop 'variable dt noise scaling'
   mu=1/nse%reynolds; kappa=mu*nse%gamma/((nse%gamma-1)*nse%prandtl)
   a=2*nse%fh_boltzmann_number/(sim%dx*sim%dy*sim%dz*dt)
   mean=0; cov=0

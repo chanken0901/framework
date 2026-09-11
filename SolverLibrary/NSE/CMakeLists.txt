@@ -1121,8 +1121,31 @@ if(BUILD_TESTING)
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
   nse_apply_fortran_options(nse_test_fluctuating)
   add_test(NAME nse_fluctuating COMMAND $<TARGET_FILE:nse_test_fluctuating>)
+  if(NSE_VISCOUS_SCHEME STREQUAL "central6")
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_fluctuating.dat" fh_smoke_input)
+    foreach(scheme IN ITEMS keep2 keep6 weno5z_roe hybrid)
+      string(REPLACE "convective_scheme='keep6'" "convective_scheme='${scheme}'" fh_input "${fh_smoke_input}")
+      string(REPLACE "use_fixed_dt=.true." "use_fixed_dt=.false." fh_input "${fh_input}")
+      string(REPLACE "t_max=0.0003" "t_max=0.3" fh_input "${fh_input}")
+      file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/fh_${scheme}_variable.dat" CONTENT "${fh_input}")
+      if(NSE_USE_MPI)
+        add_test(NAME nse_fh_${scheme}_variable COMMAND "${MPIEXEC_EXECUTABLE}"
+          ${MPIEXEC_NUMPROC_FLAG} 2 ${MPIEXEC_PREFLAGS} $<TARGET_FILE:nse_solver> ${MPIEXEC_POSTFLAGS}
+          "${CMAKE_CURRENT_BINARY_DIR}/fh_${scheme}_variable.dat")
+      else()
+        add_test(NAME nse_fh_${scheme}_variable COMMAND $<TARGET_FILE:nse_solver>
+          "${CMAKE_CURRENT_BINARY_DIR}/fh_${scheme}_variable.dat")
+      endif()
+      set_tests_properties(nse_fh_${scheme}_variable PROPERTIES
+        ENVIRONMENT "OMP_NUM_THREADS=2;NSE_CUDA_DEVICE_POLICY=fixed"
+        PASS_REGULAR_EXPRESSION "completed successfully" TIMEOUT 60)
+    endforeach()
+  endif()
   set_tests_properties(nse_fluctuating PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=2" TIMEOUT 120)
-  foreach(failure IN ITEMS adaptive boundary inviscid negative_beta seed weno)
+  foreach(mode IN ITEMS adaptive weno)
+    add_test(NAME nse_fh_accept_${mode} COMMAND $<TARGET_FILE:nse_test_fluctuating> ${mode})
+  endforeach()
+  foreach(failure IN ITEMS dt transport boundary inviscid negative_beta seed)
     add_test(NAME nse_fh_reject_${failure} COMMAND $<TARGET_FILE:nse_test_fluctuating> ${failure})
     set_tests_properties(nse_fh_reject_${failure} PROPERTIES WILL_FAIL TRUE TIMEOUT 30)
   endforeach()
@@ -1686,7 +1709,7 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda" AND NOT NSE_USE_MPI)
   nse_apply_fortran_options(nse_test_cuda_viscous_compare)
   add_test(NAME nse_cuda_viscous_compare
     COMMAND $<TARGET_FILE:nse_test_cuda_viscous_compare>)
-  foreach(mode IN ITEMS fluctuating fh_zero)
+  foreach(mode IN ITEMS fluctuating fh_zero fh_keep2 fh_weno fh_hybrid)
     add_test(NAME nse_cuda_${mode}_compare
       COMMAND $<TARGET_FILE:nse_test_cuda_viscous_compare> ${mode})
     set_tests_properties(nse_cuda_${mode}_compare PROPERTIES

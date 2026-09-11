@@ -93,13 +93,20 @@ class FluctuatingTests(unittest.TestCase):
     def test_unsupported(self):
         with self.assertRaises(CaseInputError):
             render_nse_multicomponent(self.case)
-        for section, key, value in [("time", "use_fixed_dt", False),
-                                     ("numerics", "convective_scheme", "weno5z_roe"),
-                                     ("numerics", "viscous_scheme", "none")]:
+        for section, key, value in [("numerics", "viscous_scheme", "none")]:
             case = copy.deepcopy(self.case)
             case[section][key] = value
             with self.subTest(key=key), self.assertRaises(CaseInputError):
                 render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_all_convection_and_time_modes(self):
+        for scheme in ("keep2", "keep6", "weno5z_roe", "hybrid"):
+            for fixed in (False, True):
+                case = copy.deepcopy(self.case)
+                case["numerics"]["convective_scheme"] = scheme
+                case["time"]["use_fixed_dt"] = fixed
+                with self.subTest(scheme=scheme, fixed=fixed):
+                    self.assertIn("fh_enabled = .true.", render_nse(case, self.manifest, "cpu_mpi"))
 
     def test_sidecar(self):
         import json

@@ -1679,11 +1679,10 @@ def _resolve_nse_fh(case, nse, backend):
         raise CaseInputError(f"{label}.model must be landau_lifshitz")
     if not enabled:
         return {"fh_enabled": False}
-    if nested(case, "time.use_fixed_dt", True) is not True:
-        raise CaseInputError("Landau-Lifshitz extension requires fixed dt")
-    _positive_float(nested(case, "time.dt"), "time.dt")
-    if nse.get("convective_scheme", "keep6") != "keep6" or nse.get("viscous_scheme") != "central6":
-        raise CaseInputError("Landau-Lifshitz extension requires KEEP6 and CENTRAL6 (matched transport override)")
+    if nested(case, "time.use_fixed_dt", True):
+        _positive_float(nested(case, "time.dt"), "time.dt")
+    if nse.get("viscous_scheme") != "central6":
+        raise CaseInputError("Landau-Lifshitz extension requires CENTRAL6 (matched transport override)")
     for face in NSE_BOUNDARY_FACES:
         if nse.get(f"boundary_{face}", "periodic") != "periodic":
             raise CaseInputError("Landau-Lifshitz extension requires periodic boundaries")

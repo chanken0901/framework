@@ -126,7 +126,7 @@ program main_nse_mpi_cuda
       call nse_gpu_compute_dt(gpu,fh_dt_limit)
       call mp_allminr8(fh_dt_limit)
       if(sim%dt>fh_dt_limit) then
-        if(my_rank==root) write(*,'(A)') 'ERROR: LLNS fixed dt exceeds global stability bound'
+        if(my_rank==root) write(*,'(A)') 'ERROR: LLNS dt exceeds global stability bound'
         call MPI_Abort(MPI_COMM_WORLD,15,ierr_local)
       end if
     end if
@@ -146,7 +146,8 @@ program main_nse_mpi_cuda
       end do
       if (global_status == 0) exit
       call nse_gpu_restore_ssprk3(gpu)
-      if (global_status /= 2 .or. sim%use_fixed_dt .or. retry == 20) then
+      ! LLNS dt is chosen before noise; outcome-dependent retries are forbidden.
+      if (global_status /= 2 .or. sim%use_fixed_dt .or. nse%fh_enabled .or. retry == 20) then
         if (my_rank == root) write(*,'(A,I0)') &
           'ERROR: CUDA step rejected; state restored, status=', global_status
         call MPI_Abort(MPI_COMM_WORLD, 13, ierr_local)

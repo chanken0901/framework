@@ -15,15 +15,16 @@ contains
     type(simulation_config), intent(in) :: sim
     type(nse_config), intent(in) :: nse
     if (.not. nse%fh_enabled) return
-    if (.not. sim%use_fixed_dt) error stop 'fluctuating hydrodynamics requires fixed dt'
-    if (.not. ieee_is_finite(sim%dt) .or. sim%dt<=0) error stop 'FH requires finite positive dt'
+    if (sim%use_fixed_dt) then
+      if (.not. ieee_is_finite(sim%dt) .or. sim%dt<=0) error stop 'FH requires finite positive dt'
+    end if
     if (any(nse%boundary_face_type/='periodic') .or. nse%boundary_condition/='periodic') &
       error stop 'fluctuating hydrodynamics requires all-periodic boundaries'
     if (nse%nv/=5 .or. sim%nghost<2) error stop 'FH requires five variables and at least two ghosts'
     if (min(sim%nx,sim%ny,sim%nz)<2 .or. min(sim%dx,sim%dy,sim%dz)<=0 .or. &
         .not. all(ieee_is_finite([sim%dx,sim%dy,sim%dz]))) error stop 'FH requires a positive 3D grid'
-    if (nse%viscous_scheme/='central6' .or. nse%convective_scheme/='keep6') &
-      error stop 'FH requires central6 build and KEEP6; transport is replaced by matched FH operator'
+    if (nse%viscous_scheme/='central6') &
+      error stop 'FH requires central6 build; transport is replaced by matched FH operator'
     if (.not. ieee_is_finite(nse%reynolds) .or. nse%reynolds<=0 .or. &
         .not. ieee_is_finite(nse%prandtl) .or. nse%prandtl<=0 .or. &
         .not. ieee_is_finite(nse%gamma) .or. nse%gamma<=1) error stop 'FH requires positive transport'

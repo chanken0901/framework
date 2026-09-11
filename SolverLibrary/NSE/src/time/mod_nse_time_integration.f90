@@ -67,7 +67,7 @@ contains
     if (nse%fh_enabled) then
       !$OMP MASKED
       call compute_nse_dt(q,fh_dt_limit,sim,nse,js,je,ks,ke)
-      if (dt>fh_dt_limit) error stop 'FH fixed dt exceeds advective/diffusive bound; reduce dt and restart'
+      if (dt>fh_dt_limit) error stop 'FH dt exceeds advective/diffusive bound; reduce dt and restart'
       !$OMP END MASKED
       !$OMP BARRIER
     end if
@@ -145,7 +145,8 @@ contains
       end do
       !$OMP END DO
       !$OMP MASKED
-      if (budget_status > 1.0_dp .or. sim%use_fixed_dt .or. retry == 20) &
+      ! Never reject/re-sample a stochastic increment based on its outcome.
+      if (budget_status > 1.0_dp .or. sim%use_fixed_dt .or. nse%fh_enabled .or. retry == 20) &
         error stop 'NSE density/internal-energy budget failed; original state restored; review dt/forcing/resolution'
       dt = 0.5_dp*dt
       !$OMP END MASKED

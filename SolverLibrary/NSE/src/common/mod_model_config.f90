@@ -232,6 +232,9 @@ contains
       write(u,'(A,ES16.8)') 'fh_boltzmann_number = ', cfg%fh_boltzmann_number
       write(u,'(A,I0)') 'fh_seed = ', cfg%fh_seed
       write(u,'(A)') 'FH: forward/adjoint transport, SSPRK3 + Ito kick (weak order 1), periodic CPU/CUDA'
+      write(u,'(A)') 'FH: fixed or pre-step CFL dt; stochastic retries disabled'
+      if (cfg%convective_scheme=='weno5z_roe' .or. cfg%convective_scheme=='hybrid') &
+        write(u,'(A)') 'WARNING: numerical convection dissipation is not balanced by thermal noise'
     end if
     write(u,'(A,A)') 'convective_scheme = ', trim(cfg%convective_scheme)
     write(u,'(A,A)') 'hybrid_smooth_scheme = ', &

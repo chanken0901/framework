@@ -16,7 +16,7 @@ program test_cuda_viscous_compare
   real(dp), allocatable :: q_cpu(:,:,:,:), q_gpu(:,:,:,:)
   real(dp), allocatable :: q0(:,:,:,:), rhs(:,:,:,:), fface(:,:,:,:)
   real(dp) :: pi, x, y, z, rho, u, v, w, pressure
-  real(dp) :: gpu_dt, cpu_dt, field_error
+  real(dp) :: gpu_dt, cpu_dt, field_error, step_dt, accepted_dt
   integer :: i, j, k, g, iteration, iterations
   character(len=32) :: mode
 
@@ -35,12 +35,17 @@ program test_cuda_viscous_compare
   nse%reynolds = 25.0_dp
   nse%prandtl = 0.72_dp
   iterations=1
+  mode=''
   if(command_argument_count()>0) then
     call get_command_argument(1,mode)
-    if(trim(mode)=='fluctuating' .or. trim(mode)=='fh_zero') then
+    if(trim(mode)=='fluctuating' .or. index(mode,'fh_')==1) then
       nse%fh_enabled=.true.; nse%fh_boltzmann_number=1.e-4_dp
       if(trim(mode)=='fh_zero') nse%fh_boltzmann_number=0
       iterations=4
+      if(trim(mode)=='fh_keep2') nse%convective_scheme='keep2'
+      if(trim(mode)=='fh_weno') nse%convective_scheme='weno5z_roe'
+      if(trim(mode)=='fh_hybrid') nse%convective_scheme='hybrid'
+      if(trim(mode)/='fh_zero') sim%use_fixed_dt=.false.
     end if
   end if
 
@@ -85,8 +90,18 @@ program test_cuda_viscous_compare
   end if
 
   do iteration=1,iterations
-    call reference_ssprk3(q_cpu, q0, rhs, fface, 1.0e-5_dp, sim, nse)
-    call nse_gpu_advance_ssprk3(gpu, 1.0e-5_dp)
+    step_dt=1.0e-5_dp
+    if(nse%fh_enabled .and. .not.sim%use_fixed_dt) then
+      call nse_gpu_compute_dt(gpu,gpu_dt)
+      step_dt=min(gpu_dt,real(iteration,dp)*1.0e-5_dp)
+    end if
+    call reference_ssprk3(q_cpu, q0, rhs, fface, step_dt, sim, nse)
+    if(nse%fh_enabled .and. .not.sim%use_fixed_dt) then
+      call nse_gpu_advance_ssprk3(gpu,step_dt,accepted_dt)
+      if(accepted_dt/=step_dt) error stop 'LLNS must not retry'
+    else
+      call nse_gpu_advance_ssprk3(gpu,step_dt)
+    end if
     sim%step=sim%step+1
   end do
   call nse_gpu_synchronize(gpu)

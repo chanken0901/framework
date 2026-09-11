@@ -3242,7 +3242,7 @@ NSE_CUDA_EXPORT int nse_cuda_compute_dt(void* handle, double* dt) {
 NSE_CUDA_EXPORT int nse_cuda_configure_fh(void* handle, double beta, int seed, int step) {
   auto* c=static_cast<NseCudaContext*>(handle);
   if(!c || !std::isfinite(beta) || beta<0 || seed<0 || step<0 || c->fh_enabled ||
-      !c->viscous_enabled || c->convective_scheme!=convective_keep6) {
+      !c->viscous_enabled) {
     set_error("invalid LLNS CUDA configuration"); return 1;
   }
   for(int face=0;face<boundary_face_count;++face) if(c->boundary.type[face]!=0) {
@@ -3272,7 +3272,7 @@ NSE_CUDA_EXPORT int nse_cuda_begin_ssprk3(void* handle, double dt) {
     double limit=0;
     if(nse_cuda_compute_dt(handle,&limit)!=0) return 1;
     if(dt>limit || context->fh_step==std::numeric_limits<int>::max()) {
-      set_error("LLNS fixed dt exceeds stability bound or step counter exhausted"); return 1;
+      set_error("LLNS dt exceeds stability bound or step counter exhausted"); return 1;
     }
     context->fh_begin_step=context->fh_step;
   }
@@ -3342,7 +3342,6 @@ NSE_CUDA_EXPORT int nse_cuda_restore_ssprk3(void* handle) {
 NSE_CUDA_EXPORT int nse_cuda_advance_adaptive(void* handle, double* dt) {
   auto* context = static_cast<NseCudaContext*>(handle);
   if (context == nullptr || dt == nullptr) { set_error("invalid adaptive step request"); return 1; }
-  if(context->fh_enabled) { set_error("LLNS requires fixed dt; no stochastic retries"); return 1; }
   if (context->distributed_y || context->distributed_z) {
     set_error("distributed retry must be coordinated by the MPI driver"); return 1;
   }
@@ -3362,7 +3361,8 @@ NSE_CUDA_EXPORT int nse_cuda_advance_adaptive(void* handle, double* dt) {
     }
     const std::string reason = last_error;
     if (nse_cuda_restore_ssprk3(handle) != 0) return 1;
-    if (status != 2) { set_error(reason); return status; }
+    // dt may vary between steps, but LLNS must not reject noise by its outcome.
+    if (status != 2 || context->fh_enabled) { set_error(reason); return status; }
     if (retry == 20) break;
     *dt *= 0.5;
   }
