@@ -295,12 +295,12 @@ machine_defaults:
 
 scaffold:
   copy_files:
-    ../SetupCase/yaml_support.py: scripts/yaml_support.py
-    ../SetupCase/case_registry.py: scripts/case_registry.py
-    ../SetupCase/gp3d_case.py: scripts/gp3d_case.py
-    ../SetupCase/create_case_from_schema.py: scripts/create_case.py
-    ../SetupCase/generate_gp3d_case_docs.py: scripts/generate_case_docs.py
-    ../SetupCase/run_env_builder.py: scripts/run_env_builder.py
+    ../../SetupCase/yaml_support.py: scripts/yaml_support.py
+    ../../SetupCase/case_registry.py: scripts/case_registry.py
+    ../../SetupCase/gp3d_case.py: scripts/gp3d_case.py
+    ../../SetupCase/create_case_from_schema.py: scripts/create_case.py
+    ../../SetupCase/generate_gp3d_case_docs.py: scripts/generate_case_docs.py
+    ../../SetupCase/run_env_builder.py: scripts/run_env_builder.py
 
 git:
   require_clean_commit_before_run: false

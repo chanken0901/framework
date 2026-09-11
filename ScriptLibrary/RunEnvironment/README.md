@@ -2,6 +2,9 @@
 
 単成分NSEのLandau–Lifshitz揺らぎ拡張は`environment.nse_fluctuating.yaml`を使用する。
 必要なケースだけ`config/fluctuating_hydrodynamics.yaml`を生成する。
+揺らぎ用ケースは通常NSEテンプレートを継承し、HIT・forcingなどの設定欄を保持する。
+`case_templates/nse_fluctuating.yaml`は生成時の差分定義で、生成後は自己完結した通常のcase.yamlになる。
+詳細は[揺らぎと既存機能の関係](../../SolverLibrary/NSE/docs/NSE_FLUCTUATING_HYDRODYNAMICS.md)を参照。
 CPU MPI/OpenMPおよびGPU常駐CUDA／MPI＋CUDA・全周期境界・固定dtに対応し、非周期境界は未対応。
 CUDA用設計書は`environment.nse_fluctuating.cuda.yaml`。`parallel.use_mpi: true`でMPI＋CUDAを選択する。
 有効時には専用の揺動散逸整合輸送演算子を使う（通常の六次精度粘性ではない）。
@@ -356,7 +359,7 @@ GPEの全解像度では`--fields density,phase`を指定します。`--steps`�
 生成済み実行環境はFrameWorkの更新を自動追従しません。`--version`が使えない、
 2.0.0未満、または`unrecognized arguments: --steps`が出る場合は、現在の
 FrameWorkから実行環境を再生成してください。詳細はFrameWorkルートの
-`後処理_ParaView可視化手順書.md`または同名のWord版を参照します。
+[後処理手順書](../../docs/guides/後処理_ParaView可視化手順書.md)を参照します。既存Word版は`docs/office/`にあります。
 
 ## NSE乱流統計の後処理
 

@@ -1709,6 +1709,11 @@ def render_nse(
     case_dir: Path | None = None,
     runtime_root: Path | None = None,
 ) -> str:
+    for key in ("chemistry", "thermodynamics", "transport", "geometry"):
+        if key in case:
+            raise CaseInputError(f"{key} is not supported by single-component NSE; use the appropriate nse_multicomponent profile")
+    if nested(case, "physics.multicomponent") is not None:
+        raise CaseInputError("physics.multicomponent requires model nse_multicomponent")
     profile, use_mpi, use_openmp, backend = _profile_settings(
         manifest, profile_name
     )
@@ -2695,6 +2700,18 @@ def _reactive_navier_stokes_settings(
 def render_nse_multicomponent(
     case: dict[str, Any], profile_name: str | None = None
 ) -> str:
+    # Never accept standard NSE controls that this separate solver does not consume.
+    forcing = _mapping(case.get("forcing", {}), "forcing")
+    if forcing and (set(forcing) - {"type"} or forcing.get("type") != "none"):
+        raise CaseInputError("forcing is not implemented for nse_multicomponent; it must not be silently ignored")
+    for section, keys in {
+        "time": ("t_max", "output_frequency", "use_fixed_dt"),
+        "output": ("format", "write_initial", "directory", "precision", "write_meta"),
+    }.items():
+        supplied = _mapping(case.get(section, {}), section)
+        for key in keys:
+            if key in supplied:
+                raise CaseInputError(f"{section}.{key} is not supported by nse_multicomponent; use its documented time/output controls")
     if nested(case, "physics.fluctuating_hydrodynamics") is not None:
         raise CaseInputError("Landau-Lifshitz extension is available only for single-component NSE")
     physics = _mapping(

@@ -93,6 +93,29 @@ MPI版は既存のy-z分割と保存変数のhalo交換を使用する。乱数�
 
 ## 設定
 
+### 既存NSE機能との関係（2026-09-11）
+
+揺らぎは独立したソルバーではなく、`model: nse`の任意拡張として扱う。
+新規生成では通常NSEの`case_templates/nse.yaml`を共通元にし、
+`nse_fluctuating.yaml`は拡張参照とデモ既定値だけを変更する差分定義になった。
+HIT、保存乱流、forcing、境界、hybrid、出力等の設定欄と説明は共通元から継承する。
+欄が存在することと、揺らぎ有効時にその組合せが対応済みであることは区別する。
+KEEP6・固定dt・全周期境界は現実装の制約であり、継承した欄を隠す理由にはしない。
+
+差分定義は`prepare_environment.py`で通常の自己完結型`templates/case_template.yaml`へ展開する。
+元の差分ファイルをSetupCaseへ直接渡さない。生成後のcase編集に継承処理は介在せず、
+既存case.yamlの条件を自動変更することもない。元テンプレート更新の適用には再生成が必要。
+
+HITとPetersen–Livescu forcingの入力はLLNSの有効／無効で保持する。
+CPUでは`cpu_mpi_2decomp_fftw`、単一GPUでは`cuda_single`、MPI＋CUDAでは
+`cuda_mpi_cufftmp`が必要で、自動profile選択に従う。forcingは既定`none`のまま。
+HIT＋forcing＋LLNSの長時間統計検証済みという意味ではない。
+
+別ソルバーの設定を誤って追加した場合も黙って無視しない。
+単成分NSEへchemistry/thermodynamics/transport/geometry、またはphysics.multicomponentを
+追加した場合は拒否する。反応・多成分側へ単成分専用のforcingや未対応time/output制御を
+追加した場合も拒否する。これらの機能を反応流へ移植した変更ではない。
+
 新規生成には`ScriptLibrary/RunEnvironment/environment.nse_fluctuating.yaml`を使う。
 デモ初期場はTaylor–Green渦で、静止平衡ではない。次の参照と設定ファイルが生成される。
 既存ケースでも同様に追加できる。

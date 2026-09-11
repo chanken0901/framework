@@ -36,6 +36,50 @@ class FluctuatingTests(unittest.TestCase):
         self.case["physics"]["fluctuating_hydrodynamics"] = {"enabled": False}
         self.assertIn("fh_enabled = .false.", render_nse(self.case, self.manifest, "cpu_mpi"))
 
+    def test_standard_controls_are_preserved(self):
+        from profile_selection import select_case_profile
+        case = copy.deepcopy(self.case)
+        case["forcing"] = {"type": "petersen_livescu", "petersen_livescu": {
+            "spectrum": "low_wavenumber", "target_dissipation": 0.1,
+            "dilatational_ratio": 0.0, "k_cutoff": 2.5}}
+        case["flow"]["type"] = "hit"
+        case.get("solver", {}).pop("profile", None)
+        profile, _ = select_case_profile(case, self.manifest, {"model":"nse",
+            "profile":"cpu_mpi", "available_profiles":["cpu_mpi","cpu_mpi_2decomp_fftw"]})
+        self.assertEqual(profile, "cpu_mpi_2decomp_fftw")
+        enabled = render_nse(case, self.manifest, profile)
+        case["physics"]["fluctuating_hydrodynamics"] = {"enabled":False}
+        disabled = render_nse(case, self.manifest, profile)
+        del case["physics"]["fluctuating_hydrodynamics"]
+        legacy = render_nse(case, self.manifest, profile)
+        def without_fh(text):
+            return '\n'.join(line for line in text.splitlines() if not line.strip().startswith('fh_'))
+        self.assertEqual(without_fh(enabled), legacy.rstrip())
+        self.assertEqual(without_fh(disabled), legacy.rstrip())
+
+    def test_reject_ignored_controls(self):
+        for key in ('chemistry','geometry','thermodynamics','transport'):
+            case=copy.deepcopy(self.case); case[key]={}
+            with self.subTest(key=key), self.assertRaisesRegex(CaseInputError,key):
+                render_nse(case,self.manifest,'cpu_mpi')
+        baseline=test_case_input.MulticomponentFoundationInputTests.reactive_case()
+        for section, key, value in [('forcing','type','petersen_livescu'),
+                ('time','t_max',1.0),('time','use_fixed_dt',True),
+                ('time','output_frequency',5),('output','format','slf'),
+                ('output','write_initial',True),('output','directory','output')]:
+            case=copy.deepcopy(baseline); case.setdefault(section,{})[key]=value
+            with self.subTest(key=key), self.assertRaises(CaseInputError):
+                render_nse_multicomponent(case,'cpu_serial_reactive')
+
+    def test_template_overlay_contract(self):
+        from case_template_overlay import apply_template_overrides
+        text='flow:\n  type: taylor_green # retained\nforcing:\n  type: none\n'
+        out=apply_template_overrides(text,{'flow.type':'hit','schema_version':2})
+        self.assertIn('# retained',out)
+        self.assertIn('forcing:\n  type: none',out)
+        for changes in ({'flow.typo':1},{'flow':{}},{'bad/path':1}):
+            with self.assertRaises(ValueError): apply_template_overrides(text,changes)
+
     def test_invalid(self):
         for key, value in [("boltzmann_number", -1), ("boltzmann_number", float("nan")),
                            ("boltzmann_number", True), ("seed", -1), ("seed", 2**31),
@@ -117,6 +161,12 @@ class FluctuatingTests(unittest.TestCase):
             self.assertTrue((source / "src/extensions/fluctuating/mod_nse_fluctuating.f90").is_file())
             config = resolve_case_configuration(generated / "cases/case0001/case.yaml")
             self.assertIn("fluctuating_hydrodynamics", config.extension_paths)
+            self.assertIn("hit", config.document["flow"])
+            self.assertIn("imported_turbulence", config.document["flow"])
+            self.assertEqual(config.document["forcing"]["type"], "none")
+            self.assertIn("hybrid", config.document["numerics"])
+            template_text=(generated / "templates/case_template.yaml").read_text(encoding="utf-8")
+            self.assertIn("Petersen-Livescu",template_text)
             self.assertIn("fh_enabled = .true.",
                 (generated / "cases/case0001/input.dat").read_text())
             # Optional toolchain-dependent integration check. All artifacts stay

@@ -6,8 +6,8 @@
 
 現行の手順書:
 
-- `../../学生向け_FrameWork導入・Git開発手順書.md`
-- `../../GIT運用マニュアル.md`
+- `../../docs/guides/学生向け_FrameWork導入・Git開発手順書.md`
+- `../../docs/guides/GIT運用マニュアル.md`
 
 ## 現行モノレポで使用する操作
 
@@ -75,6 +75,7 @@ MIGRATE_TO_MONOREPO.md
 ## 旧分離リポジトリ用ファイル
 
 次のファイルは、旧`ScriptLibrary.git`と旧`SolverLibrary.git`を別々に管理していた時期の互換・履歴確認用です。
+2026-09-11に`../legacy/Git/`へ移動しました。現在のディレクトリには置いていません。
 
 ```text
 manage_scriptlibrary.py

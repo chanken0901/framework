@@ -6,7 +6,7 @@
 
 > 本書は2026年8月19日のモノレポ移行後の運用を定義します。旧版に記載されていた`ScriptLibrary`と`SolverLibrary`の個別clone、個別sync、個別snapshotは現行運用では使用しません。
 
-> コマンド表記: GitコマンドはWindowsとLinuxで共通です。ディレクトリ移動、Python、パス表記などOS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通の対応表は[`docs/WINDOWS_LINUX_COMMANDS.md`](docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+> コマンド表記: GitコマンドはWindowsとLinuxで共通です。ディレクトリ移動、Python、パス表記などOS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通の対応表は[`docs/WINDOWS_LINUX_COMMANDS.md`](../WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 ## 1. 目的
 
@@ -64,10 +64,10 @@ FrameWork/
 次のスクリプトは旧分離リポジトリ用で、現行モノレポの日常操作には使用しません。
 
 ```text
-ScriptLibrary/Git/manage_scriptlibrary.py
-ScriptLibrary/Git/manage_solverlibrary.py
-ScriptLibrary/Git/manage_library_repositories.py
-ScriptLibrary/Git/library_repositories.yaml
+ScriptLibrary/legacy/Git/manage_scriptlibrary.py
+ScriptLibrary/legacy/Git/manage_solverlibrary.py
+ScriptLibrary/legacy/Git/manage_library_repositories.py
+ScriptLibrary/legacy/Git/library_repositories.yaml
 ```
 
 現行運用ではルートの`FrameWork`に対して標準Gitコマンドを使用します。

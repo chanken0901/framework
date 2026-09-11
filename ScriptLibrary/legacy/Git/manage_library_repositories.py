@@ -22,7 +22,7 @@ from typing import Any
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-YAML_SUPPORT_DIR = SCRIPT_DIR.parent / "SetupCase"
+YAML_SUPPORT_DIR = SCRIPT_DIR.parents[1] / "SetupCase"
 if str(YAML_SUPPORT_DIR) not in sys.path:
     sys.path.insert(0, str(YAML_SUPPORT_DIR))
 

@@ -2,7 +2,7 @@
 
 > この移行はWindows PowerShellスクリプトで実施済みです。日常のWindows／Linux Git運用には本スクリプトを再実行せず、[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)とルートのGit運用マニュアルを使用してください。
 
-> 2026年8月19日に`framework.git`への移行は完了し、Pull Request #1として`main`へマージされました。本書と`migrate_to_monorepo.ps1`は履歴確認・再現用です。現行cloneや学生環境で再実行しないでください。日常運用はルートの`GIT運用マニュアル.md`を参照してください。
+> 2026年8月19日に`framework.git`への移行は完了し、Pull Request #1として`main`へマージされました。本書と`migrate_to_monorepo.ps1`は履歴確認・再現用です。現行cloneや学生環境で再実行しないでください。日常運用は[Git運用マニュアル](../../docs/guides/GIT運用マニュアル.md)を参照してください。
 
 `migrate_to_monorepo.ps1`は、次の3リポジトリを1つの`framework.git`へ統合するために使用したスクリプトです。
 
@@ -39,7 +39,7 @@ FrameWork/
 └─ docs/
 ```
 
-現行開発では、ルートの`FrameWork`に対して1つのブランチ、コミット、Pull Requestを使用します。旧リポジトリ用の`manage_scriptlibrary.py`、`manage_solverlibrary.py`は使用しません。
+現行開発では、ルートの`FrameWork`に対して1つのブランチ、コミット、Pull Requestを使用します。旧リポジトリ用の`../legacy/Git/manage_scriptlibrary.py`、`../legacy/Git/manage_solverlibrary.py`は使用しません。
 
 ## 旧リポジトリの扱い
 

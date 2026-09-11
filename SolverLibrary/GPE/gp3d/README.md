@@ -10,8 +10,8 @@
 
 物理モデル、数値解法、モジュールAPI、CPU/MPI/CUDA/cuFFTMpバックエンド、
 入力、SLF出力、再スタート、ビルド、テストおよび拡張規約の詳細は、
-[GPE/GP3Dコード全体仕様書（Markdown）](../../../GPE_GP3Dコード全体仕様書.md)を参照してください。
-配布・閲覧用の[Word版](../../../GPE_GP3Dコード全体仕様書.docx)も同じ場所にあります。
+[GPE/GP3Dコード全体仕様書（Markdown）](../../../docs/guides/GPE_GP3Dコード全体仕様書.md)を参照してください。
+配布・閲覧用の[既存Word版](../../../docs/office/GPE_GP3Dコード全体仕様書.docx)は`docs/office/`に保管しています。
 
 ## ディレクトリ構成
 
@@ -167,7 +167,7 @@ python3 tools/run_workflow_linux.py workflow.cufftmp.example.json
 再スタート機能とParaView変換ツールを利用できます。
 
 SLFからVTI/PVDへの変換と、ParaViewでの密度・位相・量子渦表示の標準手順は、
-[`後処理_ParaView可視化手順書.md`](../../../後処理_ParaView可視化手順書.md)を参照してください。
+[`後処理_ParaView可視化手順書.md`](../../../docs/guides/後処理_ParaView可視化手順書.md)を参照してください。
 
 スパコンでの環境記録、2 GPU検証、1/2/4 GPU比較、Slurm例は
 `docs/cufftmp_test_plan.md`にまとめています。

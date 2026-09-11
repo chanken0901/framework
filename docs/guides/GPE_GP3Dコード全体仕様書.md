@@ -6,7 +6,7 @@
 **対象:** SolverLibrary GPE/gp3d  
 **正本:** `C:\Users\Owner\Documents\Codex\FrameWork`
 
-> コマンド表記: OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通の対応表は[`docs/WINDOWS_LINUX_COMMANDS.md`](docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+> コマンド表記: OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通の対応表は[`docs/WINDOWS_LINUX_COMMANDS.md`](../WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 ---
 
@@ -1668,7 +1668,7 @@ global出力とrank分割出力の両方に対応します。
 詳細は次を参照します。
 
 ```text
-C:\Users\Owner\Documents\Codex\FrameWork\後処理_ParaView可視化手順書.md
+C:\Users\Owner\Documents\Codex\FrameWork\docs\guides\後処理_ParaView可視化手順書.md
 ```
 
 ---

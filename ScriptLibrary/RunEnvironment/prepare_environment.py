@@ -34,6 +34,7 @@ from environment_options import (
 from global_case_index import GlobalCaseIndexError, sync_environment_case
 from profile_selection import ProfileSelectionError, select_case_profile
 from yaml_support import YamlFormatError, load_yaml
+from case_template_overlay import apply_template_overrides
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -1351,13 +1352,31 @@ def prepare(args: argparse.Namespace) -> Path:
             template_path = _safe_source(
                 framework_root, template_relative, "case.template"
             )
+            is_overlay = template_path.read_text(encoding="utf-8").startswith("# case-template-overlay")
             _copy_file(
                 template_path,
-                temporary / "templates" / "case_template.yaml",
+                temporary / "templates" / ("case_overlay.yaml" if is_overlay else "case_template.yaml"),
                 source_records,
                 framework_root,
                 "case_template",
             )
+            if is_overlay:
+                overlay = _mapping(load_yaml(template_path), "case template overlay")
+                if set(overlay) != {"template_base", "overrides"}:
+                    raise EnvironmentError("template overlay requires only template_base and overrides")
+                base_name = overlay["template_base"]
+                if not isinstance(base_name, str) or Path(base_name).name != base_name:
+                    raise EnvironmentError("template_base must be a filename in the same template directory")
+                base = _safe_source(framework_root,
+                    str(template_path.parent.relative_to(framework_root) / base_name), "template_base")
+                _copy_file(base, temporary / "templates" / "case_base.yaml",
+                    source_records, framework_root, "case_template_base")
+                try:
+                    composed = apply_template_overrides(base.read_text(encoding="utf-8"),
+                        _mapping(overlay["overrides"], "template overrides"))
+                except ValueError as exc:
+                    raise EnvironmentError(str(exc)) from exc
+                (temporary / "templates" / "case_template.yaml").write_text(composed, encoding="utf-8")
             for extension_name, extension_relative in (
                 extension_template_paths.items()
             ):

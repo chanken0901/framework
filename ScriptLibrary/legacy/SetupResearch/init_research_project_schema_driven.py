@@ -51,7 +51,7 @@ try:
     import yaml  # type: ignore
 except ImportError:  # pragma: no cover - exercised on minimal Python installations
     yaml = None
-    setup_case_dir = Path(__file__).resolve().parents[1] / "SetupCase"
+    setup_case_dir = Path(__file__).resolve().parents[2] / "SetupCase"
     sys.path.insert(0, str(setup_case_dir))
     from yaml_support import dump_yaml, load_yaml
 

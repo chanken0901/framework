@@ -6,7 +6,7 @@
 
 > 重要: 現在のFrameWorkはモノレポです。`ScriptLibrary`と`SolverLibrary`は、同じ`framework`リポジトリの中にあります。旧`ScriptLibrary.git`と旧`SolverLibrary.git`はクローンしません。
 
-> コマンド表記: OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。Gitコマンドだけのブロックは両OS共通です。パスやシェル操作の読み替えは[`docs/WINDOWS_LINUX_COMMANDS.md`](docs/WINDOWS_LINUX_COMMANDS.md)も参照してください。
+> コマンド表記: OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。Gitコマンドだけのブロックは両OS共通です。パスやシェル操作の読み替えは[`docs/WINDOWS_LINUX_COMMANDS.md`](../WINDOWS_LINUX_COMMANDS.md)も参照してください。
 
 ## 1. この手順書でできること
 
@@ -33,10 +33,10 @@ FrameWork/
 ├─ README.md              最初に読む案内
 ├─ ScriptLibrary/         ケース生成、ビルド、実行環境、Git補助資料
 ├─ SolverLibrary/         NSE・GPEソルバー本体、設定、テスト
-├─ docs/                  開発・移行記録
-├─ 学生向け_FrameWork導入・Git開発手順書.md
-├─ GIT運用マニュアル.md
-└─ 各種仕様書・実行手順書
+└─ docs/                  README.mdが資料一覧
+   ├─ guides/             学生向け導入、Git運用、実行・後処理手順書
+   ├─ office/             既存Word版
+   └─ tables/             台帳・試算表
 ```
 
 Gitリポジトリは最上位の`FrameWork/.git`だけです。`ScriptLibrary`と`SolverLibrary`を別々にクローン、pull、commit、pushしてはいけません。

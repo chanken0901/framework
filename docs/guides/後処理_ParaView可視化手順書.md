@@ -5,7 +5,7 @@
 **対象:** 研究フレームワークから生成したGPE/NSE実行環境  
 **正本:** `C:\Users\Owner\Documents\Codex\FrameWork`
 
-> コマンド表記: OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通の読み替えは[`docs/WINDOWS_LINUX_COMMANDS.md`](docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+> コマンド表記: OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通の読み替えは[`docs/WINDOWS_LINUX_COMMANDS.md`](../WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 ---
 
