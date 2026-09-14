@@ -1,0 +1,20 @@
+# Connectivity test ONLY. No rate constants/thermo: not a combustion mechanism.
+schema_version: 1
+kind: neutral_gas_topology
+units: {molar_mass: kg/mol}
+elements: {H: 0.001008, O: 0.015999}
+species:
+  - {name: H2, composition: {H: 2}}
+  - {name: O, composition: {O: 1}}
+  - {name: H, composition: {H: 1}}
+  - {name: OH, composition: {O: 1, H: 1}}
+  - {name: H2O, composition: {H: 2, O: 1}}
+reactions:
+  - id: r1
+    reactants: {H2: 1, O: 1}
+    products: {H: 1, OH: 1}
+    reversible: true
+  - id: r2
+    reactants: {H2: 1, OH: 1}
+    products: {H2O: 1, H: 1}
+    reversible: true
