@@ -1,4 +1,4 @@
-"""Single boundary between dimensionless CFD variables and SI thermo inputs."""
+"""Offline reference for the boundary between CFD variables and SI inputs."""
 from dataclasses import dataclass
 from .mechanism import positive, MechanismError
 import math

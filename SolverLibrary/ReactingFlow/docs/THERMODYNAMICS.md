@@ -56,3 +56,6 @@ cp/cv/h/e/s/g/密度/音速を350,800,1500,2800 Kで照合し、温度逆算も�
 
 式・標準状態の参照：[Cantera species thermodynamics](https://www.cantera.org/3.1/reference/thermo/species-thermo.html)。
 計算時の入力アダプターは3.2.0で検証している。
+> 計算本体はFortranへ移行済み。実行方法は[Fortran手順書](REACTORS.md)を参照。
+> 以下のPython API・コマンドは`reference/python/`のオフライン入力／比較検証用。
+> Fortranでは`mod_rf_thermo`と`mod_rf_units`を使用する。

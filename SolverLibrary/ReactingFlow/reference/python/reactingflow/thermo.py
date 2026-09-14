@@ -1,4 +1,4 @@
-"""Ideal-gas reference thermodynamics in SI mol (not kmol) units."""
+"""Offline reference thermodynamics in SI mol units; runtime implementation is Fortran."""
 from dataclasses import dataclass
 from bisect import bisect_left
 import math

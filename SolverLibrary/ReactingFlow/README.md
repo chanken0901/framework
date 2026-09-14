@@ -1,6 +1,6 @@
 # ReactingFlow：独立反応流ライブラリ
 
-状態：**R0基盤・R1熱力学・R2反応速度・R3の0次元BDF反応器を実装済み。CFDは未実装。**
+状態：**R1熱力学・R2反応速度・R3の0次元BDF反応器の計算本体をFortran化済み。CFDは未実装。**
 従来NSEのStage 0〜10とは別の移行段階で管理する。
 
 単成分NSE（熱揺らぎ拡張を含む）に依存しないライブラリとして再構築する。
@@ -12,9 +12,11 @@ NSE配下に同じ実装を複製して同期する方式にはしない。
 
 ```text
 ReactingFlow/
-  src/reactingflow/    独立した機構データ契約（Python、NSE依存なし）
-  tools/              データ検証の開発用入口
-  examples/           実行可能な構造検証例（燃焼用機構ではない）
+  CMakeLists.txt      Fortranビルド
+  src/fortran/        計算本体（NSE/Python依存なし）
+  reference/python/   旧Python版：入力変換・比較検証用として保全
+  tools/              機構入力変換・オフライン検証のみ
+  examples/           構造検証例とFortran反応器入力例
   tests/              回帰テスト
   docs/               移行計画・各段階の完了条件
 ```
@@ -29,6 +31,11 @@ R0の内部YAMLは**Cantera YAMLではない**。構造だけを検証する形�
 R1の外部入力は別の`import_cantera`を使用する。対応範囲は下記のR1仕様を参照。
 
 ## 実行・検証
+
+通常の計算は[Fortran版のビルド・実行手順](docs/REACTORS.md)を使用する。
+以下は入力構造の検査のみ。以前のPython版は`reference/python/`へ移し、
+Fortran計算時には呼び出さない。旧`run_reactor.py`は比較専用の
+`run_reference_reactor.py`へ名称変更した。
 
 FrameWorkルートから、Windows（PowerShell）：
 
@@ -55,7 +62,8 @@ python3 -m unittest discover -s SolverLibrary/ReactingFlow/tests
 ## R1：外部入力・熱力学
 
 [R1仕様と実行手順](docs/THERMODYNAMICS.md)を追加した。
-NASA-7/9物性、混合気体EOS、温度復元、基準量変換は独立Python実装。
+NASA-7/9物性、混合気体EOS、温度復元、基準量変換はFortran実装。
+以前のPython版はオフライン照合用に残す。
 入力アダプターと照合テストにのみCantera 3.2.0を使用する。
 R2の反応速度評価は[速度仕様](docs/KINETICS.md)を参照。
 R3の定容・定圧断熱反応器、保存検査、着火比較は[反応器仕様と実行手順](docs/REACTORS.md)を参照。

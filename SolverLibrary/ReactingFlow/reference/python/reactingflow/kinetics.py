@@ -1,4 +1,4 @@
-"""Independent neutral ideal-gas rate evaluation in mol, m, s, K.
+"""Offline reference rate evaluation and input conversion in mol, m, s, K.
 
 Cantera objects are consumed only by compile_kinetics, never by evaluate.
 No chemical integration, density clipping or additional CFD energy source here.

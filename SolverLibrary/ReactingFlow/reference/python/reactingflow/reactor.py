@@ -1,4 +1,4 @@
-"""Adiabatic homogeneous SI reactors; independent chemistry, SciPy BDF solver."""
+"""Offline SciPy reference reactor. Production reactor uses Fortran DVODE."""
 from dataclasses import dataclass
 import math
 

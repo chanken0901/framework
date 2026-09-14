@@ -1,4 +1,4 @@
-"""Cantera-assisted INPUT adapter. Cantera is not used in property evaluation.
+"""Offline Cantera INPUT adapter. Not linked to the Fortran solver.
 
 Supported reactions are compiled to independent SI rate evaluators at import.
 """

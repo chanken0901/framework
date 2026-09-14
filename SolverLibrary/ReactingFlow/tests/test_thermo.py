@@ -4,7 +4,7 @@ import tempfile
 import unittest
 import math
 
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'reference/python'))
 from reactingflow.thermo import NASA, IdealGas, R
 from reactingflow.mechanism import MechanismError
 from reactingflow.importer import import_cantera

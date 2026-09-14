@@ -1,4 +1,4 @@
-"""Validated neutral-gas stoichiometry, not a reaction-rate/thermo evaluator.
+"""Offline validated neutral-gas stoichiometry, not a production solver.
 
 This internal topology contract is deliberately not advertised as Cantera YAML.
 Unknown fields are rejected so unsupported kinetics cannot silently disappear.

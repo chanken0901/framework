@@ -8,7 +8,7 @@ import math
 import tempfile
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'reference/python'))
 from reactingflow.importer import import_cantera
 from reactingflow.mechanism import MechanismError
 from reactingflow.reactor import integrate
@@ -130,7 +130,7 @@ class ReactorTests(unittest.TestCase):
 
     def test_cli(self):
         root = Path(__file__).resolve().parents[1]
-        command = [sys.executable, str(root/'tools/run_reactor.py'), str(self.path),
+        command = [sys.executable, str(root/'tools/run_reference_reactor.py'), str(self.path),
                    '--temperature', '1000', '--mass-fractions', '{"H2":0.1,"O2":0.9}',
                    '--end-time', '1e-7']
         run = subprocess.run(command, capture_output=True, text=True)

@@ -1,6 +1,8 @@
 # R2 詳細反応の瞬時速度評価
 
-独立Python実装。Canteraは入力変換とテストにのみ使用し、速度評価時には呼び出さない。
+計算本体はFortranの`mod_rf_kinetics`。Canteraは入力変換とテストにのみ使用する。
+以前のPython版は`reference/python/`に検証用として保全。
+通常の計算は[Fortran版手順](REACTORS.md)を参照。以下のPython例はオフライン照合用。
 この段階では反応ODEの時間積分、着火、CFD、MPI/OpenMP、GPUを実装していない。
 
 ## 対応範囲

@@ -5,7 +5,7 @@ import math
 import subprocess
 from unittest.mock import patch
 
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'reference/python'))
 from reactingflow.importer import import_cantera
 from reactingflow.kinetics import compile_kinetics, Kinetics, Reaction, Rate, Arrhenius
 from reactingflow.thermo import IdealGas, NASA

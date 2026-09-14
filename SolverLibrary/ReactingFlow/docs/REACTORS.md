@@ -1,103 +1,138 @@
-# R3：硬い反応系の0次元積分
+# R1〜R3：Fortran計算本体と0次元反応器
 
-独立ReactingFlowの**Python CPU基準実装**。空間格子、流入出、壁熱伝達、
-衝撃波、MPI、GPUは扱わない。既存NSEの実行環境やcase.yamlを変更しない。
-Canteraは機構の入力と照合テストに使用し、時間発展中の反応速度・物性は
-R1/R2の独立実装で計算する。対応機構の範囲は[KINETICS.md](KINETICS.md)と同じ。
+**計算本体はFortran**。NASA物性、混合気体EOS、温度反転、基準量変換、
+詳細反応速度、定容／定圧の時間積分を`src/fortran/`で実装する。
+NSE、GPE、Pythonインタープリターへの実行時依存はない。
+空間離散化、流入出、壁熱伝達、衝撃波、MPI、CUDAはまだ未実装。
 
-## 方程式と単位
+## 構成と依存
 
-均一・閉鎖・断熱・中性理想混合気体。全量SI、質量分率Y、時刻s、温度K、
-圧力Pa、密度kg/m³。初期T/P/Yから密度を求める。
+- `reactingflow`：Fortran静的ライブラリ。種数・反応数は可変長。
+- `rf_reactor`：Fortranの0次元計算実行ファイル。
+- `rf_probe`：Fortran物性／速度照合用、`rf_unit`：Fortran単体検証。
+- `tools/export_mechanism.py`：Cantera YAMLをSI機構データへ変換する前処理のみ。
+  NSE/GPEの環境生成と同様にPythonを使用するが、計算時には不要。
+- `reference/python/`：以前のPython実装を削除せず検証用に分離。
+  `run_reference_reactor.py`は比較用で、通常の計算入口ではない。
 
-- 共通：`dY_s/dt = omega_s / rho`（omegaはkg/m³/s）。
-- `constant_volume`：rho固定、`dT/dt = -sum(e_s omega_s)/(rho cv)`。
-  圧力はEOSで変化する。比内部エネルギーeを保存検査する。
-- `constant_pressure`：p固定、rhoはEOSで変化し、
-  `dT/dt = -sum(h_s omega_s)/(rho cp)`。比エンタルピーhを保存検査する。
-  閉鎖系の質量一定に対し体積が変化する理想化（流通反応器ではない）。
+時間積分は[Modern Fortran DVODE](https://github.com/jacobwilliams/dvode)の
+固定commit `59d2eedd1410a4bd6c196c24d08f95a7c20565c0`。
+可変刻み・次数1〜5のBDF（MF=22、数値差分の密Jacobian、陰的Newton）。
+BLAS/LINPACKのFortran実装も含む。Python/SciPyを呼び出すラッパーではない。
+初回CMake構成時に取得し、実行時にはネットワーク不要。
+オフラインでは同commitのソースを用意して
+`-DRF_DVODE_SOURCE_DIR=/absolute/path/to/dvode`を指定する。
+取得先の`LICENSE.md`はBSD-3-Clause。バイナリ配布時もライセンス文書を添付する。
+上流は開発中と明記しているため固定版と回帰テストを維持し、無検証で更新しない。
 
-`e_s=(h_molar,s-RT)/M_s`、`h_s=h_molar,s/M_s`。
-生成エネルギーを含むため、R2のheat_releaseを別途加算しない。
-CFDの全エネルギー式と、この温度ODEは同じ形式ではない。
+## ビルド・実行（FrameWorkルート）
 
-## 積分・失敗時の扱い
+Windows（PowerShell）：gfortran、CMake、NinjaをPATHへ登録する。
+Pythonは機構変換だけに必要。初回はGitとネットワーク接続も必要。
 
-SciPy 1.17.1の可変次数・可変刻みBDF、密な数値差分Jacobianと陰的Newton解法。
-解析Jacobian、疎行列最適化、自作Fortran積分器は未実装。
-状態は全化学種YとT。局所誤差の尺度は`atol_i + rtol*abs(state_i)`。
-Yの絶対許容誤差とTの絶対許容誤差を分ける。
+```powershell
+cmake -S SolverLibrary/ReactingFlow -B build/reactingflow -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/reactingflow --parallel 4
+ctest --test-dir build/reactingflow --output-on-failure
+python -m pip install Cantera==3.2.0 PyYAML
+$mechanism = python -c "import cantera; from pathlib import Path; print(Path(cantera.__file__).parent/'data/h2o2.yaml')"
+python SolverLibrary/ReactingFlow/tools/export_mechanism.py "$mechanism" build/reactingflow/h2o2.rf
+.\build\reactingflow\rf_reactor.exe build/reactingflow/h2o2.rf SolverLibrary/ReactingFlow/examples/reactor_h2_air.in build/reactingflow/reactor_cv.csv
+```
 
-Newtonと数値Jacobianの**試行値のみ**、負のYを0として和で割った組成で
-RHSを評価する。これは物理領域外の数値的延長であり、解ベクトルへ書き戻さない。
-負の試行値を使った評価回数を`negative_trial_rhs_calls`に記録する。
-受理ステップは元のYのまま検査し、負値（微小値も含む）、非有限値、
-組成和の誤差>1e-12、NASA適用範囲外なら停止する。黙ったクリップや正規化はしない。
-**BDFは正値性保証法ではない**。検査で停止した場合は許容誤差・max_stepを小さくして
-再検証する。任意の機構・初期条件で必ず計算できるという保証ではない。
-NASA範囲外のNewton試行も停止し、外挿しない。
+Linux（bash）：gfortran、CMake、Ninja、Gitをインストールし、Pythonは仮想環境を使う。
 
-各受理ステップの保存残差を出力する：
+```bash
+cmake -S SolverLibrary/ReactingFlow -B build/reactingflow -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/reactingflow --parallel 4
+ctest --test-dir build/reactingflow --output-on-failure
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install Cantera==3.2.0 PyYAML
+mechanism=$(python -c "import cantera; from pathlib import Path; print(Path(cantera.__file__).parent/'data/h2o2.yaml')")
+python SolverLibrary/ReactingFlow/tools/export_mechanism.py "$mechanism" build/reactingflow/h2o2.rf
+./build/reactingflow/rf_reactor build/reactingflow/h2o2.rf SolverLibrary/ReactingFlow/examples/reactor_h2_air.in build/reactingflow/reactor_cv.csv
+```
 
-- `mass_sum_error`：max|sum(Y)-1|。
-- `element_relative_error`：元素モル量/mol kg⁻¹の初期値との差をmax(1,|初期値|)で割った最大値。
-- `energy_relative_error`：max|e-e0|またはmax|h-h0|を
-  `max(1 J/kg, |初期保存エネルギー|, cp0*T0)`で割った値。
+機構変換と計算結果は既存ファイルを上書きしない。再実行時は新しい出力名を指定する。
+既存の別構成のビルドディレクトリは流用せず、専用ビルド先を使用する。
+WindowsでgfortranのDLLが見つからない場合はコンパイラーのbinをPATHへ追加する。
+既存ResearchRunsへの自動コピーやrun/postprocess統合はR7で行い、今回は切り替えない。
 
-元素残差>1e-8、エネルギー残差>max(100*rtol,1e-7)でも停止する。
-これは異常検出であり、許容誤差への収束検証を代替しない。
-ステップ数上限・BDF失敗を成功扱いしない。出力ファイルは完走した場合だけ新規作成する。
+## 入力と方程式
 
-## 実行手順
+第1引数は機構、第2引数はFortran namelistと組成、第3引数は出力CSV。
+入力例は`examples/reactor_h2_air.in`。
+namelist `/reactor/`の後に**機構の種順序に従う全質量分率**を1行で書く。
+サンプルはCantera 3.2.0のh2o2.yaml専用。別機構へ同じ組成行を流用しない。
+合計1、非負、種数一致が必要。一般Cantera YAMLをFortranへ直接読ませない。
+変換済み機構は`RFMECH1`識別子、入力／canonicalのSHA256、種と反応の順序を保持する。
 
-FrameWorkルートで実行する。開発用`run_reactor.py`を入口とする。
-R7で共通run/postprocessへ統合予定であり、まだResearchRunsへ自動コピーしない。
-機構ファイルはCantera同梱データを直接参照できる。機構ファイルの再配布は不要。
+| namelist変数 | 既定値 | 意味 |
+|---|---|---|
+| mode | 'constant_volume' | 定圧は'constant_pressure' |
+| temperature / pressure | 1000 / 101325 | 初期K / Pa |
+| end_time | 0.001 | 終了時刻s |
+| rtol | 1e-7 | 相対誤差（1e-12〜1e-2） |
+| atol_species / atol_temperature | 1e-14 / 1e-6 | 質量分率 / Kの絶対誤差 |
+| max_step / max_steps | 0.001 / 100000 | 最大刻みs / 最大ステップ数 |
+| ignition_rise | 400 | 着火判定の初期温度からの上昇K |
 
-Windows（PowerShell、使用するPython仮想環境内）：
+閉鎖・断熱の理想混合気体、全量SI。
+`dY_s/dt=omega_s/rho`、定容はrho固定で
+`dT/dt=-sum(e_s*omega_s)/(rho*cv)`、定圧はp固定で
+`dT/dt=-sum(h_s*omega_s)/(rho*cp)`。
+`h_s=h_molar,s/M_s`、`e_s=(h_molar,s-RT)/M_s`。
+生成エネルギーを含むため、診断用heat_releaseを別に加算しない。
+定圧は閉鎖系の体積が変化する理想化で、流通反応器ではない。
+
+初期最大質量分率の1種を従属変数として、`Y_dep=1-sum(Y_other)`で復元する。
+積分状態はTと残りN-1種。これは出力の正規化ではなく、質量保存拘束の消去。
+Newton試行のみ負値を0にして正規化した組成でRHSを評価する。
+受理解をクリップせず、微小値も含む負のY、NASA範囲外、非有限値はエラー。
+BDFは正値性保証法ではない。任意の条件で完走できる保証はなく、失敗時は
+許容誤差とmax_stepを小さくして再検証する。試行温度の外挿もしない。
+
+## 出力・保存検査
+
+CSVは全受理時刻（不等間隔）の`time,temperature,pressure,density,Y_...`。
+コメント行に機構ハッシュ、許容誤差、着火時刻、保存残差、積分統計を記録する。
+着火時刻はT0+ignition_riseへの初回上向き交差をDVODE補間で求める。
+未到達は`-1`。最大dT/dt時刻とは異なる。
+
+- 質量残差：max|sum(Y)-1|、許容1e-12。
+- 元素残差：元素モル量/mol kg⁻¹の初期値との差をmax(1,|初期値|)で割った最大値、許容1e-8。
+- エネルギー残差：定容eまたは定圧hの初期値との差を
+  max(1 J/kg,|初期保存量|,cp0*T0)で割った最大値、許容max(100*rtol,1e-7)。
+
+計算中にCSVへ順次出力するため、異常終了では部分結果が残る。
+**末尾の`# SUCCESS`と正常終了コードがあるものだけ完走結果**として扱う。
+画面の`[OK] Fortran reactor completed`も完走時のみ。
+閾値判定は収束検証の代替ではない。h2o2.yamlの1000 K切替には約0.14 J/kgの
+エンタルピー不連続があり、相対エネルギー誤差は約9e-8で頭打ちになる。
+
+## 比較テスト
+
+FortranのみのCTestはPythonなしで動く。Cantera照合を含める場合は追加で以下を実行する。
+
+Windows：
 
 ```powershell
 python -m pip install -r SolverLibrary/ReactingFlow/requirements-reference.txt
-$mechanism = python -c "import cantera; from pathlib import Path; print(Path(cantera.__file__).parent/'data/h2o2.yaml')"
-python SolverLibrary/ReactingFlow/tools/run_reactor.py "$mechanism" --temperature 1000 --pressure 101325 --mass-fractions '{"H2":0.0285,"O2":0.2264,"N2":0.7451}' --end-time 0.001 --mode constant_volume --output reactor_cv.json
+$env:RF_FORTRAN_BUILD = (Resolve-Path build/reactingflow).Path
 python -m unittest discover -s SolverLibrary/ReactingFlow/tests -v
 ```
 
-Linux（bash、使用するPython仮想環境内）：
+Linux：
 
 ```bash
-python3 -m pip install -r SolverLibrary/ReactingFlow/requirements-reference.txt
-mechanism=$(python3 -c "import cantera; from pathlib import Path; print(Path(cantera.__file__).parent/'data/h2o2.yaml')")
-python3 SolverLibrary/ReactingFlow/tools/run_reactor.py "$mechanism" --temperature 1000 --pressure 101325 --mass-fractions '{"H2":0.0285,"O2":0.2264,"N2":0.7451}' --end-time 0.001 --mode constant_volume --output reactor_cv.json
-python3 -m unittest discover -s SolverLibrary/ReactingFlow/tests -v
+python -m pip install -r SolverLibrary/ReactingFlow/requirements-reference.txt
+export RF_FORTRAN_BUILD="$PWD/build/reactingflow"
+python -m unittest discover -s SolverLibrary/ReactingFlow/tests -v
 ```
 
-定圧は`--mode constant_pressure --output reactor_cp.json`に変更する。
-出力が既にある場合は上書きしないため、新しい名前を指定する。
-組成は**質量分率**（省略種は0、合計1必須）。モル比2:1:3.76をそのまま入力しない。
-数値設定の既定値はrtol=1e-7、atol-species=1e-14、atol-temperature=1e-6 K。
-`--max-step`はs、既定は終了時刻、`--max-steps`は既定100000。
-`--rtol 1e-9 --atol-species 1e-16 --atol-temperature 1e-8`で収束を比較できる。
-
-JSONには機構ハッシュ、設定、種順序、全受理時刻とT/P/rho/Y、保存残差、
-RHS/Jacobian/LU回数、着火遅れを格納する。等間隔出力ではない。
-着火遅れは**初めてT0+400 Kを上向きに越える時刻**。
-BDFの補間多項式で求根する。`--ignition-rise`で温度上昇を変更できる。
-未到達はnull。最大dT/dt時刻やOHピーク時刻とは異なるので比較条件を揃える。
-
-## 検証範囲と注意点
-
-- Cantera 3.2.0同梱h2o2.yaml、水素/空気H2:O2:N2=2:1:3.76（モル比）、
-  1000 K・101325 Pa・1 ms：定容/定圧のT/P/rho/Y履歴と着火時刻を照合。
-- rtol=1e-5から1e-9への厳格化で着火時刻の誤差減少を検査。
-- 質量・元素・エネルギー、無反応不変状態、解析解を持つ高速一次反応、
-  不正入力・ステップ上限・負の受理状態の拒否を検査。
-- 同機構のNASA切替点1000 Kでは初期組成のhに約-0.139543 J/kgの不連続があり、
-  相対エネルギー残差が約9e-8で頭打ちになる。機構の係数は変更しない。
-  1100 K開始の滑らかな範囲でも別途エネルギー誤差の収束を確認する。
-- 大規模炭化水素機構の着火、長時間平衡、全圧力依存形式の時間発展、
-  デトネーションの検証はこのR3テストの範囲外。速度単体のR2検証とは区別する。
-
-理論・積分器の参照：
-[Cantera定圧理想気体反応器](https://www.cantera.org/3.2/reference/reactors/ideal-gas-constant-pressure-reactor.html)、
-[SciPy BDF](https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.BDF.html)。
+`RF_FORTRAN_BUILD`未指定ではFortran照合がskipされる。skipを検証済みと扱わない。
+水素/空気の着火履歴、保存・許容誤差収束、NASA7/9、GRI30の速度、第三体、
+Lindemann/Troe/SRI、PLOG、Chebyshevを照合する。
+今回の実機検証はWindows/gfortran。Linuxコマンドは併記しているがLinux実行は未検証。
+MPI/CUDA、反応流CFD、デトネーションは次段階であり、今回の完成範囲に含まない。
