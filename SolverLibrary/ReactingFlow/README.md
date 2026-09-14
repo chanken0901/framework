@@ -1,6 +1,6 @@
 # ReactingFlow：独立反応流ライブラリ
 
-状態：**R0基盤・R1熱力学・R2反応速度評価を実装済み。時間積分とCFDは未完成。**
+状態：**R0基盤・R1熱力学・R2反応速度・R3の0次元BDF反応器を実装済み。CFDは未実装。**
 従来NSEのStage 0〜10とは別の移行段階で管理する。
 
 単成分NSE（熱揺らぎ拡張を含む）に依存しないライブラリとして再構築する。
@@ -58,4 +58,5 @@ python3 -m unittest discover -s SolverLibrary/ReactingFlow/tests
 NASA-7/9物性、混合気体EOS、温度復元、基準量変換は独立Python実装。
 入力アダプターと照合テストにのみCantera 3.2.0を使用する。
 R2の反応速度評価は[速度仕様](docs/KINETICS.md)を参照。
-化学時間発展・CFD・GPUはまだ新ライブラリに未実装。
+R3の定容・定圧断熱反応器、保存検査、着火比較は[反応器仕様と実行手順](docs/REACTORS.md)を参照。
+CFD・MPI・GPUはまだ新ライブラリに未実装。

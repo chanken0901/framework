@@ -1,0 +1,4 @@
+# Python reference evaluator, reactor, and Cantera comparison tests (R1-R3).
+Cantera==3.2.0
+SciPy==1.17.1
+PyYAML>=6.0,<7
