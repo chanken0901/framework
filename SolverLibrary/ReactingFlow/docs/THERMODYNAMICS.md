@@ -20,7 +20,8 @@
 未対応のthermoモデル、非理想気体、荷電種は拒否する。
 反応物・生成物・可逆フラグをR0契約で検査し、反応形式を列挙する。
 速度係数や輸送情報はCanteraが展開したcanonical YAMLに保持する。
-**保持は実行対応ではない。反応速度APIはまだなく、どの反応も時間発展しない。**
+R2以降は対応形式を独立した速度評価用データへコンパイルし、未対応形式を拒否する。
+**速度評価は時間発展ではない。化学ODEの積分は未実装。** [R2仕様](KINETICS.md)参照。
 選択phase以外の相をCFDへ取り込むものではない。
 
 元ファイルのSHA-256と、展開済み機構のSHA-256を別々に記録する。
@@ -40,6 +41,7 @@ python SolverLibrary/ReactingFlow/tools/inspect_thermo.py path/to/mechanism.yaml
 
 PowerShellでもJSON引数を単一引用符で囲む。phase名が必要なら`--phase 名前`を指定。
 出力は画面のJSONのみ。機構ファイルやケースを更新しない。
+R2の瞬時反応速度も表示する場合は`--rates`を追加する。
 `inspect_thermo.py`は開発段階の物性検証ツールで、計算のrun/postprocess入口ではない。
 
 ## 検証

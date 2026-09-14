@@ -1,12 +1,13 @@
 """Cantera-assisted INPUT adapter. Cantera is not used in property evaluation.
 
-Reactions are retained and classified but cannot yet be executed by ReactingFlow.
+Supported reactions are compiled to independent SI rate evaluators at import.
 """
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
 from .mechanism import MechanismError, validate_topology
 from .thermo import NASA, IdealGas
+from .kinetics import Kinetics, compile_kinetics
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,7 @@ class ImportedMechanism:
     canonical_yaml: str
     source_sha256: str
     canonical_sha256: str
+    kinetics: Kinetics
 
 
 def import_cantera(path, phase=None):
@@ -49,6 +51,8 @@ def import_cantera(path, phase=None):
     # Exclude generated wall-clock metadata from the reproducibility hash.
     canonical = '\n'.join(line for line in solution.write_yaml(header=False).splitlines()
                           if not line.startswith('date:')) + '\n'
-    return ImportedMechanism(IdealGas(topology.species, topology.molar_masses, tuple(thermo)),
+    gas = IdealGas(topology.species, topology.molar_masses, tuple(thermo))
+    kinetics = compile_kinetics(gas, solution)
+    return ImportedMechanism(gas,
         topology, tuple(r.reaction_type for r in solution.reactions()), canonical,
-        hashlib.sha256(source).hexdigest(), hashlib.sha256(canonical.encode()).hexdigest())
+        hashlib.sha256(source).hexdigest(), hashlib.sha256(canonical.encode()).hexdigest(), kinetics)

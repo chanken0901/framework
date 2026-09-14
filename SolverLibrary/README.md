@@ -10,7 +10,7 @@ NSEとGPEの再利用可能なソルバー本体を管理するリポジトリ�
 |---|---|---|
 | `NSE` | 圧縮性Navier-Stokesソルバー | [`NSE/README.md`](NSE/README.md) |
 | `GPE` | Gross-Pitaevskiiソルバー | [`GPE/gp3d/README.md`](GPE/gp3d/README.md) |
-| `ReactingFlow` | 独立反応流ライブラリ（R0基盤・R1熱力学、CFD未移植） | [状態・移行計画](ReactingFlow/README.md) |
+| `ReactingFlow` | 独立反応流ライブラリ（R0基盤・R1熱力学・R2反応速度、CFD未移植） | [状態・移行計画](ReactingFlow/README.md) |
 | `Shared` | 複数ソルバーから利用する共通資産 | 各マニフェストから参照 |
 
 ## 標準運用
