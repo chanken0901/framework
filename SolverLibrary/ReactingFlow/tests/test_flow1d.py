@@ -166,6 +166,49 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(d['transport_model'],'constant')
         self.assertEqual(values[-1,1],.00004)
 
+    def test_reconstruction_configuration_and_default(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'N2:1';y=gas.Y.tolist()
+        controls="nx=12,end_time=0.00004,left_temperature=1300,right_temperature=1100,write_every=1"
+        baseline,d=self.run_flow(self.h2,controls,y,y)
+        explicit,_=self.run_flow(self.h2,controls+",reconstruction='first_order'",y,y)
+        self.np.testing.assert_array_equal(explicit,baseline)
+        self.assertEqual(d['reconstruction'],'first_order')
+        self.run_flow(self.h2,"reconstruction='unknown'",y,y,success=False)
+
+    def test_muscl_reacting_transport_conservation(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'H2:2,O2:1,N2:3.76';y=gas.Y.tolist()
+        values,d=self.run_flow(self.h2,"nx=12,length=1,end_time=0.00004,max_dt=0.0000025,"+
+            "write_every=100000,chemistry=.true.,reconstruction='muscl',"+
+            "left_bc='reflecting',right_bc='reflecting',left_temperature=1300,right_temperature=1100,"+
+            "transport_model='constant',viscosity=0.1,thermal_conductivity=100,mass_diffusivity=0.1",y,y)
+        self.assertEqual(d['reconstruction'],'muscl')
+        self.assertGreater(values[:,6].min(),0)
+        self.assertGreaterEqual(values[:,7:].min(),0)
+        self.np.testing.assert_allclose(values[:,7:].sum(1),1,atol=1e-12)
+        for key in ('mass_error','momentum_error','energy_error','element_error'):
+            self.assertLess(float(d[key]),1e-8)
+        self.assertEqual(values[-1,1],.00004)
+
+    def test_muscl_sod_accuracy(self):
+        ct=self.ct
+        species=ct.Species('AR',{'Ar':1})
+        species.thermo=ct.NasaPoly2(1e-4,1e5,101325,[1000,3.5,0,0,0,0,0,0,3.5,0,0,0,0,0,0])
+        gas=ct.Solution(thermo='ideal-gas',kinetics='gas',species=[species],reactions=[])
+        rmix=ct.gas_constant/gas.mean_molecular_weight
+        errors={}
+        with tempfile.TemporaryDirectory() as tmp:
+            source=Path(tmp)/'ideal.yaml';gas.write_yaml(source)
+            for method in ('first_order','muscl'):
+                values,d=self.run_flow(source,f"nx=80,reconstruction='{method}',end_time=0.2,"+
+                    "max_dt=0.01,write_every=100000,"+
+                    f'left_temperature={1/rmix},right_temperature={.1/.125/rmix},left_pressure=1,right_pressure=0.1',
+                    [1.],[1.])
+                final=values[values[:,0]==values[-1,0]]
+                errors[method]=abs(final[:,3]-self.sod_density((final[:,2]-.5)/.2)).mean()
+                self.assertGreater(final[:,6].min(),0)
+                self.assertLess(float(d['energy_error']),1e-10)
+        self.assertLess(errors['muscl'],.7*errors['first_order'])
+
     def test_invalid_transport_rejected(self):
         gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'N2:1';y=gas.Y.tolist()
         for controls in ["transport_model='unknown'", "viscosity=1", "mass_diffusivity=1",\

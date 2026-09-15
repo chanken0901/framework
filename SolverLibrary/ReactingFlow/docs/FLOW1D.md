@@ -1,6 +1,6 @@
-# R4a/b：1次元流体・詳細反応・輸送の結合
+# R4a/b/c：1次元流体・詳細反応・輸送の結合
 
-R4aのEuler基盤とR4bの定係数輸送を実装した。
+R4aのEuler基盤、R4bの定係数輸送、R4cのMUSCL再構築を実装した。
 **Fortran、CPU逐次実行、1次元・一様直交格子の基準計算**。
 R4全体の完成ではない。温度・組成依存の分子輸送、2D/3D、ノズル、MPI/OpenMP/CUDA、
 CJ/ZNDデトネーション検証、旧反応流CFDとの全体同値検証は残っている。
@@ -12,6 +12,7 @@ CJ/ZNDデトネーション検証、旧反応流CFDとの全体同値検証は�
 - `chemistry=.false.`による非反応多成分Euler計算。
 - `chemistry=.true.`による、R2で対応する詳細機構を使う反応Euler計算。
 - `transport_model='constant'`による粘性・熱伝導・種拡散。反応の有無とは独立。
+- `reconstruction='muscl'`による対流の空間2次再構築。既定は従来の1次精度。
 - 両端周期、左右別々の鏡像壁／ゼロ勾配流出。
 - 初期状態、指定ステップ間隔、最終時刻のCSV出力と保存量監視。
 
@@ -22,7 +23,8 @@ CJ/ZNDデトネーション検証、旧反応流CFDとの全体同値検証は�
 一般的な定比熱比式ではなくNASA熱力学からT・p・音速を復元する。
 
 流束は旧`mod_mc_euler_flux`と同じRusanov式を独立状態配列／EOSへ移した。
-空間は区分一定の**1次精度**、流体時間積分はSSPRK3。
+空間は既定で区分一定の**1次精度**。MUSCLを選択すると滑らかな領域で2次精度。
+流体時間積分はSSPRK3。
 化学は各セル定容DVODE BDF、Strang分割（化学dt/2→流体dt→化学dt/2）。
 この分割の形式的時間精度は2次だが、衝撃波や硬い反応では次数低下があり得る。
 時間・空間・化学許容誤差への収束を個別に確認する。
@@ -31,7 +33,7 @@ CJ/ZNDデトネーション検証、旧反応流CFDとの全体同値検証は�
 ODE温度との差が`max(1e-3 K,100*chemistry_rtol*T)`を超えたら停止。
 診断用反応熱の別加算はしない。各セル元素残差も検査する。
 圧縮性多成分の接触面では保存型混合による圧力誤差が生じ得る。
-高次再構築、低散逸流束、圧力平衡保持処理はまだない。
+MUSCL以外の高次再構築、低散逸流束、圧力平衡保持処理はまだない。
 
 輸送無効時の刻みは`min(max_dt,終了までの時間,CFL*dx/max(|u|+c))`。
 第1化学半ステップ後と各流体段の音速を再確認し、CFL超過時は元の状態から
@@ -79,7 +81,7 @@ F_diff(energy) = -u_face*tau - kappa*(T_R-T_L)/dx + sum(h_s(T_face)*J_s)
 面のrho/u/T/Yは左右算術平均、勾配は隣接セルの差分。輸送の空間離散化は2次。
 最後の1種で丸め誤差のみを閉じてsum(J)=0とする（濃度のクリップではない）。
 h_sには生成エンタルピーを含み、種拡散に伴うエネルギー輸送を省略しない。
-対流は引き続き空間1次のRusanovであり、全体が空間2次になったわけではない。
+対流の既定値は空間1次のRusanov。滑らかな解の空間2次計算には下記のMUSCLを選ぶ。
 
 輸送は流体と同じSSPRK3の各段に入る。化学とのStrang分割は変更しない。
 刻みの保守的な目安は次の通りで、max_dtと終了時刻でも制限する。
@@ -112,6 +114,48 @@ Linuxでは：
 出力コメントにモデルと全輸送係数を記録する。境界補正した保存検査には輸送流束も含む。
 参考：[Canteraの種拡散流束・補正速度の説明](https://www.cantera.org/stable/reference/onedim/governing-equations.html)。
 本実装の共通定係数Fickモデルを、Canteraの混合平均輸送モデルと同一とは扱わない。
+
+## R4c：MUSCL再構築
+
+`&flow1d`に次を追加する。省略すれば従来の結果を維持する。
+
+```fortran
+ reconstruction='muscl', ! 'first_order' (default) or 'muscl'
+```
+
+Riemann流束はどちらもRusanov。`muscl`はT・p・u・全質量分率Yを原始変数として、
+MC（monotonized central）リミター付きの左右面状態を作る。
+最大質量分率の種を従属傾斜とし、種の傾斜和を0にする。
+その後、全種共通の縮小係数で左右面のYを隣接セルの最小・最大の範囲に制限する。
+セル平均の濃度をクリップ・再正規化する方式ではない。
+面上の保存変数はNASA熱力学とEOSで生成し、単一の共有面流束でセルを更新する。
+温度・圧力もMC制限するが、多成分系全体のTVD性・更新後の正値性を保証するものではない。
+衝撃波・極値付近ではリミターが作用し、局所的に次数が下がる。
+
+対流CFLの波速はセル中心だけでなく左右再構築面も含めて評価し、SSPRK3各段で再確認する。
+鏡像境界では内側の再構築面状態の運動量を反転、周期境界では周期隣接セルを参照する。
+輸送項は引き続きセル中心間の2次差分であり、対流の再構築とは独立。
+反応の有無、輸送の有無、既存の3種類の境界と組み合わせられる。
+WENO/KEEPの移植やCJ/ZND検証が済んだという意味ではない。
+
+Fortran APIでは末尾の任意引数`reconstruction`で指定する。
+`flow_timestep`を単独でMUSCLに使う場合は`left_bc`と`right_bc`も渡す（省略時はoutflow）。
+`advance_flow`と実行プログラムは指定された境界を刻み評価にも渡す。
+
+反応＋輸送＋MUSCLの例は`examples/flow1d_h2_muscl.in`。
+下記の準備済み機構を使い、Windows PowerShellでは：
+
+```powershell
+.\build\reactingflow\rf_flow1d.exe build/reactingflow/h2o2_flow.rf SolverLibrary/ReactingFlow/examples/flow1d_h2_muscl.in build/reactingflow/h2_muscl.csv
+```
+
+Linux bashでは：
+
+```bash
+./build/reactingflow/rf_flow1d build/reactingflow/h2o2_flow.rf SolverLibrary/ReactingFlow/examples/flow1d_h2_muscl.in build/reactingflow/h2_muscl.csv
+```
+
+CSVコメントの`reconstruction`に採用方式を記録する。未知の方式名は拒否する。
 
 ## ビルド・実行
 
@@ -160,6 +204,7 @@ Fortran namelist `&flow1d ... /`の後に左右の全質量分率を各1行、�
 | left/right_temperature, pressure, velocity | 各側のK、Pa、m/s |
 | left_bc, right_bc | periodic / reflecting / outflow |
 | chemistry | .true.で反応、既定.false. |
+| reconstruction | first_order（既定）/ muscl（MC制限付き空間2次） |
 | end_time, max_dt, cfl | 終了s、最大刻みs、0<CFL<=0.5 |
 | max_steps, write_every | 受理ステップ上限、書き出し間隔（正の整数） |
 | chemistry_rtol | 化学相対誤差、既定1e-9 |
@@ -185,9 +230,12 @@ R4bでは粘性応力・粘性仕事・Fourier熱流束・種エンタルピー�
 周期熱／種拡散の正弦波減衰と空間2次収束、拡散による刻み制限、
 反応＋輸送の保存、輸送係数0でのEuler版との一致、不正係数の拒否を検証した。
 正弦波の解析解比較は輸送演算子を単独で検証し、Rusanovの数値拡散を混ぜていない。
+R4cでは滑らかな周期組成波・密度波移流のセル平均厳密解に対する32/64/128セルの2次収束、
+Sod厳密解に対する同一格子での1次精度との比較、面の種範囲・総和、周期／壁の保存、
+反応＋輸送＋MUSCLの保存、既定／明示first_orderの完全一致、不正方式の拒否を検証した。
 Sod参考：[Clawpack Euler Riemann問題](https://www.clawpack.org/riemann_book/html/Euler_approximate.html)。
 同梱窒素ショック例はNASAの温度依存比熱であり、定比熱Sod厳密解とは別物。
 
-R4残作業：旧CFDとの全体同値検証、分子輸送モデルと境界の拡充、高次・頑健性検証、
+R4残作業：旧CFDとの全体同値検証、分子輸送モデルと境界の拡充、より高次・頑健性検証、
 ノズル／一般座標、1D反応波のCJ速度・ZND構造・格子／分割誤差の検証。
 この確認が済むまではR5（並列化）完了へ進めない。

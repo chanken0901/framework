@@ -6,6 +6,7 @@ program main_rf_flow1d
   type(rf_mechanism) :: m
   type(rf_transport) :: transport
   character(16) :: transport_model='none'
+  character(16) :: reconstruction='first_order'
   real(dp) :: viscosity=0,bulk_viscosity=0,thermal_conductivity=0,mass_diffusivity=0
   character(2048) :: mechanism_file,input_file,output_file
   character(16) :: left_bc='outflow',right_bc='outflow'
@@ -22,7 +23,7 @@ program main_rf_flow1d
   namelist /flow1d/ nx,length,interface_x,end_time,cfl,max_dt,max_steps,write_every,left_bc,right_bc, &
     left_temperature,left_pressure,left_velocity,right_temperature,right_pressure,right_velocity,chemistry, &
     chemistry_rtol,chemistry_atol_species,chemistry_atol_temperature,chemistry_max_steps, &
-    transport_model,viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity
+    transport_model,viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity,reconstruction
   call require(command_argument_count()==3,'Usage: rf_flow1d mechanism.rf flow.in output.csv')
   call get_command_argument(1,mechanism_file)
   call get_command_argument(2,input_file)
@@ -33,6 +34,7 @@ program main_rf_flow1d
   call require(ios==0,'Cannot open 1D input')
   read(io,nml=flow1d,iostat=ios)
   call require(ios==0,'Invalid flow1d namelist')
+  call validate_reconstruction(reconstruction)
   transport=rf_transport(viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity)
   call validate_transport(transport)
   call require(transport_model=='none'.or.transport_model=='constant','Unknown transport model')
@@ -69,6 +71,7 @@ program main_rf_flow1d
   call require(ios==0,'Cannot create output; existing files are never overwritten')
   write(out,'(a)') '# 1D conservative flow + optional transport + Strang/DVODE chemistry, SI units'
   write(out,'(a)') '# transport_model='//trim(transport_model)
+  write(out,'(a)') '# reconstruction='//trim(reconstruction)
   write(out,'(a,es25.16e3)') '# viscosity=',viscosity
   write(out,'(a,es25.16e3)') '# bulk_viscosity=',bulk_viscosity
   write(out,'(a,es25.16e3)') '# thermal_conductivity=',thermal_conductivity
@@ -110,10 +113,10 @@ program main_rf_flow1d
     end if
     if(time>=end_time) exit
     call require(step<max_steps,'Flow exceeded max_steps; output is incomplete')
-    dt=min(max_dt,end_time-time,flow_timestep(m,q,dx,cfl,transport))
+    dt=min(max_dt,end_time-time,flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc))
     call require(time+dt>time,'Flow timestep underflow')
     call advance_flow(m,q,dx,dt,cfl,left_bc,right_bc,chemistry,chemistry_rtol,chemistry_atol_species, &
-                      chemistry_atol_temperature,chemistry_max_steps,change,transport)
+                      chemistry_atol_temperature,chemistry_max_steps,change,transport,reconstruction)
     boundary=boundary+change
     time=time+dt; step=step+1
   end do

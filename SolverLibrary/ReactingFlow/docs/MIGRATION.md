@@ -20,7 +20,7 @@
 | R1 | 外部機構入力とNASA-7/9熱力学、基準量 | cp/h/s/g・混合気体EOS・温度反転を基準実装と照合 | 実装済み（中性理想気体、Cantera経由。反応形式は分類・保持のみ） |
 | R2 | 詳細反応速度 | 多段・可逆、平衡定数、第三体、falloff（Lindemann/Troe/SRI）、PLOG/Chebyshevを照合 | 実装済み（範囲・除外形式はKINETICS.md参照、時間積分なし） |
 | R3 | 硬い化学反応の0D積分 | 定容/定圧反応器、Jacobian、陰解法、許容誤差・保存・着火遅れの収束検証 | Fortran実装済み（DVODE BDF・数値Jacobian、水素/空気照合。制限はREACTORS.md） |
-| R4 | CPU反応流CFDの独立移植 | 旧非反応/一段反応結果を再現、化学と流体の結合誤差・輸送・境界・ノズル、1Dデトネーション検証 | 進行中：R4aの1D反応Euler、R4bの定係数輸送を実装。全体同値・分子輸送・ノズル・CJ/ZND等は残作業（FLOW1D.md） |
+| R4 | CPU反応流CFDの独立移植 | 旧非反応/一段反応結果を再現、化学と流体の結合誤差・輸送・境界・ノズル、1Dデトネーション検証 | 進行中：R4aの1D反応Euler、R4bの定係数輸送、R4cのMUSCL空間2次を実装。全体同値・分子輸送・ノズル・CJ/ZND等は残作業（FLOW1D.md） |
 | R5 | MPIペンシル/OpenMP | rank/thread変更で保存量・場が一致、可変種数で通信を検証 | 未実装 |
 | R6 | GPU常駐とMPI+CUDA | 可変種数・詳細反応のGPU戦略、CPU比較、実マルチGPU検証 | 未実装 |
 | R7 | 本運用移行・旧配置整理 | model/manifest切替、共通run/postprocess入口、学生手順、旧参照の廃止検査 | 未実装 |

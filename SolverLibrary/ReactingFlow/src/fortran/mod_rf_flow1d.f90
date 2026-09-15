@@ -6,7 +6,69 @@ module mod_rf_flow1d
   private
   public :: primitive_to_conserved,conserved_to_primitive,physical_flux,rusanov_flux
   public :: flow_timestep,advance_flow,transport_step,diffusion_rhs
+  public :: reconstruct_faces,validate_reconstruction
 contains
+  subroutine validate_reconstruction(method)
+    character(*), intent(in), optional :: method
+    if(present(method)) call require(method=='first_order'.or.method=='muscl','Unknown flow reconstruction')
+  end subroutine
+
+  pure elemental real(dp) function mc_slope(dl,dr) result(s)
+    real(dp), intent(in) :: dl,dr
+    s=0
+    if((dl>0.and.dr>0).or.(dl<0.and.dr<0)) s=sign(min(2*abs(dl),2*abs(dr),abs((dl+dr)/2)),dl)
+  end function
+
+  subroutine reconstruct_faces(m,q,left_bc,right_bc,qminus,qplus,method)
+    ! Primitive MC-MUSCL: [T,p,u,Y]. Only face states change; cell averages remain conservative.
+    type(rf_mechanism), intent(in) :: m
+    real(dp), intent(in) :: q(:,:)
+    character(*), intent(in) :: left_bc,right_bc
+    character(*), intent(in), optional :: method
+    real(dp), intent(out) :: qminus(:,:),qplus(:,:)
+    real(dp) :: v(size(m%species)+3,0:size(q,2)+1),s(size(m%species)+3)
+    real(dp) :: lo(size(m%species)),hi(size(m%species)),rho,a,theta,bound
+    integer :: i,j,ns,nx
+    call validate_reconstruction(method)
+    ns=size(m%species); nx=size(q,2)
+    call require(nx>=2.and.size(q,1)==ns+2,'Invalid reconstruction field')
+    call require(all(shape(qminus)==shape(q)).and.all(shape(qplus)==shape(q)),'Invalid face output shape')
+    call require((left_bc=='periodic').eqv.(right_bc=='periodic'),'Periodic boundary must be paired')
+    qminus=q; qplus=q
+    if(.not.present(method)) return
+    if(method=='first_order') return
+    do i=1,nx
+      call conserved_to_primitive(m,q(:,i),rho,v(3,i),v(1,i),v(2,i),a,v(4:,i))
+    end do
+    if(left_bc=='periodic') then
+      v(:,0)=v(:,nx); v(:,nx+1)=v(:,1)
+    else
+      v(:,0)=v(:,1); v(:,nx+1)=v(:,nx)
+      call require(left_bc=='outflow'.or.left_bc=='reflecting','Unknown reconstruction left boundary')
+      call require(right_bc=='outflow'.or.right_bc=='reflecting','Unknown reconstruction right boundary')
+      if(left_bc=='reflecting') v(3,0)=-v(3,1)
+      if(right_bc=='reflecting') v(3,nx+1)=-v(3,nx)
+    end if
+    do i=1,nx
+      s=mc_slope(v(:,i)-v(:,i-1),v(:,i+1)-v(:,i))
+      ! Close the largest species slope so sum(dY)=0. Do not perturb constant/absent species.
+      j=maxloc(v(4:,i),dim=1)+3
+      s(j)=0; s(j)=-sum(s(4:))
+      lo=min(v(4:,i-1),v(4:,i),v(4:,i+1))
+      hi=max(v(4:,i-1),v(4:,i),v(4:,i+1))
+      theta=1
+      do j=1,ns
+        if(abs(s(j+3))>0) then
+          bound=2*min(v(j+3,i)-lo(j),hi(j)-v(j+3,i))/abs(s(j+3))
+          theta=min(theta,max(0._dp,bound))
+        end if
+      end do
+      s(4:)=s(4:)*theta*(1-16*epsilon(theta))
+      call primitive_to_conserved(m,v(1,i)-s(1)/2,v(2,i)-s(2)/2,v(3,i)-s(3)/2,v(4:,i)-s(4:)/2,qminus(:,i))
+      call primitive_to_conserved(m,v(1,i)+s(1)/2,v(2,i)+s(2)/2,v(3,i)+s(3)/2,v(4:,i)+s(4:)/2,qplus(:,i))
+    end do
+  end subroutine
+
   subroutine primitive_to_conserved(m,t,p,u,y,q)
     type(rf_mechanism), intent(in) :: m
     real(dp), intent(in) :: t,p,u,y(:)
@@ -61,19 +123,37 @@ contains
     f=(fl+fr-max(sl,sr)*(right-left))/2
   end subroutine
 
-  real(dp) function flow_timestep(m,q,dx,cfl,transport) result(dt)
+  real(dp) function flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc) result(dt)
     type(rf_mechanism), intent(in) :: m
     real(dp), intent(in) :: q(:,:),dx,cfl
     type(rf_transport), intent(in), optional :: transport
+    character(*), intent(in), optional :: reconstruction,left_bc,right_bc
+    character(16) :: lb,rb
+    real(dp) :: qm(size(q,1),size(q,2)),qp(size(q,1),size(q,2))
     real(dp) :: f(size(q,1)),speed,maxspeed
     real(dp) :: rho,u,t,p,a,y(size(m%species)),cp,cv,h,e,r,rhomin,rhomax,rhocvmin,diff
     integer :: i
     call require(dx>0.and.cfl>0.and.cfl<=.5_dp,'Require dx>0 and 0<CFL<=0.5')
+    call validate_reconstruction(reconstruction)
     maxspeed=0
     do i=1,size(q,2)
       call physical_flux(m,q(:,i),f,speed)
       maxspeed=max(maxspeed,speed)
     end do
+    if(present(reconstruction)) then
+      if(reconstruction=='muscl') then
+        lb='outflow'; rb='outflow'
+        if(present(left_bc)) lb=left_bc
+        if(present(right_bc)) rb=right_bc
+        call reconstruct_faces(m,q,lb,rb,qm,qp,reconstruction)
+        do i=1,size(q,2)
+          call physical_flux(m,qm(:,i),f,speed)
+          maxspeed=max(maxspeed,speed)
+          call physical_flux(m,qp(:,i),f,speed)
+          maxspeed=max(maxspeed,speed)
+        end do
+      end if
+    end if
     dt=cfl*dx/maxspeed
     if(present(transport)) then
       call validate_transport(transport)
@@ -157,7 +237,7 @@ contains
     net_boundary=face(:,0)-face(:,nx)
   end subroutine
 
-  subroutine rhs(m,q,dx,left_bc,right_bc,dq,net_boundary,transport)
+  subroutine rhs(m,q,dx,left_bc,right_bc,dq,net_boundary,transport,reconstruction)
     type(rf_mechanism), intent(in) :: m
     real(dp), intent(in) :: q(:,:),dx
     character(*), intent(in) :: left_bc,right_bc
@@ -165,20 +245,23 @@ contains
     type(rf_transport), intent(in), optional :: transport
     real(dp) :: faces(size(q,1),0:size(q,2)),ghost(size(q,1))
     real(dp) :: diffusion(size(q,1),size(q,2)),diff_boundary(size(q,1))
+    character(*), intent(in), optional :: reconstruction
+    real(dp) :: qm(size(q,1),size(q,2)),qp(size(q,1),size(q,2))
     integer :: i,nx
     nx=size(q,2)
+    call reconstruct_faces(m,q,left_bc,right_bc,qm,qp,reconstruction)
     call require((left_bc=='periodic').eqv.(right_bc=='periodic'),'Periodic boundary must be paired')
     if(left_bc=='periodic') then
-      call rusanov_flux(m,q(:,nx),q(:,1),faces(:,0))
+      call rusanov_flux(m,qp(:,nx),qm(:,1),faces(:,0))
       faces(:,nx)=faces(:,0)
     else
-      call boundary_state(q(:,1),left_bc,ghost)
-      call rusanov_flux(m,ghost,q(:,1),faces(:,0))
-      call boundary_state(q(:,nx),right_bc,ghost)
-      call rusanov_flux(m,q(:,nx),ghost,faces(:,nx))
+      call boundary_state(qm(:,1),left_bc,ghost)
+      call rusanov_flux(m,ghost,qm(:,1),faces(:,0))
+      call boundary_state(qp(:,nx),right_bc,ghost)
+      call rusanov_flux(m,qp(:,nx),ghost,faces(:,nx))
     end if
     do i=1,nx-1
-      call rusanov_flux(m,q(:,i),q(:,i+1),faces(:,i))
+      call rusanov_flux(m,qp(:,i),qm(:,i+1),faces(:,i))
     end do
     do i=1,nx
       dq(:,i)=-(faces(:,i)-faces(:,i-1))/dx
@@ -190,24 +273,25 @@ contains
     end if
   end subroutine
 
-  subroutine transport_step(m,q,dx,dt,cfl,left_bc,right_bc,result,boundary_change,ok,transport)
+  subroutine transport_step(m,q,dx,dt,cfl,left_bc,right_bc,result,boundary_change,ok,transport,reconstruction)
     type(rf_mechanism), intent(in) :: m
     real(dp), intent(in) :: q(:,:),dx,dt,cfl
     character(*), intent(in) :: left_bc,right_bc
     real(dp), intent(out) :: result(:,:),boundary_change(:)
     logical, intent(out) :: ok
+    character(*), intent(in), optional :: reconstruction
     type(rf_transport), intent(in), optional :: transport
     real(dp) :: a(size(q,1),size(q,2)),b(size(q,1),size(q,2)),dq(size(q,1),size(q,2))
     real(dp) :: f1(size(q,1)),f2(size(q,1)),f3(size(q,1))
     ok=.false.; boundary_change=0
-    if(dt>flow_timestep(m,q,dx,cfl,transport)*(1+1.e-12_dp)) return
-    call rhs(m,q,dx,left_bc,right_bc,dq,f1,transport)
+    if(dt>flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc)*(1+1.e-12_dp)) return
+    call rhs(m,q,dx,left_bc,right_bc,dq,f1,transport,reconstruction)
     a=q+dt*dq
-    if(dt>flow_timestep(m,a,dx,cfl,transport)*(1+1.e-12_dp)) return
-    call rhs(m,a,dx,left_bc,right_bc,dq,f2,transport)
+    if(dt>flow_timestep(m,a,dx,cfl,transport,reconstruction,left_bc,right_bc)*(1+1.e-12_dp)) return
+    call rhs(m,a,dx,left_bc,right_bc,dq,f2,transport,reconstruction)
     b=.75_dp*q+.25_dp*(a+dt*dq)
-    if(dt>flow_timestep(m,b,dx,cfl,transport)*(1+1.e-12_dp)) return
-    call rhs(m,b,dx,left_bc,right_bc,dq,f3,transport)
+    if(dt>flow_timestep(m,b,dx,cfl,transport,reconstruction,left_bc,right_bc)*(1+1.e-12_dp)) return
+    call rhs(m,b,dx,left_bc,right_bc,dq,f3,transport,reconstruction)
     result=q/3+2._dp/3*(b+dt*dq)
     boundary_change=dt*(f1/6+f2/6+2._dp/3*f3)
     ok=.true.
@@ -241,7 +325,8 @@ contains
     end do
   end subroutine
 
-  subroutine advance_flow(m,q,dx,dt,cfl,left_bc,right_bc,chemistry,rtol,atoly,atolt,maxsteps,boundary_change,transport)
+  subroutine advance_flow(m,q,dx,dt,cfl,left_bc,right_bc,chemistry,rtol,atoly,atolt,maxsteps,boundary_change, &
+                          transport,reconstruction)
     type(rf_mechanism), intent(in), target :: m
     real(dp), intent(inout) :: q(:,:),dt
     real(dp), intent(in) :: dx,cfl,rtol,atoly,atolt
@@ -249,6 +334,7 @@ contains
     logical, intent(in) :: chemistry
     integer, intent(in) :: maxsteps
     real(dp), intent(out) :: boundary_change(:)
+    character(*), intent(in), optional :: reconstruction
     type(rf_transport), intent(in), optional :: transport
     real(dp) :: old(size(q,1),size(q,2)),stage(size(q,1),size(q,2)),newq(size(q,1),size(q,2)),check_dt
     logical :: ok
@@ -259,10 +345,10 @@ contains
     do retry=1,30
       stage=old
       if(chemistry) call chemistry_cells(m,stage,dt/2,rtol,atoly,atolt,maxsteps)
-      call transport_step(m,stage,dx,dt,cfl,left_bc,right_bc,newq,boundary_change,ok,transport)
+      call transport_step(m,stage,dx,dt,cfl,left_bc,right_bc,newq,boundary_change,ok,transport,reconstruction)
       if(ok) then
         if(chemistry) call chemistry_cells(m,newq,dt/2,rtol,atoly,atolt,maxsteps)
-        check_dt=flow_timestep(m,newq,dx,cfl,transport) ! validate the complete step
+        check_dt=flow_timestep(m,newq,dx,cfl,transport,reconstruction,left_bc,right_bc) ! validate complete step
         call require(check_dt>0,'Invalid final flow state')
         q=newq
         return
