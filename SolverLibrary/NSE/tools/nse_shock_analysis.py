@@ -14,7 +14,7 @@ from slf_to_paraview_merged_cropghost import (
 )
 
 
-def plane_statistics(files, meta, gamma):
+def plane_statistics(files, meta, gamma, include_pressure=False):
     """Two-pass plane reduction; memory scales with a local SLF block, not five global fields."""
     if not np.isfinite(gamma) or gamma <= 1:
         raise ValueError('gamma must be finite and greater than one')
@@ -31,6 +31,7 @@ def plane_statistics(files, meta, gamma):
     boxes = []
     count = np.zeros(shape[0])
     sums = np.zeros((shape[0], 8))  # rho,p,u,v,w,rhou,rhov,rhow
+    pressure_field = np.empty(shape) if include_pressure else None
 
     def blocks():
         for path in files:
@@ -61,6 +62,8 @@ def plane_statistics(files, meta, gamma):
         if any(all(a.start < b.stop and b.start < a.stop for a, b in zip(box, other)) for other in boxes):
             raise ValueError('Overlapping rank blocks')
         boxes.append(box)
+        if include_pressure:
+            pressure_field[box] = p
         ix = box[0]
         count[ix] += rho.shape[1]*rho.shape[2]
         sums[ix, 0] += rho.sum(axis=(1, 2))
@@ -91,7 +94,61 @@ def plane_statistics(files, meta, gamma):
         profile['F_'+name] = fcov[:,j]
     profile['tke'] = .5*cov[:,:3].sum(axis=1)
     profile['favre_tke'] = .5*fcov[:,:3].sum(axis=1)
-    return step, time, profile, spacing
+    result = (step, time, profile, spacing)
+    return (*result, pressure_field) if include_pressure else result
+
+
+def shock_surface(pressure, x, direction, search, upstream, downstream,
+                  min_ratio=1.05, previous=None, max_shift=None):
+    """Independent x-line detection. Invalid lines return NaN, never the mean front."""
+    pressure = np.asarray(pressure)
+    x = np.asarray(x)
+    if pressure.ndim != 3 or len(x) != pressure.shape[0] or len(x) < 3:
+        raise ValueError('Invalid pressure field/x axis')
+    if not np.all(np.isfinite(pressure)) or np.any(pressure <= 0) or np.any(np.diff(x) <= 0):
+        raise ValueError('Require positive finite pressure and increasing x')
+    shape = pressure.shape[1:]
+    if previous is not None and np.shape(previous) != shape:
+        raise ValueError('Previous shock surface grid mismatch')
+    position = np.full(shape, np.nan)
+    strength = np.zeros(shape)
+    # Only 2D work arrays: avoid constructing a second global pressure-sized gradient field.
+    for i, face in enumerate((x[:-1]+x[1:])/2):
+        if not search[0] <= face <= search[1]:
+            continue
+        gradient = -direction*(pressure[i+1]-pressure[i])/(x[i+1]-x[i])
+        choose = gradient > strength
+        if previous is not None and max_shift is not None:
+            choose &= ~np.isfinite(previous) | (abs(face-previous) <= max_shift)
+        position[choose] = face
+        strength[choose] = gradient[choose]
+    valid = np.isfinite(position)
+    averages = []
+    dx = x[1]-x[0]
+    for limits, sign in ((upstream,1),(downstream,-1)):
+        count = np.zeros(shape, dtype=np.int64); total = np.zeros(shape)
+        for i, coordinate in enumerate(x):
+            distance = sign*direction*(coordinate-position)
+            inside = (distance >= limits[0]) & (distance <= limits[1])
+            count += inside; total += np.where(inside, pressure[i], 0)
+        extent = np.maximum(sign*direction*(x[0]-dx/2-position),
+                            sign*direction*(x[-1]+dx/2-position))
+        valid &= (count >= 2) & (extent >= limits[1]-1e-10*dx)
+        averages.append(np.divide(total,count,out=np.full(shape,np.nan),where=count>0))
+    ratio = averages[1]/averages[0]
+    valid &= np.isfinite(ratio) & (ratio >= min_ratio)
+    position[~valid] = np.nan
+    strength[~valid] = np.nan
+    return dict(shock_x=position, valid=valid, pressure_gradient=strength, pressure_ratio=ratio)
+
+
+def surface_summary(surface):
+    values = surface['shock_x'][surface['valid']]
+    result = dict(surface_valid_count=int(values.size), surface_total_count=int(surface['valid'].size),
+                  surface_valid_fraction=float(np.mean(surface['valid'])))
+    for key, function in [('mean',np.mean),('std',np.std),('min',np.min),('max',np.max)]:
+        result['surface_x_'+key] = float(function(values)) if values.size else float('nan')
+    return result
 
 
 def diagnose(profile, direction, search, upstream, downstream, previous=None, max_shift=None, min_ratio=1.05):
@@ -172,9 +229,9 @@ def main(argv=None):
         if not groups:
             raise ValueError('No complete selected SLF steps')
         args.output_dir.mkdir(parents=True, exist_ok=False)
-        records = []; previous = None; geometry = None
+        records = []; previous = None; geometry = None; previous_surface = None
         for step in sorted(groups):
-            step_read,time,profile,spacing = plane_statistics(groups[step],meta,args.gamma)
+            step_read,time,profile,spacing,pressure = plane_statistics(groups[step],meta,args.gamma,include_pressure=True)
             if records and time <= records[-1]['time']:
                 raise ValueError('Selected times must be strictly increasing')
             if geometry is not None and not np.array_equal(profile['x'],geometry):
@@ -182,6 +239,19 @@ def main(argv=None):
             geometry = profile['x'].copy()
             record = dict(step=step_read,time=time,**diagnose(profile,args.direction,args.search,
                 args.upstream,args.downstream,previous,args.max_shift,args.min_pressure_ratio))
+            surface = shock_surface(pressure,profile['x'],args.direction,args.search,args.upstream,args.downstream,
+                                    args.min_pressure_ratio,previous_surface,args.max_shift)
+            del pressure
+            record.update(surface_summary(surface))
+            print(f"[INFO] step={step_read} surface valid={record['surface_valid_count']}/{record['surface_total_count']}")
+            previous_surface = surface['shock_x'].copy()
+            first = read_slf(groups[step][0])
+            origin,_ = get_origin_spacing(meta,first)
+            y = origin[1]+(np.arange(surface['shock_x'].shape[0])+.5)*spacing[1]
+            z = origin[2]+(np.arange(surface['shock_x'].shape[1])+.5)*spacing[2]
+            del first
+            np.savez_compressed(args.output_dir/f'shock_surface_{step_read:08d}.npz',
+                                step=step_read,time=time,y=y,z=z,**surface)
             previous = record['shock_x']; records.append(record)
             write_csv(args.output_dir/f'planes_{step_read:08d}.csv',
                 [dict(zip(profile,values)) for values in zip(*profile.values())])
@@ -194,6 +264,9 @@ def main(argv=None):
             source_files=[str(p.resolve()) for s in sorted(groups) for p in groups[s]],
             definitions={
                 'shock_x':'Face of largest signed gradient of yz-mean pressure within search/tracking range; grid-scale resolution.',
+                'shock_surface':'NPZ shock_x[j,k]=x_s(y[j],z[k],time), independent pressure-gradient maximum on each x line; invalid lines are NaN with valid=False.',
+                'surface_statistics':'Mean, population standard deviation (ddof=0), min/max over valid lines; equal transverse cell areas. Always inspect valid_fraction.',
+                'surface_tracking':'max-shift applied per line to previous selected valid position; invalid previous lines reacquire within global search range.',
                 'shock_speed':'Signed dx_shock/dt using saved times; interior nonuniform central differences, endpoints one-sided. Single time: NaN.',
                 'R':'Plane Reynolds covariance about each yz-plane volume mean; uu,vv,ww,uv,uw,vw.',
                 'F':'Plane density-weighted covariance about each yz-plane Favre mean.',
@@ -201,7 +274,7 @@ def main(argv=None):
                 'regions':'Distances from tracked front, upstream in propagation direction. Average plane statistics, not whole-region velocity variance.',
                 'amplification':'Simultaneous downstream/upstream ratio, not matched fluid parcels. Denominator <=1e-30 yields NaN.',
                 'units':'Same coordinates, time and velocity normalization as SLF; no SI conversion.',
-                'limitations':'Uniform Cartesian x-directed front only; plane-average tracking is not shock-surface reconstruction. Search must isolate shock from other waves.'})
+                'limitations':'Uniform Cartesian x-directed single-valued front only. Mean-profile and linewise fronts are separate. Region turbulence statistics still use the mean-profile front, not a surface-fitted window. Search must isolate shock from other waves.'})
         (args.output_dir/'analysis.json').write_text(json.dumps(definitions,indent=2,allow_nan=False)+'\n',encoding='utf-8')
         print('[OK] Shock analysis completed:',args.output_dir)
         return 0
