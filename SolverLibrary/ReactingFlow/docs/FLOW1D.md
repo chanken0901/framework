@@ -1,6 +1,7 @@
-# R4a/b/c/d：1次元流体・詳細反応・輸送の結合
+# R4a〜e：1次元流体・詳細反応・輸送の結合
 
 R4aのEuler基盤、R4bの定係数輸送、R4cのMUSCL再構築、R4dの流体段棄却・再試行を実装した。
+R4eでは化学種ごとの定係数拡散を追加した。
 **Fortran、CPU逐次実行、1次元・一様直交格子の基準計算**。
 R4全体の完成ではない。温度・組成依存の分子輸送、2D/3D、ノズル、MPI/OpenMP/CUDA、
 CJ/ZNDデトネーション検証、旧反応流CFDとの全体同値検証は残っている。
@@ -65,7 +66,8 @@ Fortran APIの`rf_transport`に係数をまとめ、既存の流体APIでは末�
 全係数は有限・非負。noneのまま非ゼロ係数を指定した場合は、黙って無視せずエラー。
 constantでも個別係数を0にできるため、熱伝導だけなどの切り分けが可能。
 機構YAMLの輸送パラメーターから自動算出しない。例の係数は検証用であり実在気体の推奨値ではない。
-**化学種ごとのD、温度依存粘性、混合平均／多成分輸送、Soret、Dufour、圧力拡散は未実装**。
+化学種ごとの定係数DはR4eの別モデルで指定する（下記）。
+**温度依存粘性、分子物性からの混合平均／多成分輸送、Soret、Dufour、圧力拡散は未実装**。
 これらが必要な燃焼速度・火炎構造を定量評価できる完成段階とは見なさない。
 
 全流束は`F=F_Euler+F_diff`として同じセル面で保存的に差分する。
@@ -187,6 +189,54 @@ okがfalseの出力状態は使用しない。okを省略した既存呼出し�
 初期状態が不正、または真の解がNASA温度範囲を外れる場合を、刻み縮小で解決できるわけではない。
 詳細反応付き強衝撃波やデトネーションの適用性は引き続き別途検証する。
 
+## R4e：化学種ごとの定係数拡散
+
+共通係数を使う従来の`transport_model='constant'`は変更しない。
+種別指定は`transport_model='species_constant'`を使い、機構に含まれる全化学種の係数を
+`species_diffusivities`に機構順で指定する。単位はm²/s、全て有限・非負。
+数不足・負値・共通mass_diffusivityとの非ゼロ重複指定を拒否する。
+他モデルへのspecies_diffusivities指定も拒否する（内部の未指定マーカー-1は使用しない）。
+粘性・体積粘性・熱伝導率の設定はconstantと共通。
+
+```fortran
+ transport_model='species_constant',
+ mass_diffusivity=0,
+ ! h2o2.yaml order: H2 H O O2 OH H2O HO2 H2O2 AR N2
+ species_diffusivities=0.3,0.4,0.2,0.1,0.2,0.15,0.1,0.1,0.08,0.08,
+```
+
+上記係数は検証用で、実在気体の推奨値ではない。化学種名や分子物性から自動推定しない。
+R4eは質量分率勾配の定係数モデルであり、Cantera等の混合平均分子輸送やStefan–Maxwellモデルではない。
+反応、MUSCL、周期／鏡像／流出境界と組み合わせられる。
+
+```text
+J_s^raw = -rho_face * D_s * grad(Y_s)
+J_s = J_s^raw - Y_s,face * sum(J^raw)
+F_diff(energy) includes sum(h_s(T_face)*J_s)
+```
+
+補正によりsum(J)=0とするため、D_s=0にしてもその種の補正後流束は必ずしも0ではない。
+全て同じDなら共通係数モデルと一致する。全Dを0にすれば種拡散が無効になる。
+保存型流束・生成エンタルピー輸送は維持し、濃度のクリップはしない。
+刻み推定ではR4b式のDを`2*max(D_s)-min(D_s)`に置き換え、補正速度の結合を保守的に見積もる。
+これは非線形系の正値性を保証する制限ではなく、R4dの状態検査・再試行も併用する。
+CSVに`diffusivity_<化学種名>`を全種分記録する。
+
+入力例は`examples/flow1d_h2_species_transport.in`。機構の準備後、Windows PowerShellでは：
+
+```powershell
+.\build\reactingflow\rf_flow1d.exe build/reactingflow/h2o2_flow.rf SolverLibrary/ReactingFlow/examples/flow1d_h2_species_transport.in build/reactingflow/h2_species_transport.csv
+```
+
+Linux bashでは：
+
+```bash
+./build/reactingflow/rf_flow1d build/reactingflow/h2o2_flow.rf SolverLibrary/ReactingFlow/examples/flow1d_h2_species_transport.in build/reactingflow/h2_species_transport.csv
+```
+
+Fortran APIは`rf_transport%species_diffusivity(:)`を割り当て、共通`diffusivity=0`で使用する。
+配列が未割当なら従来の共通係数経路を使う。種数不一致は拒否する。
+
 ## ビルド・実行
 
 機構変換やビルドの準備は[R1〜R3手順](REACTORS.md)と共通。
@@ -266,6 +316,8 @@ Sod厳密解に対する同一格子での1次精度との比較、面の種範�
 R4dでは負の種密度・真空・NaN・NASA範囲外・多項式接続の隙間の検出、
 NASA下限付近の膨張流での棄却と刻み縮小、1次精度／MUSCL双方の状態ロールバック、
 受理刻みで直接計算した場合との一致、棄却した境界流束の非累積を検証した。
+R4eでは異なるDの補正流束と生成エンタルピー輸送、二成分の拡散演算子の解析式に対する
+空間2次収束、種拡散だけの刻み制限、全種同一Dと共通モデルの一致、反応との保存、入力拒否を検証した。
 Sod参考：[Clawpack Euler Riemann問題](https://www.clawpack.org/riemann_book/html/Euler_approximate.html)。
 同梱窒素ショック例はNASAの温度依存比熱であり、定比熱Sod厳密解とは別物。
 

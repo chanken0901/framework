@@ -211,6 +211,44 @@ class FlowTests(unittest.TestCase):
                 self.assertLess(float(d['energy_error']),1e-10)
         self.assertLess(errors['muscl'],.7*errors['first_order'])
 
+    def test_species_diffusion_equal_coefficients(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'N2:1';yl=gas.Y.tolist()
+        gas.TPX=1100,101325,'AR:1';yr=gas.Y.tolist()
+        controls="nx=12,end_time=0.00004,write_every=1,reconstruction='muscl',"+\
+            "left_bc='periodic',right_bc='periodic'"
+        common,_=self.run_flow(self.h2,controls+",transport_model='constant',mass_diffusivity=0.1",yl,yr)
+        individual,d=self.run_flow(self.h2,controls+",transport_model='species_constant',species_diffusivities=10*0.1",yl,yr)
+        self.np.testing.assert_array_equal(individual,common)
+        self.assertEqual(d['transport_model'],'species_constant')
+        self.assertEqual(float(d['diffusivity_H2']),.1)
+
+    def test_species_diffusion_reacting_conservation(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'H2:2,O2:1,N2:3.76';yl=gas.Y.tolist()
+        gas.TPX=1100,101325,'H2:1,O2:1,N2:3.76';yr=gas.Y.tolist()
+        controls="nx=12,length=1,end_time=0.00002,max_dt=0.000002,write_every=100000,"+\
+            "reconstruction='muscl',chemistry=.true.,left_temperature=1300,right_temperature=1100,"+\
+            "left_bc='reflecting',right_bc='reflecting',viscosity=0.1,thermal_conductivity=100"
+        base,_=self.run_flow(self.h2,controls+",transport_model='constant',mass_diffusivity=0.1",yl,yr)
+        values,d=self.run_flow(self.h2,controls+",transport_model='species_constant',"+\
+            "species_diffusivities=0.3,0.4,0.2,0.1,0.2,0.15,0.1,0.1,0.08,0.08",yl,yr)
+        final=values[values[:,0]==values[-1,0]]
+        ref=base[base[:,0]==base[-1,0]]
+        self.assertGreater(abs(final[:,7:]-ref[:,7:]).max(),1e-8)
+        self.assertGreaterEqual(values[:,7:].min(),0)
+        self.np.testing.assert_allclose(values[:,7:].sum(1),1,atol=1e-12)
+        for key in ('mass_error','momentum_error','energy_error','element_error'):
+            self.assertLess(float(d[key]),1e-8)
+
+    def test_invalid_species_diffusion_rejected(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'N2:1';y=gas.Y.tolist()
+        for controls in ["transport_model='species_constant'",
+                         "transport_model='species_constant',species_diffusivities=0.1,0.2",
+                         "transport_model='species_constant',species_diffusivities=10*-0.1",
+                         "transport_model='species_constant',species_diffusivities=10*0.1,mass_diffusivity=0.1",
+                         "transport_model='constant',species_diffusivities=10*0.1",
+                         "transport_model='none',species_diffusivities=10*0.1"]:
+            self.run_flow(self.h2,controls,y,y,success=False)
+
     def test_invalid_transport_rejected(self):
         gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'N2:1';y=gas.Y.tolist()
         for controls in ["transport_model='unknown'", "viscosity=1", "mass_diffusivity=1",\

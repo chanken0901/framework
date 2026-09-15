@@ -8,6 +8,7 @@ program main_rf_flow1d
   character(16) :: transport_model='none'
   character(16) :: reconstruction='first_order'
   real(dp) :: viscosity=0,bulk_viscosity=0,thermal_conductivity=0,mass_diffusivity=0
+  real(dp), allocatable :: species_diffusivities(:)
   character(2048) :: mechanism_file,input_file,output_file
   character(16) :: left_bc='outflow',right_bc='outflow'
   integer :: nx=100,max_steps=100000,chemistry_max_steps=100000,write_every=50
@@ -24,23 +25,31 @@ program main_rf_flow1d
   namelist /flow1d/ nx,length,interface_x,end_time,cfl,max_dt,max_steps,write_every,left_bc,right_bc, &
     left_temperature,left_pressure,left_velocity,right_temperature,right_pressure,right_velocity,chemistry, &
     chemistry_rtol,chemistry_atol_species,chemistry_atol_temperature,chemistry_max_steps, &
-    transport_model,viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity,reconstruction
+    transport_model,viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity,reconstruction,species_diffusivities
   call require(command_argument_count()==3,'Usage: rf_flow1d mechanism.rf flow.in output.csv')
   call get_command_argument(1,mechanism_file)
   call get_command_argument(2,input_file)
   call get_command_argument(3,output_file)
   call read_mechanism(trim(mechanism_file),m)
   ns=size(m%species)
+  allocate(species_diffusivities(ns)); species_diffusivities=-1
   open(newunit=io,file=trim(input_file),status='old',action='read',iostat=ios)
   call require(ios==0,'Cannot open 1D input')
   read(io,nml=flow1d,iostat=ios)
   call require(ios==0,'Invalid flow1d namelist')
   call validate_reconstruction(reconstruction)
   transport=rf_transport(viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity)
-  call validate_transport(transport)
-  call require(transport_model=='none'.or.transport_model=='constant','Unknown transport model')
+  call require(transport_model=='none'.or.transport_model=='constant'.or. &
+    transport_model=='species_constant','Unknown transport model')
+  if(transport_model=='species_constant') then
+    ! -1 sentinels make incomplete lists fail rather than silently supplying zero diffusivity.
+    transport%species_diffusivity=species_diffusivities
+  else
+    call require(all(species_diffusivities==-1),'species_diffusivities requires transport_model=species_constant')
+  end if
+  call validate_transport(transport,ns)
   if(transport_model=='none') call require(.not.transport_active(transport), &
-    'Nonzero transport coefficients require transport_model=constant')
+    'Nonzero transport coefficients require constant or species_constant transport')
   call require(nx>=2.and.max_steps>0.and.write_every>0,'Invalid grid/step/output count')
   call require(all(ieee_is_finite([length,interface_x,end_time,cfl,max_dt])), 'Nonfinite flow control')
   call require(min(length,end_time,max_dt,cfl)>0.and.cfl<=.5_dp,'Require positive controls, CFL<=0.5')
@@ -77,6 +86,11 @@ program main_rf_flow1d
   write(out,'(a,es25.16e3)') '# bulk_viscosity=',bulk_viscosity
   write(out,'(a,es25.16e3)') '# thermal_conductivity=',thermal_conductivity
   write(out,'(a,es25.16e3)') '# mass_diffusivity=',mass_diffusivity
+  if(allocated(transport%species_diffusivity)) then
+    do j=1,ns
+      write(out,'(a,es25.16e3)') '# diffusivity_'//trim(m%species(j)%name)//'=',species_diffusivities(j)
+    end do
+  end if
   write(out,'(a)') '# source_sha256='//m%source_hash
   write(out,'(a)') '# canonical_sha256='//m%canonical_hash
   write(out,'(a,l1)') '# chemistry=',chemistry

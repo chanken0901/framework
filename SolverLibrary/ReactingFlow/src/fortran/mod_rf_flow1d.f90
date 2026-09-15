@@ -192,7 +192,7 @@ contains
     end if
     dt=cfl*dx/maxspeed
     if(present(transport)) then
-      call validate_transport(transport)
+      call validate_transport(transport,size(m%species))
       if(transport_active(transport)) then
         rhomin=huge(rhomin); rhomax=0; rhocvmin=huge(rhocvmin)
         do i=1,size(q,2)
@@ -202,7 +202,7 @@ contains
         end do
         ! Conservative explicit convection/diffusion estimate (cv, not cp, for compressible energy).
         diff=(4._dp/3*transport%viscosity+transport%bulk_viscosity)/rhomin &
-              +transport%conductivity/rhocvmin+transport%diffusivity*rhomax/rhomin
+              +transport%conductivity/rhocvmin+diffusion_bound(transport)*rhomax/rhomin
         dt=cfl/(maxspeed/dx+2*diff/dx**2)
       end if
     end if
@@ -232,7 +232,7 @@ contains
     real(dp) :: y(size(m%species),size(q,2)),p,a
     integer :: i,nx
     nx=size(q,2)
-    call validate_transport(transport)
+    call validate_transport(transport,size(m%species))
     call require(nx>=2.and.size(q,1)==size(m%species)+2,'Invalid diffusion field shape')
     call require(all(shape(dq)==shape(q)).and.size(net_boundary)==size(q,1),'Invalid diffusion output shape')
     call require(dx>0.and.ieee_is_finite(dx),'Invalid diffusion spacing')

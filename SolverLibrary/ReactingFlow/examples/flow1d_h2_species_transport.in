@@ -1,0 +1,15 @@
+! R4e demonstration. Coefficients are illustrative, NOT molecular transport data.
+! h2o2.yaml species order: H2 H O O2 OH H2O HO2 H2O2 AR N2
+&flow1d
+ nx=32, length=1, interface_x=0.5,
+ left_temperature=1300, right_temperature=1100,
+ left_pressure=101325, right_pressure=101325,
+ left_bc='reflecting', right_bc='reflecting',
+ chemistry=.true., reconstruction='muscl',
+ transport_model='species_constant',
+ viscosity=0.1, thermal_conductivity=100,
+ species_diffusivities=0.3,0.4,0.2,0.1,0.2,0.15,0.1,0.1,0.08,0.08,
+ end_time=0.00002, max_dt=0.000002, cfl=0.4, write_every=4
+/
+0.0285 0 0 0.2264 0 0 0 0 0 0.7451
+0.0145 0 0 0.2297 0 0 0 0 0 0.7558

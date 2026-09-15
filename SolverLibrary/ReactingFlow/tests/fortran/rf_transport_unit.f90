@@ -5,6 +5,7 @@ program rf_transport_unit
   implicit none
   type(rf_mechanism) :: m
   type(rf_transport) :: coeff,none
+  type(rf_transport) :: separate
   real(dp) :: flux(4),yl(2),yr(2),y(2),cp,cv,h,e,r,t,p,rho,u,a,pi,expected,err32,err64
   real(dp) :: q(4,32),dq(4,32),boundary(4),dt,dt_none,sums(4),x
   integer :: i,kind
@@ -23,6 +24,16 @@ program rf_transport_unit
   call require(abs(flux(3)+5)<1.e-14_dp,'Normal viscous stress including bulk viscosity')
   expected=-15-400+.12_dp*gas_r*1000/.01_dp
   call require(abs(flux(4)-expected)<1.e-8_dp,'Viscous work, Fourier heat, formation enthalpy transport')
+  separate=coeff; separate%diffusivity=0; separate%species_diffusivity=[.1_dp,.3_dp]
+  call diffusive_flux(m,separate,1._dp,2._dp,1000._dp,yl,1._dp,4._dp,1100._dp,yr,.5_dp,flux)
+  call require(abs(flux(1)-.24_dp)<1.e-14_dp.and.abs(sum(flux(:2)))<1.e-14_dp, &
+    'Unequal species diffusivity correction velocity')
+  expected=-15-400+.24_dp*gas_r*1000/.01_dp
+  call require(abs(flux(4)-expected)<1.e-8_dp,'Unequal diffusivity formation enthalpy flux')
+  separate%species_diffusivity=.1_dp
+  call diffusive_flux(m,separate,1._dp,2._dp,1000._dp,yl,1._dp,4._dp,1100._dp,yr,.5_dp,flux)
+  call require(abs(flux(1)-.12_dp)<1.e-14_dp,'Equal species coefficients reproduce common D')
+  call require(abs(diffusion_bound(separate)-.1_dp)<1.e-15_dp,'Equal species diffusion bound')
   m%species(1)%coeff(6,1)=0
   y=[.5_dp,.5_dp];pi=acos(-1._dp)
   call mixture(m,1000._dp,y,101325._dp,cp,cv,h,e,r)
@@ -53,6 +64,10 @@ program rf_transport_unit
   dt_none=flow_timestep(m,q,.1_dp,.4_dp)
   dt=flow_timestep(m,q,.1_dp,.4_dp,none)
   call require(abs(dt-dt_none)<1.e-15_dp,'Disabled transport timestep compatibility')
+  separate=rf_transport(); separate%species_diffusivity=[100._dp,200._dp]
+  call require(transport_active(separate),'Species-only diffusion activates transport')
+  dt=flow_timestep(m,q,.1_dp,.4_dp,separate)
+  call require(dt<dt_none/2,'Species-only explicit timestep restriction')
   coeff=rf_transport(100._dp,100._dp,1.e6_dp,100._dp)
   dt=flow_timestep(m,q,.1_dp,.4_dp,coeff)
   call require(dt<dt_none/2,'Explicit diffusion timestep restriction')
@@ -61,7 +76,31 @@ program rf_transport_unit
                     1.e-9_dp,1.e-16_dp,1.e-8_dp,10000,boundary,coeff)
   call require(maxval(abs(sum(q,dim=2)*.1_dp-sums)/max(1._dp,abs(sums)))<1.e-12_dp,'Combined flow conservation')
   write(*,'(a)') '[OK] viscous/heat/species flux, enthalpy, boundaries, diffusion convergence, timestep'
+  err32=unequal_rhs_error(32); err64=unequal_rhs_error(64)
+  call require(err64<.3_dp*err32,'Unequal species diffusion operator second-order convergence')
+  write(*,'(a,2es15.6)') '[OK] unequal species diffusion operator errors 32/64: ',err32,err64
 contains
+  real(dp) function unequal_rhs_error(nx) result(error)
+    integer, intent(in) :: nx
+    type(rf_transport) :: c
+    real(dp) :: state(4,nx),rhs(4,nx),bnd(4),fractions(2),xx,exact,sn,cs
+    integer :: j
+    c%species_diffusivity=[.1_dp,.3_dp]
+    do j=1,nx
+      xx=(j-.5_dp)/nx
+      fractions=[.5_dp+.1_dp*sin(2*pi*xx),.5_dp-.1_dp*sin(2*pi*xx)]
+      call primitive_to_conserved(m,1000._dp,r*1000,0._dp,fractions,state(:,j))
+    end do
+    call diffusion_rhs(m,state,1._dp/nx,'periodic','periodic',c,rhs,bnd)
+    error=0
+    do j=1,nx
+      xx=(j-.5_dp)/nx; sn=sin(2*pi*xx); cs=cos(2*pi*xx)
+      ! J1=-(D1*(1-Y1)+D2*Y1)*grad(Y1), rho=1.
+      exact=(2*pi)**2*(-(.2_dp+.02_dp*sn)*.1_dp*sn+.002_dp*cs*cs)
+      error=error+abs(rhs(1,j)-exact)/nx
+    end do
+    call require(maxval(abs(sum(rhs,dim=2)))<1.e-9_dp,'Unequal diffusivity periodic conservation')
+  end function
   subroutine sine_decay(nx,which,error)
     integer, intent(in) :: nx,which
     real(dp), intent(out) :: error
