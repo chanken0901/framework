@@ -20,6 +20,7 @@ program main_rf_flow1d
   real(dp) :: time,dt,dx,rho,u,t,p,a,mass_error,momentum_error,energy_error,element_error,x
   real(dp), allocatable :: y(:),delta(:),elements0(:),elements(:)
   integer :: ns,io,out,ios,i,j,step
+  integer :: rejected_steps,total_rejected=0
   namelist /flow1d/ nx,length,interface_x,end_time,cfl,max_dt,max_steps,write_every,left_bc,right_bc, &
     left_temperature,left_pressure,left_velocity,right_temperature,right_pressure,right_velocity,chemistry, &
     chemistry_rtol,chemistry_atol_species,chemistry_atol_temperature,chemistry_max_steps, &
@@ -116,11 +117,14 @@ program main_rf_flow1d
     dt=min(max_dt,end_time-time,flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc))
     call require(time+dt>time,'Flow timestep underflow')
     call advance_flow(m,q,dx,dt,cfl,left_bc,right_bc,chemistry,chemistry_rtol,chemistry_atol_species, &
-                      chemistry_atol_temperature,chemistry_max_steps,change,transport,reconstruction)
+                      chemistry_atol_temperature,chemistry_max_steps,change,transport,reconstruction,rejected_steps)
+    call require(time+dt>time,'Accepted flow timestep cannot advance time')
+    total_rejected=total_rejected+rejected_steps
     boundary=boundary+change
     time=time+dt; step=step+1
   end do
   write(out,'(a,es25.16e3)') '# mass_error=',mass_error
+  write(out,'(a,i0)') '# rejected_steps=',total_rejected
   write(out,'(a,es25.16e3)') '# momentum_error=',momentum_error
   write(out,'(a,es25.16e3)') '# energy_error=',energy_error
   write(out,'(a,es25.16e3)') '# element_error=',element_error

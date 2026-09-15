@@ -41,6 +41,7 @@ class FlowTests(unittest.TestCase):
             rows=[line for line in text.splitlines() if not line.startswith('#')]
             values=self.np.loadtxt(rows[1:],delimiter=',',ndmin=2)
             diagnostics=dict(line[2:].split('=',1) for line in text.splitlines() if line.startswith('# ') and '=' in line)
+            self.assertGreaterEqual(int(diagnostics['rejected_steps']),0)
             return values,diagnostics
 
     def test_uniform_reactive_matches_cantera(self):
@@ -58,6 +59,7 @@ class FlowTests(unittest.TestCase):
             self.np.testing.assert_allclose(row[:,6],reactor.phase.P,rtol=3e-6)
             self.np.testing.assert_allclose(row[:,7:],self.np.tile(reactor.phase.Y,(4,1)),rtol=5e-4,atol=1e-7)
         self.assertLess(float(d['energy_error']),1e-12)
+        self.assertEqual(int(d['rejected_steps']),0)
         self.assertLess(float(d['element_error']),1e-8)
         self.assertEqual(values[-1,1],.0002)
 

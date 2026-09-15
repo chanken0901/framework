@@ -28,6 +28,25 @@ program rf_unit
   call mixture(m,1000._dp,y,101325._dp,cp,cv,h,e,r,s)
   call require(abs(cp-3.5_dp*gas_r/.01_dp)<1.e-10_dp,'NASA cp test')
   call require(abs(temperature_from_energy(m,e,y)-1000)<1.e-7_dp,'Energy inversion test')
+  s=temperature_from_energy(m,e,y,ok=success)
+  call require(success.and.abs(s-1000)<1.e-7_dp,'Recoverable energy inversion')
+  s=temperature_from_energy(m,-huge(e),y,ok=success)
+  call require(.not.success.and.s==0,'Recoverable NASA range rejection')
+  block
+    type(rf_mechanism) :: gap
+    real(dp) :: gap_e,gap_t
+    gap=m
+    do i=1,2
+      deallocate(gap%species(i)%bounds,gap%species(i)%coeff)
+      allocate(gap%species(i)%bounds(3),gap%species(i)%coeff(9,2))
+      gap%species(i)%bounds=[200._dp,1000._dp,4000._dp]
+      gap%species(i)%coeff=0; gap%species(i)%coeff(1,:)=3.5_dp
+      gap%species(i)%coeff(6,2)=1
+    end do
+    gap_e=e+gas_r/.01_dp/2
+    gap_t=temperature_from_energy(gap,gap_e,y,ok=success)
+    call require(.not.success.and.gap_t==0,'NASA polynomial gap rejected without stop or clipping')
+  end block
   call rates(m,1000._dp,1._dp,y,qf,qr,net,omega,heat)
   call require(abs(omega(1)/1.e6_dp+1)<1.e-12_dp.and.abs(sum(omega))<1.e-8_dp,'Rate test')
   open(newunit=u,status='scratch',action='readwrite')

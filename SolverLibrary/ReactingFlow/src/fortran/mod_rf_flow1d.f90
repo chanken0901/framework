@@ -7,6 +7,7 @@ module mod_rf_flow1d
   public :: primitive_to_conserved,conserved_to_primitive,physical_flux,rusanov_flux
   public :: flow_timestep,advance_flow,transport_step,diffusion_rhs
   public :: reconstruct_faces,validate_reconstruction
+  public :: admissible_flow
 contains
   subroutine validate_reconstruction(method)
     character(*), intent(in), optional :: method
@@ -83,22 +84,57 @@ contains
     q(:ns)=rho*y; q(ns+1)=rho*u; q(ns+2)=rho*(e+u*u/2)
   end subroutine
 
-  subroutine conserved_to_primitive(m,q,rho,u,t,p,sound,y)
+  subroutine conserved_to_primitive(m,q,rho,u,t,p,sound,y,ok)
     type(rf_mechanism), intent(in) :: m
     real(dp), intent(in) :: q(:)
     real(dp), intent(out) :: rho,u,t,p,sound,y(:)
+    logical, optional, intent(out) :: ok
+    logical :: valid
     real(dp) :: cp,cv,h,e,r
     integer :: ns
     ns=size(m%species)
+    if(present(ok)) ok=.false.
+    rho=0; u=0; t=0; p=0; sound=0; y=0
     call require(size(q)==ns+2.and.size(y)==ns,'1D state dimension mismatch')
-    call require(all(ieee_is_finite(q)).and.all(q(:ns)>=0),'Invalid conserved species; no clipping')
-    rho=sum(q(:ns)); call require(rho>0,'Nonpositive total density')
+    if(.not.all(ieee_is_finite(q)).or.any(q(:ns)<0)) then
+      if(present(ok)) return
+      call require(.false.,'Invalid conserved species; no clipping')
+    end if
+    rho=sum(q(:ns))
+    if(.not.ieee_is_finite(rho).or.rho<=0) then
+      if(present(ok)) return
+      call require(.false.,'Nonpositive/nonfinite total density')
+    end if
     y=q(:ns)/rho; u=q(ns+1)/rho; e=q(ns+2)/rho-u*u/2
-    t=temperature_from_energy(m,e,y)
+    if(present(ok)) then
+      t=temperature_from_energy(m,e,y,ok=valid)
+      if(.not.valid) return
+    else
+      t=temperature_from_energy(m,e,y)
+    end if
     call mixture(m,t,y,101325._dp,cp,cv,h,e,r)
     p=rho*r*t; sound=sqrt(cp/cv*r*t)
-    call require(p>0.and.ieee_is_finite(sound),'Invalid pressure/sound speed')
+    valid=p>0.and.all(ieee_is_finite([u,p,sound]))
+    if(present(ok)) then
+      ok=valid
+    else
+      call require(valid,'Invalid pressure/sound speed')
+    end if
   end subroutine
+
+  logical function admissible_flow(m,q) result(valid)
+    ! No modification, clipping, or renormalization of the candidate conserved field.
+    type(rf_mechanism), intent(in) :: m
+    real(dp), intent(in) :: q(:,:)
+    real(dp) :: rho,u,t,p,a,y(size(m%species))
+    integer :: i
+    valid=.false.
+    call require(size(q,1)==size(m%species)+2.and.size(q,2)>=2,'Invalid admissibility field shape')
+    do i=1,size(q,2)
+      call conserved_to_primitive(m,q(:,i),rho,u,t,p,a,y,ok=valid)
+      if(.not.valid) return
+    end do
+  end function
 
   subroutine physical_flux(m,q,f,speed)
     type(rf_mechanism), intent(in) :: m
@@ -284,15 +320,23 @@ contains
     real(dp) :: a(size(q,1),size(q,2)),b(size(q,1),size(q,2)),dq(size(q,1),size(q,2))
     real(dp) :: f1(size(q,1)),f2(size(q,1)),f3(size(q,1))
     ok=.false.; boundary_change=0
+    result=q
+    if(.not.admissible_flow(m,q)) return
     if(dt>flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc)*(1+1.e-12_dp)) return
     call rhs(m,q,dx,left_bc,right_bc,dq,f1,transport,reconstruction)
     a=q+dt*dq
+    if(.not.admissible_flow(m,a)) return
     if(dt>flow_timestep(m,a,dx,cfl,transport,reconstruction,left_bc,right_bc)*(1+1.e-12_dp)) return
     call rhs(m,a,dx,left_bc,right_bc,dq,f2,transport,reconstruction)
     b=.75_dp*q+.25_dp*(a+dt*dq)
+    if(.not.admissible_flow(m,b)) return
     if(dt>flow_timestep(m,b,dx,cfl,transport,reconstruction,left_bc,right_bc)*(1+1.e-12_dp)) return
     call rhs(m,b,dx,left_bc,right_bc,dq,f3,transport,reconstruction)
     result=q/3+2._dp/3*(b+dt*dq)
+    if(.not.admissible_flow(m,result)) then
+      result=q
+      return
+    end if
     boundary_change=dt*(f1/6+f2/6+2._dp/3*f3)
     ok=.true.
   end subroutine
@@ -326,7 +370,7 @@ contains
   end subroutine
 
   subroutine advance_flow(m,q,dx,dt,cfl,left_bc,right_bc,chemistry,rtol,atoly,atolt,maxsteps,boundary_change, &
-                          transport,reconstruction)
+                          transport,reconstruction,rejected_steps)
     type(rf_mechanism), intent(in), target :: m
     real(dp), intent(inout) :: q(:,:),dt
     real(dp), intent(in) :: dx,cfl,rtol,atoly,atolt
@@ -336,11 +380,14 @@ contains
     real(dp), intent(out) :: boundary_change(:)
     character(*), intent(in), optional :: reconstruction
     type(rf_transport), intent(in), optional :: transport
+    integer, intent(out), optional :: rejected_steps
     real(dp) :: old(size(q,1),size(q,2)),stage(size(q,1),size(q,2)),newq(size(q,1),size(q,2)),check_dt
     logical :: ok
     integer :: retry
     call require(ieee_is_finite(dt).and.dt>0,'Require positive finite flow dt')
     call require(size(q,1)==size(m%species)+2.and.size(q,2)>=2,'Invalid 1D field shape')
+    call require(admissible_flow(m,q),'Invalid input flow state; cannot recover by reducing dt')
+    if(present(rejected_steps)) rejected_steps=0
     old=q
     do retry=1,30
       stage=old
@@ -351,10 +398,12 @@ contains
         check_dt=flow_timestep(m,newq,dx,cfl,transport,reconstruction,left_bc,right_bc) ! validate complete step
         call require(check_dt>0,'Invalid final flow state')
         q=newq
+        if(present(rejected_steps)) rejected_steps=retry-1
         return
       end if
       dt=dt/2
+      call require(dt>0.and.ieee_is_finite(dt),'Flow retry timestep underflow')
     end do
-    call require(.false.,'Flow step CFL retry limit exceeded')
+    call require(.false.,'Flow step CFL/admissibility retry limit exceeded (30 attempts)')
   end subroutine
 end module

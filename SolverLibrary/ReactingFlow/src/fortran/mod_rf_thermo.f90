@@ -60,13 +60,16 @@ contains
     if(present(entropy)) entropy=smix
   end subroutine
 
-  function temperature_from_energy(m,value,y,enthalpy) result(t)
+  function temperature_from_energy(m,value,y,enthalpy,ok) result(t)
     type(rf_mechanism), intent(in) :: m
     real(dp), intent(in) :: value,y(:)
     logical, optional, intent(in) :: enthalpy
+    logical, optional, intent(out) :: ok
     real(dp) :: t,lo,hi,cp,cv,h,e,r,res,low,high
     logical :: use_h
     integer :: i
+    t=0
+    if(present(ok)) ok=.false.
     use_h=.false.
     if(present(enthalpy)) use_h=enthalpy
     lo=0; hi=huge(hi)
@@ -78,18 +81,26 @@ contains
     low=merge(h,e,use_h)
     call mixture(m,hi,y,101325._dp,cp,cv,h,e,r)
     high=merge(h,e,use_h)
-    call require(ieee_is_finite(value).and.value>=low.and.value<=high,'Energy outside NASA range')
+    if(.not.(ieee_is_finite(value).and.value>=low.and.value<=high)) then
+      if(present(ok)) return
+      call require(.false.,'Energy outside NASA range')
+    end if
     do i=1,100
       t=(lo+hi)/2
       call mixture(m,t,y,101325._dp,cp,cv,h,e,r)
       res=merge(h,e,use_h)-value
-      if(abs(res)<=1.e-11_dp*max(1._dp,abs(value))) return
+      if(abs(res)<=1.e-11_dp*max(1._dp,abs(value))) then
+        if(present(ok)) ok=.true.
+        return
+      end if
       if(res>0) then
         hi=t
       else
         lo=t
       end if
     end do
+    t=0
+    if(present(ok)) return
     call require(.false.,'Temperature inversion failed; polynomial discontinuity?')
   end function
 end module
