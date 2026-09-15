@@ -1,0 +1,12 @@
+! Cantera 3.2.0 h2o2.yaml: H2 H O O2 OH H2O HO2 H2O2 AR N2
+! Nonreacting nitrogen shock tube. Variable NASA heat capacity (not exact gamma=1.4 Sod).
+&flow1d
+ nx=100, length=1.0, interface_x=0.5,
+ left_temperature=800, right_temperature=640,
+ left_pressure=101325, right_pressure=10132.5,
+ left_velocity=0, right_velocity=0,
+ left_bc='outflow', right_bc='outflow', chemistry=.false.,
+ end_time=0.0002, max_dt=0.00001, cfl=0.4, write_every=20
+/
+0 0 0 0 0 0 0 0 0 1
+0 0 0 0 0 0 0 0 0 1

@@ -51,6 +51,43 @@ contains
     end select
   end subroutine
 
+  subroutine advance_chemistry(m,rho,t,y,dt,rtol,atoly,atolt,maxsteps)
+    ! Homogeneous, adiabatic, constant-volume chemistry for one CFD cell.
+    ! Caller keeps conserved total energy; t is the ODE estimate, not an extra energy source.
+    type(rf_mechanism), intent(in), target :: m
+    real(dp), intent(in) :: rho,dt,rtol,atoly,atolt
+    real(dp), intent(inout) :: t,y(:)
+    integer, intent(in) :: maxsteps
+    type(reactor_context) :: solver
+    real(dp) :: cp,cv,h,e,r,time,state(size(y)),atol(size(y))
+    real(dp) :: rw(22+9*size(y)+2*size(y)**2)
+    integer :: iw(30+size(y)),n,i,j,istate,steps
+    call require(rho>0.and.dt>0.and.all(ieee_is_finite([rho,dt])), 'Invalid chemistry density/dt')
+    call require(rtol>=1.e-12_dp.and.rtol<=1.e-2_dp,'Invalid chemistry rtol')
+    call require(min(atoly,atolt)>0.and.maxsteps>0,'Invalid chemistry tolerances/step limit')
+    call mixture(m,t,y,101325._dp,cp,cv,h,e,r)
+    solver%mechanism=>m; solver%rho0=rho; solver%p0=rho*r*t; solver%constant_pressure=.false.
+    solver%dependent_species=maxloc(y,dim=1)
+    n=size(y); state(1)=t; j=1
+    do i=1,n
+      if(i==solver%dependent_species) cycle
+      j=j+1; state(j)=y(i)
+    end do
+    atol=atoly; atol(1)=atolt; rw=0; iw=0
+    rw(1)=dt; rw(6)=dt; iw(6)=maxsteps
+    time=0; istate=1; steps=0
+    call solver%initialize(f=reactor_rhs)
+    do while(time<dt)
+      call require(steps<maxsteps,'Cell chemistry exceeded max_steps')
+      call solver%solve(n,state,time,dt,2,[rtol],atol,5,istate,1,rw,size(rw),iw,size(iw),22)
+      call require(istate>=0,'Cell chemistry DVODE failed')
+      call unpack(state,solver%dependent_species,y)
+      call check_y(m,y)
+      steps=steps+1
+    end do
+    t=state(1)
+  end subroutine
+
   subroutine unpack(state,dependent,y)
     real(dp), intent(in) :: state(:)
     integer, intent(in) :: dependent

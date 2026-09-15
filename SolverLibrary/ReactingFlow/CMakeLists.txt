@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(ReactingFlow LANGUAGES Fortran)
 include(CTest)
-set(RF_DVODE_SOURCE_DIR "" CACHE PATH "Offline DVODE source checkout (fixed revision documented in FORTRAN.md)")
+set(RF_DVODE_SOURCE_DIR "" CACHE PATH "Offline DVODE source checkout (fixed revision documented in REACTORS.md)")
 if(NOT RF_DVODE_SOURCE_DIR)
   include(FetchContent)
   FetchContent_Declare(rf_dvode
@@ -21,17 +21,22 @@ add_library(rf_dvode STATIC
 target_compile_definitions(rf_dvode PRIVATE REAL64)
 add_library(reactingflow STATIC src/fortran/mod_rf_mechanism.f90
   src/fortran/mod_rf_thermo.f90 src/fortran/mod_rf_kinetics.f90 src/fortran/mod_rf_reactor.f90
-  src/fortran/mod_rf_units.f90)
+  src/fortran/mod_rf_units.f90 src/fortran/mod_rf_flow1d.f90)
 target_link_libraries(reactingflow PUBLIC rf_dvode)
 target_include_directories(reactingflow PUBLIC "$<BUILD_INTERFACE:${CMAKE_Fortran_MODULE_DIRECTORY}>")
 add_executable(rf_reactor src/fortran/main_rf_reactor.f90)
 target_link_libraries(rf_reactor PRIVATE reactingflow)
+add_executable(rf_flow1d src/fortran/main_rf_flow1d.f90)
+target_link_libraries(rf_flow1d PRIVATE reactingflow)
 add_executable(rf_probe tests/fortran/rf_probe.f90)
 target_link_libraries(rf_probe PRIVATE reactingflow)
 if(BUILD_TESTING)
   add_executable(rf_unit tests/fortran/rf_unit.f90)
   target_link_libraries(rf_unit PRIVATE reactingflow)
   add_test(NAME rf_unit COMMAND rf_unit)
+  add_executable(rf_flow_unit tests/fortran/rf_flow_unit.f90)
+  target_link_libraries(rf_flow_unit PRIVATE reactingflow)
+  add_test(NAME rf_flow_unit COMMAND rf_flow_unit)
 endif()
 if(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
   target_compile_options(reactingflow PRIVATE -Wall -Wextra -ffree-line-length-none

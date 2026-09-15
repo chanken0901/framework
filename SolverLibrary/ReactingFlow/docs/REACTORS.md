@@ -3,7 +3,8 @@
 **計算本体はFortran**。NASA物性、混合気体EOS、温度反転、基準量変換、
 詳細反応速度、定容／定圧の時間積分を`src/fortran/`で実装する。
 NSE、GPE、Pythonインタープリターへの実行時依存はない。
-空間離散化、流入出、壁熱伝達、衝撃波、MPI、CUDAはまだ未実装。
+本書の0D反応器は空間格子を持たない。R4aの1次元流体結合は[FLOW1D.md](FLOW1D.md)を参照。
+壁熱伝達、MPI、CUDAはまだ未実装。
 
 ## 構成と依存
 
@@ -135,4 +136,4 @@ python -m unittest discover -s SolverLibrary/ReactingFlow/tests -v
 水素/空気の着火履歴、保存・許容誤差収束、NASA7/9、GRI30の速度、第三体、
 Lindemann/Troe/SRI、PLOG、Chebyshevを照合する。
 今回の実機検証はWindows/gfortran。Linuxコマンドは併記しているがLinux実行は未検証。
-MPI/CUDA、反応流CFD、デトネーションは次段階であり、今回の完成範囲に含まない。
+MPI/CUDAとデトネーション検証は未実装。1次元反応Eulerの実装範囲は[FLOW1D.md](FLOW1D.md)で管理する。
