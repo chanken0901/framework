@@ -857,7 +857,17 @@ reference Reynolds number are read from `cases/{case_id}/case.yaml`:
 python .\\tools\\postprocess_case.py --task statistics
 ```
 
-Run ParaView conversion and statistics together:
+Compute a spatial FFT (NSE only; latest step, density fluctuations by default):
+
+```text
+python tools/postprocess_case.py --task fft --fft-field rho --save-fft
+```
+
+FFT output defaults to `cases/{case_id}/fft`. Use `--fft-field p` for pressure
+(gamma from case.yaml), `--fft-window hann` for windowing, and `--fft-overwrite`
+only when replacing existing FFT results. FFT uses the full grid in host memory.
+
+Run ParaView conversion, statistics and FFT together (NSE):
 
 ```powershell
 python .\\tools\\postprocess_case.py --task all
@@ -872,6 +882,7 @@ python3 tools/run_case.py --build
 python3 tools/run_case.py --run
 python3 tools/postprocess_case.py
 python3 tools/postprocess_case.py --task statistics
+python3 tools/postprocess_case.py --task fft
 ```
 
 Build once before submitting production jobs. When `submit.slurm` exists, it
@@ -1327,6 +1338,7 @@ def prepare(args: argparse.Namespace) -> Path:
         for name in (
             "run_case.py",
             "postprocess_case.py",
+            "analyze_shock_turbulence.py",
             "case_input.py",
             "case_configuration.py",
             "global_case_index.py",

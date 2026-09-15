@@ -148,6 +148,10 @@ components:
     files:
       - tools/slf_to_paraview_merged_cropghost.py
       - tools/nse_turbulence_statistics.py
+      - tools/nse_shock_analysis.py
+      - docs/NSE_SHOCK_ANALYSIS.md
+      - tools/slf_fft.py
+      - docs/NSE_SLF_FFT.md
       - tools/nse_prepare_imported_turbulence.py
       - docs/NSE_SOLVER_SPECIFICATION.md
       - docs/NSE_BUILD_AND_RUN.md
