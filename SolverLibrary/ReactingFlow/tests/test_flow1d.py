@@ -140,5 +140,40 @@ class FlowTests(unittest.TestCase):
         self.assertGreater(coarse,1.e-6)
         self.assertLess(medium,coarse*.6)
 
+    def test_zero_transport_preserves_euler_result(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'N2:1';y=gas.Y.tolist()
+        controls="nx=12,end_time=0.00004,left_temperature=1300,right_temperature=1100,write_every=1"
+        baseline,_=self.run_flow(self.h2,controls,y,y)
+        explicit,_=self.run_flow(self.h2,controls+",transport_model='constant'",y,y)
+        self.np.testing.assert_array_equal(explicit,baseline)
+
+    def test_reacting_transport_conservation_and_effect(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'H2:2,O2:1,N2:3.76';y=gas.Y.tolist()
+        controls="nx=8,length=1,end_time=0.00004,max_dt=0.0000025,write_every=100000,"+\
+            "chemistry=.true.,left_bc='reflecting',right_bc='reflecting',"+\
+            "left_temperature=1300,right_temperature=1100"
+        base,_=self.run_flow(self.h2,controls,y,y)
+        values,d=self.run_flow(self.h2,controls+",transport_model='constant',viscosity=0.1,"+\
+            "bulk_viscosity=0.05,thermal_conductivity=100,mass_diffusivity=0.1",y,y)
+        final=values[values[:,0]==values[-1,0]]
+        ref=base[base[:,0]==base[-1,0]]
+        self.assertGreater(abs(final[:,5]-ref[:,5]).max(),1e-5)
+        self.assertGreater(final[:,3].min(),0)
+        self.assertGreater(final[:,6].min(),0)
+        self.assertGreaterEqual(final[:,7:].min(),0)
+        for key in ('mass_error','momentum_error','energy_error','element_error'):
+            self.assertLess(float(d[key]),1e-8)
+        self.assertEqual(d['transport_model'],'constant')
+        self.assertEqual(values[-1,1],.00004)
+
+    def test_invalid_transport_rejected(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'N2:1';y=gas.Y.tolist()
+        for controls in ["transport_model='unknown'", "viscosity=1", "mass_diffusivity=1",\
+                         "transport_model='constant',viscosity=-1",\
+                         "transport_model='constant',bulk_viscosity=-1",\
+                         "transport_model='constant',thermal_conductivity=-1",\
+                         "transport_model='constant',mass_diffusivity=-1"]:
+            self.run_flow(self.h2,controls,y,y,success=False)
+
 
 if __name__=='__main__': unittest.main()

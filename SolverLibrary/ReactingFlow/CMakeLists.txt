@@ -21,7 +21,7 @@ add_library(rf_dvode STATIC
 target_compile_definitions(rf_dvode PRIVATE REAL64)
 add_library(reactingflow STATIC src/fortran/mod_rf_mechanism.f90
   src/fortran/mod_rf_thermo.f90 src/fortran/mod_rf_kinetics.f90 src/fortran/mod_rf_reactor.f90
-  src/fortran/mod_rf_units.f90 src/fortran/mod_rf_flow1d.f90)
+  src/fortran/mod_rf_units.f90 src/fortran/mod_rf_transport.f90 src/fortran/mod_rf_flow1d.f90)
 target_link_libraries(reactingflow PUBLIC rf_dvode)
 target_include_directories(reactingflow PUBLIC "$<BUILD_INTERFACE:${CMAKE_Fortran_MODULE_DIRECTORY}>")
 add_executable(rf_reactor src/fortran/main_rf_reactor.f90)
@@ -37,6 +37,9 @@ if(BUILD_TESTING)
   add_executable(rf_flow_unit tests/fortran/rf_flow_unit.f90)
   target_link_libraries(rf_flow_unit PRIVATE reactingflow)
   add_test(NAME rf_flow_unit COMMAND rf_flow_unit)
+  add_executable(rf_transport_unit tests/fortran/rf_transport_unit.f90)
+  target_link_libraries(rf_transport_unit PRIVATE reactingflow)
+  add_test(NAME rf_transport_unit COMMAND rf_transport_unit)
 endif()
 if(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
   target_compile_options(reactingflow PRIVATE -Wall -Wextra -ffree-line-length-none

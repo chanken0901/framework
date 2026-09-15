@@ -1,0 +1,15 @@
+! Cantera 3.2.0 h2o2.yaml order: H2 H O O2 OH H2O HO2 H2O2 AR N2
+! R4b constant-coefficient coupling demo. Coefficients are illustrative, not fitted transport data.
+&flow1d
+ nx=32, length=1.0, interface_x=0.5,
+ left_temperature=1300, right_temperature=1100,
+ left_pressure=101325, right_pressure=101325,
+ left_velocity=0, right_velocity=0,
+ left_bc='reflecting', right_bc='reflecting', chemistry=.true.,
+ transport_model='constant', viscosity=0.1, bulk_viscosity=0.05,
+ thermal_conductivity=100.0, mass_diffusivity=0.1,
+ end_time=0.00004, max_dt=0.0000025, cfl=0.4, write_every=4,
+ chemistry_rtol=1.e-9, chemistry_atol_species=1.e-16, chemistry_atol_temperature=1.e-8
+/
+0.0285 0 0 0.2264 0 0 0 0 0 0.7451
+0.0285 0 0 0.2264 0 0 0 0 0 0.7451

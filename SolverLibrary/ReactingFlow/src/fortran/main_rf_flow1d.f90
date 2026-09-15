@@ -1,8 +1,12 @@
 program main_rf_flow1d
   use mod_rf_flow1d
   use mod_rf_thermo
+  use mod_rf_transport
   implicit none
   type(rf_mechanism) :: m
+  type(rf_transport) :: transport
+  character(16) :: transport_model='none'
+  real(dp) :: viscosity=0,bulk_viscosity=0,thermal_conductivity=0,mass_diffusivity=0
   character(2048) :: mechanism_file,input_file,output_file
   character(16) :: left_bc='outflow',right_bc='outflow'
   integer :: nx=100,max_steps=100000,chemistry_max_steps=100000,write_every=50
@@ -17,7 +21,8 @@ program main_rf_flow1d
   integer :: ns,io,out,ios,i,j,step
   namelist /flow1d/ nx,length,interface_x,end_time,cfl,max_dt,max_steps,write_every,left_bc,right_bc, &
     left_temperature,left_pressure,left_velocity,right_temperature,right_pressure,right_velocity,chemistry, &
-    chemistry_rtol,chemistry_atol_species,chemistry_atol_temperature,chemistry_max_steps
+    chemistry_rtol,chemistry_atol_species,chemistry_atol_temperature,chemistry_max_steps, &
+    transport_model,viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity
   call require(command_argument_count()==3,'Usage: rf_flow1d mechanism.rf flow.in output.csv')
   call get_command_argument(1,mechanism_file)
   call get_command_argument(2,input_file)
@@ -28,6 +33,11 @@ program main_rf_flow1d
   call require(ios==0,'Cannot open 1D input')
   read(io,nml=flow1d,iostat=ios)
   call require(ios==0,'Invalid flow1d namelist')
+  transport=rf_transport(viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity)
+  call validate_transport(transport)
+  call require(transport_model=='none'.or.transport_model=='constant','Unknown transport model')
+  if(transport_model=='none') call require(.not.transport_active(transport), &
+    'Nonzero transport coefficients require transport_model=constant')
   call require(nx>=2.and.max_steps>0.and.write_every>0,'Invalid grid/step/output count')
   call require(all(ieee_is_finite([length,interface_x,end_time,cfl,max_dt])), 'Nonfinite flow control')
   call require(min(length,end_time,max_dt,cfl)>0.and.cfl<=.5_dp,'Require positive controls, CFL<=0.5')
@@ -57,7 +67,12 @@ program main_rf_flow1d
   end do
   open(newunit=out,file=trim(output_file),status='new',action='write',iostat=ios)
   call require(ios==0,'Cannot create output; existing files are never overwritten')
-  write(out,'(a)') '# R4a: first-order-space 1D Euler + Strang/DVODE chemistry, SI units'
+  write(out,'(a)') '# 1D conservative flow + optional transport + Strang/DVODE chemistry, SI units'
+  write(out,'(a)') '# transport_model='//trim(transport_model)
+  write(out,'(a,es25.16e3)') '# viscosity=',viscosity
+  write(out,'(a,es25.16e3)') '# bulk_viscosity=',bulk_viscosity
+  write(out,'(a,es25.16e3)') '# thermal_conductivity=',thermal_conductivity
+  write(out,'(a,es25.16e3)') '# mass_diffusivity=',mass_diffusivity
   write(out,'(a)') '# source_sha256='//m%source_hash
   write(out,'(a)') '# canonical_sha256='//m%canonical_hash
   write(out,'(a,l1)') '# chemistry=',chemistry
@@ -95,10 +110,10 @@ program main_rf_flow1d
     end if
     if(time>=end_time) exit
     call require(step<max_steps,'Flow exceeded max_steps; output is incomplete')
-    dt=min(max_dt,end_time-time,flow_timestep(m,q,dx,cfl))
+    dt=min(max_dt,end_time-time,flow_timestep(m,q,dx,cfl,transport))
     call require(time+dt>time,'Flow timestep underflow')
     call advance_flow(m,q,dx,dt,cfl,left_bc,right_bc,chemistry,chemistry_rtol,chemistry_atol_species, &
-                      chemistry_atol_temperature,chemistry_max_steps,change)
+                      chemistry_atol_temperature,chemistry_max_steps,change,transport)
     boundary=boundary+change
     time=time+dt; step=step+1
   end do

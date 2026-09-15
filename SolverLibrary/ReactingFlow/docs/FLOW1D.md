@@ -1,7 +1,8 @@
-# R4a：1次元Euler方程式と詳細反応の結合
+# R4a/b：1次元流体・詳細反応・輸送の結合
 
-R4の前半を実装した。**Fortran、CPU逐次実行、1次元・一様直交格子の基準計算**。
-R4全体の完成ではない。粘性・熱伝導・種拡散、2D/3D、ノズル、MPI/OpenMP/CUDA、
+R4aのEuler基盤とR4bの定係数輸送を実装した。
+**Fortran、CPU逐次実行、1次元・一様直交格子の基準計算**。
+R4全体の完成ではない。温度・組成依存の分子輸送、2D/3D、ノズル、MPI/OpenMP/CUDA、
 CJ/ZNDデトネーション検証、旧反応流CFDとの全体同値検証は残っている。
 現在のコードを実用的なデトネーションソルバーと見なさない。
 
@@ -10,6 +11,7 @@ CJ/ZNDデトネーション検証、旧反応流CFDとの全体同値検証は�
 - 左右のT/P/u/Yを指定した衝撃波管・接触面・一様場の初期化。
 - `chemistry=.false.`による非反応多成分Euler計算。
 - `chemistry=.true.`による、R2で対応する詳細機構を使う反応Euler計算。
+- `transport_model='constant'`による粘性・熱伝導・種拡散。反応の有無とは独立。
 - 両端周期、左右別々の鏡像壁／ゼロ勾配流出。
 - 初期状態、指定ステップ間隔、最終時刻のCSV出力と保存量監視。
 
@@ -31,15 +33,85 @@ ODE温度との差が`max(1e-3 K,100*chemistry_rtol*T)`を超えたら停止。
 圧縮性多成分の接触面では保存型混合による圧力誤差が生じ得る。
 高次再構築、低散逸流束、圧力平衡保持処理はまだない。
 
-刻みは`min(max_dt,終了までの時間,CFL*dx/max(|u|+c))`。
+輸送無効時の刻みは`min(max_dt,終了までの時間,CFL*dx/max(|u|+c))`。
 第1化学半ステップ後と各流体段の音速を再確認し、CFL超過時は元の状態から
 dtを半分にしてやり直す（最大30回）。これで反応後の音速増大も考慮する。
+輸送有効時は、後述の拡散制限も毎段で併用する。
 負の種密度、不正な内部エネルギー、NASA範囲外はクリップせず停止する。
 **任意の強い衝撃波に対する正値性保証や汎用リカバリーは未実装**。
 
 境界の`outflow`はゼロ勾配外挿であり、無反射境界ではない。
 `reflecting`は法線運動量だけ符号反転する滑り鏡像壁。
 `periodic`は両端同時指定のみ。Dirichletと無反射は未移植。
+
+## R4b：粘性・熱伝導・化学種拡散
+
+定係数の基準輸送モデルを独立した`mod_rf_transport`で実装した。
+Fortran APIの`rf_transport`に係数をまとめ、既存の流体APIでは末尾の任意引数として受け取る。
+以前の引数・入力はそのまま使用できる。係数を全て0にした結果はEuler版と一致する。
+将来の温度・組成依存モデルはこの輸送モジュールに追加する。
+
+| namelist設定 | 単位・既定値 | 内容 |
+|---|---|---|
+| transport_model | 'none' | 'constant'で明示指定した係数を有効化 |
+| viscosity | Pa s、0 | 動粘度ではなく粘性係数mu |
+| bulk_viscosity | Pa s、0 | 体積粘性係数zeta（0ならStokes仮説） |
+| thermal_conductivity | W/(m K)、0 | 熱伝導率kappa |
+| mass_diffusivity | m²/s、0 | 全化学種に共通の質量分率勾配ベース拡散係数D |
+
+全係数は有限・非負。noneのまま非ゼロ係数を指定した場合は、黙って無視せずエラー。
+constantでも個別係数を0にできるため、熱伝導だけなどの切り分けが可能。
+機構YAMLの輸送パラメーターから自動算出しない。例の係数は検証用であり実在気体の推奨値ではない。
+**化学種ごとのD、温度依存粘性、混合平均／多成分輸送、Soret、Dufour、圧力拡散は未実装**。
+これらが必要な燃焼速度・火炎構造を定量評価できる完成段階とは見なさない。
+
+全流束は`F=F_Euler+F_diff`として同じセル面で保存的に差分する。
+
+```text
+J_s^raw = -rho_face * D * (Y_s,R - Y_s,L)/dx
+J_s = J_s^raw - Y_s,face * sum(J^raw)
+tau = (4*mu/3 + zeta) * (u_R - u_L)/dx
+F_diff(species) = J_s
+F_diff(momentum) = -tau
+F_diff(energy) = -u_face*tau - kappa*(T_R-T_L)/dx + sum(h_s(T_face)*J_s)
+```
+
+面のrho/u/T/Yは左右算術平均、勾配は隣接セルの差分。輸送の空間離散化は2次。
+最後の1種で丸め誤差のみを閉じてsum(J)=0とする（濃度のクリップではない）。
+h_sには生成エンタルピーを含み、種拡散に伴うエネルギー輸送を省略しない。
+対流は引き続き空間1次のRusanovであり、全体が空間2次になったわけではない。
+
+輸送は流体と同じSSPRK3の各段に入る。化学とのStrang分割は変更しない。
+刻みの保守的な目安は次の通りで、max_dtと終了時刻でも制限する。
+
+```text
+nu_bound = (4*mu/3+zeta)/min(rho)
+          + kappa/min(rho*cv) + D*max(rho)/min(rho)
+dt <= CFL / (max(|u|+c)/dx + 2*nu_bound/dx²)
+```
+
+圧縮性のエネルギー式に合わせ熱拡散の制限にはcpではなくcvを用いる。
+これは非線形系全体の正値性保証ではない。格子を細かくすると拡散制限はdx²に比例して厳しくなる。
+周期境界では面流束を共有する。鏡像壁はu_wall=0、断熱・種の不透過を課し、
+壁の粘性応力は運動量の境界収支に入る。壁面エネルギー・種流束は0。
+outflowでは全原始変数の法線勾配0として、追加の輸送流束は0。
+
+輸送付きサンプルは`examples/flow1d_h2_transport.in`。
+下記の準備済み機構を使い、Windowsでは：
+
+```powershell
+.\build\reactingflow\rf_flow1d.exe build/reactingflow/h2o2_flow.rf SolverLibrary/ReactingFlow/examples/flow1d_h2_transport.in build/reactingflow/h2_transport.csv
+```
+
+Linuxでは：
+
+```bash
+./build/reactingflow/rf_flow1d build/reactingflow/h2o2_flow.rf SolverLibrary/ReactingFlow/examples/flow1d_h2_transport.in build/reactingflow/h2_transport.csv
+```
+
+出力コメントにモデルと全輸送係数を記録する。境界補正した保存検査には輸送流束も含む。
+参考：[Canteraの種拡散流束・補正速度の説明](https://www.cantera.org/stable/reference/onedim/governing-equations.html)。
+本実装の共通定係数Fickモデルを、Canteraの混合平均輸送モデルと同一とは扱わない。
 
 ## ビルド・実行
 
@@ -109,9 +181,13 @@ SSPRK3の各段の境界寄与は1/6、1/6、2/3の重みで集計する。
 実施：Fortran流束単体、周期一様場、静止鏡像壁、無反応化学、
 非反応接触面の種保存、定比熱理想気体Sodの厳密解に対する格子収束、
 一様水素/空気とCantera定容反応器の比較、非一様反応場の刻み細分化と保存検査。
+R4bでは粘性応力・粘性仕事・Fourier熱流束・種エンタルピー流束、断熱壁、
+周期熱／種拡散の正弦波減衰と空間2次収束、拡散による刻み制限、
+反応＋輸送の保存、輸送係数0でのEuler版との一致、不正係数の拒否を検証した。
+正弦波の解析解比較は輸送演算子を単独で検証し、Rusanovの数値拡散を混ぜていない。
 Sod参考：[Clawpack Euler Riemann問題](https://www.clawpack.org/riemann_book/html/Euler_approximate.html)。
 同梱窒素ショック例はNASAの温度依存比熱であり、定比熱Sod厳密解とは別物。
 
-R4残作業：旧CFDとの全体同値検証、空間輸送と境界の拡充、高次・頑健性検証、
+R4残作業：旧CFDとの全体同値検証、分子輸送モデルと境界の拡充、高次・頑健性検証、
 ノズル／一般座標、1D反応波のCJ速度・ZND構造・格子／分割誤差の検証。
 この確認が済むまではR5（並列化）完了へ進めない。
