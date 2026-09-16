@@ -119,6 +119,13 @@ forcing:
     fft_backend: auto
     k_cutoff: 2.5
     target_dissipation: 0.1
+    # Alternative: remove target_dissipation and enable all three lines below.
+    # Uses resolved viscosity; does not change Reinput. Fixed background a*=1 by default.
+    # target_mode: mach_reynolds
+    # target_turbulent_mach_number: 0.3
+    # target_taylor_reynolds_number: 100.0
+    # target_mean_density: 1.0   # default: physics.nse.rho0
+    # target_mean_pressure: 0.7142857142857143  # default: target_mean_density/gamma
     dilatational_ratio: 0.0
     denominator_floor: 1.0e-14
     max_coefficient: 0.0

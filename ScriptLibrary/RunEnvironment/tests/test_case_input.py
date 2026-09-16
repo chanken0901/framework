@@ -11,6 +11,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from case_input import (  # noqa: E402
     CaseInputError,
+    _resolve_nse_forcing,
     NSE_BOUNDARY_FACES,
     _validate_solver_selection,
     derive_nse_hit_transport,
@@ -24,6 +25,28 @@ MANIFEST = (
     FRAMEWORK_ROOT / "SolverLibrary" / "GPE" / "gp3d" / "solver_manifest.yaml"
 )
 NSE_MANIFEST = FRAMEWORK_ROOT / "SolverLibrary" / "NSE" / "solver_manifest.yaml"
+
+
+class ForcingTargetTests(unittest.TestCase):
+    def resolve(self, **overrides):
+        parameters = dict(target_mode="mach_reynolds", target_turbulent_mach_number=0.3,
+                          target_taylor_reynolds_number=100)
+        parameters.update(overrides)
+        return _resolve_nse_forcing({"forcing": {"type": "petersen_livescu",
+            "petersen_livescu": parameters}}, {"reynolds": 7000, "rho0": 1, "gamma": 1.4})
+
+    def test_conversion(self):
+        self.assertAlmostEqual(self.resolve()["forcing_target_dissipation"], 0.00945)
+        self.assertAlmostEqual(self.resolve(target_mean_density=2)["forcing_target_dissipation"], 0.0378)
+        self.assertAlmostEqual(self.resolve(target_mean_pressure=2/1.4)["forcing_target_dissipation"], 0.0378)
+
+    def test_reject_invalid(self):
+        for values in ({"target_dissipation": 0.1}, {"target_mode": "bad"},
+                       {"target_mode": "direct"}, {"target_taylor_reynolds_number": 0},
+                       {"target_turbulent_mach_number": float("nan")},
+                       {"target_mean_density": -1}, {"target_mean_pressure": 0}):
+            with self.subTest(values=values), self.assertRaises(CaseInputError):
+                self.resolve(**values)
 
 
 class CaseInputProfileTests(unittest.TestCase):
@@ -1847,6 +1870,18 @@ class NseCaseInputTests(unittest.TestCase):
         self.assertIn("forcing_target_dissipation = 0.1", text)
         self.assertIn("forcing_dilatational_ratio = 0.25", text)
         self.assertIn("forcing_report_interval = 50", text)
+
+    def test_renders_mach_reynolds_forcing_without_changing_viscosity(self) -> None:
+        case = self.case()
+        case["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
+        case["physics"]["nse"]["reynolds"] = 7000
+        case["forcing"] = {"type": "petersen_livescu", "petersen_livescu": {
+            "target_mode": "mach_reynolds", "target_turbulent_mach_number": 0.3,
+            "target_taylor_reynolds_number": 100}}
+        text = render_nse(case, self.manifest, "cpu_mpi_2decomp_fftw")
+        self.assertIn("reynolds = 7000", text)
+        line = next(s for s in text.splitlines() if s.strip().startswith("forcing_target_dissipation ="))
+        self.assertAlmostEqual(float(line.split("=")[1]), 0.00945)
 
     def test_rejects_forcing_with_non_periodic_boundary(self) -> None:
         case = self.case()

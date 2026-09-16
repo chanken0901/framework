@@ -1,5 +1,8 @@
 # NSEソルバー総合仕様書
 
+追補: フォーシングの直接ε指定に加え、目標Mt・Re_lambdaから換算する方式を追加。
+設定・換算式・読み込み時の注意は [HITフォーシング目標指定](NSE_FORCING_TARGET.md) を参照。
+
 更新日: 2026-09-10
 仕様区分: 現行実装準拠
 対象: `FrameWork/SolverLibrary/NSE` および `ScriptLibrary/RunEnvironment`

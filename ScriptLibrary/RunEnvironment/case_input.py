@@ -237,6 +237,11 @@ NSE_FORCING_SCHEMAS: dict[str, dict[str, Any]] = {
             "fft_backend",
             "k_cutoff",
             "target_dissipation",
+            "target_mode",
+            "target_turbulent_mach_number",
+            "target_taylor_reynolds_number",
+            "target_mean_density",
+            "target_mean_pressure",
             "dilatational_ratio",
             "denominator_floor",
             "max_coefficient",
@@ -1403,7 +1408,7 @@ def _validate_nse_shock_tube_configuration(
             )
 
 
-def _resolve_nse_forcing(case: dict[str, Any]) -> dict[str, Any]:
+def _resolve_nse_forcing(case: dict[str, Any], resolved_nse: dict[str, Any] | None = None) -> dict[str, Any]:
     forcing = _mapping(nested(case, "forcing", {}), "forcing")
     legacy_parameters = set(
         NSE_FORCING_SCHEMAS["petersen_livescu"]["parameters"]
@@ -1467,6 +1472,35 @@ def _resolve_nse_forcing(case: dict[str, Any]) -> dict[str, Any]:
             f"forcing.type={forcing_type!r} requires the "
             f"forcing.{forcing_type} mapping"
         )
+
+    mode = _canonical_selector(str(selected.get("target_mode", "direct")))
+    derived_keys = ("target_turbulent_mach_number", "target_taylor_reynolds_number",
+                    "target_mean_density", "target_mean_pressure")
+    if mode == "mach_reynolds":
+        if selected.get("target_dissipation") not in {None, ""}:
+            raise CaseInputError("mach_reynolds cannot also specify target_dissipation")
+        if resolved_nse is None:
+            raise CaseInputError("mach_reynolds requires resolved NSE transport parameters")
+        mt = _positive_float(selected.get(derived_keys[0]), derived_keys[0])
+        re_lambda = _positive_float(selected.get(derived_keys[1]), derived_keys[1])
+        re_input = _positive_float(resolved_nse.get("reynolds"), "physics.nse.reynolds")
+        gamma = _positive_float(resolved_nse.get("gamma", 1.4), "physics.nse.gamma")
+        rho = _positive_float(selected.get("target_mean_density", resolved_nse.get("rho0", 1.0)),
+                              "target_mean_density")
+        pressure = _positive_float(selected.get("target_mean_pressure", rho / gamma),
+                                   "target_mean_pressure")
+        # Fixed reference state; no change to viscosity and no runtime feedback.
+        # nu*=1/(Re*rho), a*^2=gamma*p/rho; target is per volume.
+        try:
+            target = (5.0 / 3.0) * re_input * (gamma * pressure)**2 * mt**4 / re_lambda**2
+        except (OverflowError, ZeroDivisionError) as exc:
+            raise CaseInputError("mach_reynolds target overflow/underflow") from exc
+        selected["target_dissipation"] = _positive_float(target, "derived target_dissipation")
+    elif mode == "direct":
+        if any(selected.get(key) not in {None, ""} for key in derived_keys):
+            raise CaseInputError("Mach/Reynolds target parameters require target_mode: mach_reynolds")
+    else:
+        raise CaseInputError("forcing target_mode must be direct or mach_reynolds")
 
     for required in schema["required"]:
         if selected.get(required) in {None, ""}:
@@ -1796,7 +1830,7 @@ def render_nse(
     if case.get("boundary") is not None:
         nse.pop("boundary_condition", None)
     nse.update(boundary_values)
-    forcing_values = _resolve_nse_forcing(case)
+    forcing_values = _resolve_nse_forcing(case, nse)
     for target, value in forcing_values.items():
         if target not in nse or nse[target] in {None, ""}:
             nse[target] = value
