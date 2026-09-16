@@ -1,40 +1,28 @@
 # HITフォーシングの目標指定
 
-従来の `forcing.petersen_livescu.target_dissipation` 直接指定は変更しない。
-`target_mode` で選択する。テンプレートには `target_mode: direct` を明記している。
-既存ケースとの互換性のため、省略時も `direct` とする。
+## 方式ごとに設定をぶら下げて選択する
 
-| target_mode | 指定する値 |
-|---|---|
-| `direct` | `target_dissipation`（散逸率の目標値） |
-| `mach_reynolds` | `target_turbulent_mach_number` と `target_taylor_reynolds_number` |
-
-## 散逸率を直接指定する
+`target.type` の1行だけで切り替える。両方の設定を残してよく、選択した枝だけを読み込む。
 
 ```yaml
 forcing:
   type: petersen_livescu
   petersen_livescu:
-    target_mode: direct
-    target_dissipation: 0.1
+    target:
+      type: direct  # direct または mach_reynolds
+      direct:
+        dissipation: 0.1
+      mach_reynolds:
+        turbulent_mach_number: 0.3
+        taylor_reynolds_number: 100.0
+        # mean_density: 1.0
+        # mean_pressure: 0.7142857142857143
 ```
 
-## 乱流パラメータから計算する
-
-`target_mode` を変更し、使わない方式の入力は削除またはコメントアウトする。
-
-```yaml
-forcing:
-  type: petersen_livescu
-  petersen_livescu:
-    target_mode: mach_reynolds
-    target_turbulent_mach_number: 0.3
-    target_taylor_reynolds_number: 100.0
-    # target_mean_density: 1.0
-    # target_mean_pressure: 0.7142857142857143
-```
-
-この方式では `target_dissipation` を削除する。併記はエラー。
+`direct` は散逸率直接指定、`mach_reynolds` は乱流パラメータからの換算。
+選択された枝がない場合や、必須値が欠ける場合はエラー。
+従来の平坦な `target_dissipation`、`target_mode` と `target_*` も互換入力として維持する。
+旧形式で `target_mode` を省略した場合は直接指定。ただし新しい `target` と旧形式の併記はエラー。
 背景密度の既定値は `physics.nse.rho0`、背景圧力はその密度/gamma。
 異なる背景平均温度を使う場合は、その温度に対応した無次元平均圧力と密度を明示する。
 これらは入力生成時の固定値であり、計算中の平均温度に追従しない。

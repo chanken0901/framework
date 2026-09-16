@@ -28,6 +28,30 @@ NSE_MANIFEST = FRAMEWORK_ROOT / "SolverLibrary" / "NSE" / "solver_manifest.yaml"
 
 
 class ForcingTargetTests(unittest.TestCase):
+    def test_nested_selection(self):
+        target = {"type": "direct", "direct": {"dissipation": 0.1},
+                  "mach_reynolds": {"turbulent_mach_number": 0.3, "taylor_reynolds_number": 100}}
+        case = {"forcing": {"type": "petersen_livescu", "petersen_livescu": {"target": target}}}
+        nse = {"reynolds": 7000, "rho0": 1, "gamma": 1.4}
+        for mode, expected in (("direct", 0.1), ("mach_reynolds", 0.00945)):
+            target["type"] = mode
+            self.assertAlmostEqual(_resolve_nse_forcing(case, nse)["forcing_target_dissipation"], expected)
+        self.assertEqual(nse["reynolds"], 7000)
+        target["direct"] = None  # Unselected branch is not used.
+        self.assertAlmostEqual(_resolve_nse_forcing(case, nse)["forcing_target_dissipation"], 0.00945)
+        case["forcing"]["petersen_livescu"]["target_dissipation"] = 1
+        with self.assertRaises(CaseInputError):
+            _resolve_nse_forcing(case, nse)
+
+    def test_nested_invalid(self):
+        for target in ({}, {"type": "bad"}, {"type": "direct"},
+                       {"type": "direct", "direct": {"dissipation": -1}},
+                       {"type": "direct", "direct": {"dissipation": 1, "typo": 2}},
+                       {"type": "mach_reynolds", "mach_reynolds": {"turbulent_mach_number": 0.3}}):
+            case = {"forcing": {"type": "petersen_livescu", "petersen_livescu": {"target": target}}}
+            with self.subTest(target=target), self.assertRaises(CaseInputError):
+                _resolve_nse_forcing(case, {"reynolds": 7000})
+
     def resolve(self, **overrides):
         parameters = dict(target_mode="mach_reynolds", target_turbulent_mach_number=0.3,
                           target_taylor_reynolds_number=100)

@@ -238,6 +238,7 @@ NSE_FORCING_SCHEMAS: dict[str, dict[str, Any]] = {
             "k_cutoff",
             "target_dissipation",
             "target_mode",
+            "target",
             "target_turbulent_mach_number",
             "target_taylor_reynolds_number",
             "target_mean_density",
@@ -1473,6 +1474,31 @@ def _resolve_nse_forcing(case: dict[str, Any], resolved_nse: dict[str, Any] | No
             f"forcing.{forcing_type} mapping"
         )
 
+    if "target" in selected:
+        flat_keys = {"target_mode", "target_dissipation", "target_turbulent_mach_number",
+                     "target_taylor_reynolds_number", "target_mean_density", "target_mean_pressure"}
+        if flat_keys.intersection(selected):
+            raise CaseInputError("forcing target cannot be mixed with legacy flat target parameters")
+        target_config = _mapping(selected["target"], "forcing.petersen_livescu.target")
+        unknown = set(target_config) - {"type", "direct", "mach_reynolds"}
+        if unknown:
+            raise CaseInputError(f"unknown forcing target key(s): {sorted(unknown)}")
+        mode = _canonical_selector(str(target_config.get("type", "")))
+        mappings = {
+            "direct": {"dissipation": "target_dissipation"},
+            "mach_reynolds": {"turbulent_mach_number": "target_turbulent_mach_number",
+                              "taylor_reynolds_number": "target_taylor_reynolds_number",
+                              "mean_density": "target_mean_density", "mean_pressure": "target_mean_pressure"},
+        }
+        if mode not in mappings:
+            raise CaseInputError("forcing target.type must be direct or mach_reynolds")
+        # Only the selected branch is read; the other branch may retain its settings.
+        branch = _mapping(target_config.get(mode), f"forcing.target.{mode}")
+        unknown = set(branch) - set(mappings[mode])
+        if unknown:
+            raise CaseInputError(f"unknown forcing target.{mode} key(s): {sorted(unknown)}")
+        selected.update({destination: branch[key] for key, destination in mappings[mode].items() if key in branch})
+        selected["target_mode"] = mode
     mode = _canonical_selector(str(selected.get("target_mode", "direct")))
     derived_keys = ("target_turbulent_mach_number", "target_taylor_reynolds_number",
                     "target_mean_density", "target_mean_pressure")
@@ -1499,6 +1525,7 @@ def _resolve_nse_forcing(case: dict[str, Any], resolved_nse: dict[str, Any] | No
     elif mode == "direct":
         if any(selected.get(key) not in {None, ""} for key in derived_keys):
             raise CaseInputError("Mach/Reynolds target parameters require target_mode: mach_reynolds")
+        selected["target_dissipation"] = _positive_float(selected.get("target_dissipation"), "target_dissipation")
     else:
         raise CaseInputError("forcing target_mode must be direct or mach_reynolds")
 

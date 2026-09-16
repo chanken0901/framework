@@ -118,17 +118,18 @@ forcing:
     # choices: auto, 2decomp_fftw, cufft, cufftmp
     fft_backend: auto
     k_cutoff: 2.5
-    # choices: direct (specify dissipation), mach_reynolds (specify Mt and Re_lambda)
-    target_mode: direct
-    # direct mode only:
-    target_dissipation: 0.1
-    # For mach_reynolds: change target_mode above, comment out target_dissipation,
-    # and uncomment both target parameters below. Do not specify both modes' inputs.
-    # Uses resolved viscosity; does not change Reinput. Fixed background a*=1 by default.
-    # target_turbulent_mach_number: 0.3
-    # target_taylor_reynolds_number: 100.0
-    # target_mean_density: 1.0   # default: physics.nse.rho0
-    # target_mean_pressure: 0.7142857142857143  # default: target_mean_density/gamma
+    target:
+      # choices: direct (dissipation), mach_reynolds (Mt and Re_lambda)
+      # Only the selected branch is used. Keep both branches and switch type.
+      type: direct
+      direct:
+        dissipation: 0.1
+      mach_reynolds:
+        turbulent_mach_number: 0.3
+        taylor_reynolds_number: 100.0
+        # Uses resolved viscosity; does not change Reinput.
+        # mean_density: 1.0   # default: physics.nse.rho0
+        # mean_pressure: 0.7142857142857143  # default: mean_density/gamma
     dilatational_ratio: 0.0
     denominator_floor: 1.0e-14
     max_coefficient: 0.0
