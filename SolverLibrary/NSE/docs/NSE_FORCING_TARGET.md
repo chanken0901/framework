@@ -1,7 +1,27 @@
 # HITフォーシングの目標指定
 
 従来の `forcing.petersen_livescu.target_dissipation` 直接指定は変更しない。
-`target_mode` を省略すると `direct`。追加方式は次のとおり。
+`target_mode` で選択する。テンプレートには `target_mode: direct` を明記している。
+既存ケースとの互換性のため、省略時も `direct` とする。
+
+| target_mode | 指定する値 |
+|---|---|
+| `direct` | `target_dissipation`（散逸率の目標値） |
+| `mach_reynolds` | `target_turbulent_mach_number` と `target_taylor_reynolds_number` |
+
+## 散逸率を直接指定する
+
+```yaml
+forcing:
+  type: petersen_livescu
+  petersen_livescu:
+    target_mode: direct
+    target_dissipation: 0.1
+```
+
+## 乱流パラメータから計算する
+
+`target_mode` を変更し、使わない方式の入力は削除またはコメントアウトする。
 
 ```yaml
 forcing:
