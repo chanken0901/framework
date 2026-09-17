@@ -95,3 +95,6 @@ R4では保存的な圧縮性多成分流、衝撃波捕獲、密度・圧力・
 
 > R4i: approximate Eucken/WMS thermal conductivity implemented. Detailed collision-integral
 > transport, composition-dependent species diffusion and transport-data import remain outstanding.
+
+> R4j: a named Sutherland-data file interface is implemented; external collision-integral data import remains.
+> [Remaining work](R4_REMAINING.md) separates implementation increments from R4 completion criteria.

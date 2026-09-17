@@ -1,0 +1,15 @@
+# SYNTHETIC CODE-VERIFICATION DATA ONLY, not physical H2/air transport.
+# SI: reference temperature K; rows: species, kg/mol, reference viscosity Pa s, Sutherland K.
+RF_TRANSPORT_V1
+10 300
+# Deliberately different from mechanism ordering; matched by species name.
+N2 0.028014 0.000018 190
+AR 0.03995 0.00002 180
+H2O2 0.034014 0.00001 170
+HO2 0.033006 0.00002 160
+H2O 0.018015 0.00001 150
+OH 0.017007 0.00002 140
+O2 0.031998 0.00002 130
+O 0.015999 0.00002 120
+H 0.001008 0.000012 110
+H2 0.002016 0.00001 100

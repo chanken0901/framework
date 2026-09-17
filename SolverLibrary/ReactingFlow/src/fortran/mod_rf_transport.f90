@@ -7,6 +7,7 @@ module mod_rf_transport
   public :: fixed_diffusive_flux
   public :: mixture_viscosity,viscosity_bound
   public :: mixture_conductivity,conductivity_bound
+  public :: read_transport_data
   type :: rf_transport
     ! Constant SI coefficients. The common species D is not a detailed mixture-averaged model.
     real(dp) :: viscosity=0,bulk_viscosity=0,conductivity=0,diffusivity=0
@@ -17,6 +18,97 @@ module mod_rf_transport
     logical :: eucken_wms=.false.
   end type
 contains
+  subroutine read_transport_data(path,m,c)
+    ! Versioned SI data, matched by exact species name rather than row order.
+    character(*), intent(in) :: path
+    type(rf_mechanism), intent(in) :: m
+    type(rf_transport), intent(inout) :: c
+    character(256) :: fields(4)
+    integer :: unit,ios,n,ns,i,j,index
+    logical :: found,seen(size(m%species))
+    real(dp) :: mass
+    ns=size(m%species)
+    call require(.not.allocated(c%species_viscosity).and..not.allocated(c%sutherland_temperature), &
+      'Transport file cannot overwrite existing species data')
+    open(newunit=unit,file=path,status='old',action='read',iostat=ios)
+    call require(ios==0,'Cannot open transport file: '//path)
+    call transport_record(unit,fields(:1),found)
+    call require(found,'Empty transport file')
+    call require(trim(fields(1))=='RF_TRANSPORT_V1','Unsupported transport file version')
+    call transport_record(unit,fields(:2),found)
+    call require(found,'Missing transport count/reference temperature')
+    call require(verify(trim(fields(1)),'0123456789')==0,'Invalid transport species count')
+    read(fields(1),*,iostat=ios) n
+    call require(ios==0,'Invalid transport species count')
+    call require(n==ns,'Transport file must contain every mechanism species exactly once')
+    c%viscosity_reference_temperature=transport_number(fields(2))
+    allocate(c%species_viscosity(ns),c%sutherland_temperature(ns));seen=.false.
+    do i=1,ns
+      call transport_record(unit,fields,found)
+      call require(found,'Missing transport species record')
+      index=0
+      do j=1,ns
+        if(trim(fields(1))==trim(m%species(j)%name)) index=j
+      end do
+      call require(index>0,'Unknown transport species: '//trim(fields(1)))
+      call require(.not.seen(index),'Duplicate transport species: '//trim(fields(1)))
+      seen(index)=.true.;mass=transport_number(fields(2))
+      call require(mass>0,'Transport molar mass must be positive (kg/mol)')
+      call require(abs(mass-m%species(index)%mass)<=1.e-8_dp*m%species(index)%mass, &
+        'Transport molar mass differs from mechanism (require kg/mol): '//trim(fields(1)))
+      c%species_viscosity(index)=transport_number(fields(3))
+      c%sutherland_temperature(index)=transport_number(fields(4))
+    end do
+    call transport_record(unit,fields,found)
+    call require(.not.found,'Extra transport file records')
+    close(unit)
+    call validate_transport(c,ns)
+  end subroutine
+
+  subroutine transport_record(unit,fields,found)
+    integer, intent(in) :: unit
+    character(*), intent(out) :: fields(:)
+    logical, intent(out) :: found
+    character(4096) :: line
+    integer :: ios,i,j,n,last
+    found=.false.;fields=''
+    do
+      read(unit,'(a)',advance='no',iostat=ios) line
+      if(is_iostat_end(ios)) return
+      call require(is_iostat_eor(ios),'Transport line too long or read failure (limit 4095 characters)')
+      i=scan(line,'#!');if(i>0) line(i:)=''
+      if(len_trim(line)==0) cycle
+      exit
+    end do
+    last=len_trim(line);i=1;n=0
+    do while(i<=last)
+      if(line(i:i)==' '.or.line(i:i)==achar(9)) then
+        i=i+1;cycle
+      end if
+      j=i
+      do while(j<=last)
+        if(line(j:j)==' '.or.line(j:j)==achar(9)) exit
+        j=j+1
+      end do
+      n=n+1
+      call require(n<=size(fields),'Too many fields in transport record')
+      call require(j-i<=len(fields),'Transport token too long')
+      fields(n)=line(i:j-1);i=j
+    end do
+    call require(n==size(fields),'Wrong number of transport record fields')
+    found=.true.
+  end subroutine
+
+  real(dp) function transport_number(token) result(value)
+    character(*), intent(in) :: token
+    integer :: ios
+    call require(len_trim(token)>0.and.verify(trim(token),'0123456789+-.eEdD')==0, &
+      'Invalid transport numeric token: '//trim(token))
+    read(token,*,iostat=ios) value
+    call require(ios==0,'Invalid transport number: '//trim(token))
+    call require(ieee_is_finite(value),'Nonfinite transport value')
+  end function
+
   function pure_viscosities(c,t) result(mu)
     type(rf_transport), intent(in) :: c
     real(dp), intent(in) :: t

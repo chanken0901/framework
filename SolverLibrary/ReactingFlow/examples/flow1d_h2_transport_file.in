@@ -1,0 +1,16 @@
+! Verification only. File path is relative to THIS input, not the working directory.
+&flow1d
+ nx=16, length=0.1, interface_x=0.05,
+ left_temperature=1100, right_temperature=1300,
+ left_pressure=101325, right_pressure=101325, left_velocity=20, right_velocity=20,
+ left_bc='dirichlet', right_bc='outflow',
+ left_boundary_temperature=1100, left_boundary_pressure=101325, left_boundary_velocity=20,
+ left_boundary_y=0.0285,0,0,0.2264,0,0,0,0,0,0.7451,
+ chemistry=.true., reconstruction='muscl', transport_model='species_constant',
+ viscosity_model='sutherland_wilke', conductivity_model='eucken_wms',
+ transport_file='h2_synthetic_transport.rf',
+ species_diffusivities=0.00002,0.00003,0.00002,0.00001,0.00002,0.00001,0.00001,0.00001,0.00001,0.00001,
+ end_time=0.000002, max_dt=0.0000001, cfl=0.4, write_every=10
+/
+0.0285 0 0 0.2264 0 0 0 0 0 0.7451
+0.0145 0 0 0.2297 0 0 0 0 0 0.7558

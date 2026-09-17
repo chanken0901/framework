@@ -14,6 +14,46 @@ from reactingflow.importer import import_cantera
 
 
 class FlowTests(unittest.TestCase):
+    def test_named_transport_file_matches_inline(self):
+        text=(ROOT/'examples/flow1d_h2_eucken.in').read_text()
+        controls,rows=text.split('&flow1d',1)[1].split('/',1)
+        yl,yr=([float(v) for v in line.split()] for line in rows.strip().splitlines())
+        expected,_=self.run_flow(self.h2,controls,yl,yr)
+        selected=controls.replace("viscosity_model='sutherland_wilke', viscosity_reference_temperature=300,",
+                                  "viscosity_model='sutherland_wilke',")
+        selected='\n'.join(line for line in selected.splitlines()
+                           if not line.strip().startswith(('species_reference_viscosities=', 'species_sutherland_temperatures=')))
+        data=(ROOT/'examples/h2_synthetic_transport.rf').read_text()
+        for path in ('data/transport data.rf','@ABS_TRANSPORT@'):
+            values,d=self.run_flow(self.h2,selected+f",transport_file='{path}'",yl,yr,
+                                  files={'data/transport data.rf':data})
+            self.np.testing.assert_array_equal(values,expected)
+            self.assertIn('transport_file',d)
+            self.assertAlmostEqual(float(d['reference_viscosity_N2']),0.000018)
+        example=(ROOT/'examples/flow1d_h2_transport_file.in').read_text()
+        example_controls=example.split('&flow1d',1)[1].split('/',1)[0]
+        values,_=self.run_flow(self.h2,example_controls,yl,yr,files={'h2_synthetic_transport.rf':data})
+        self.np.testing.assert_array_equal(values,expected)
+
+    def test_invalid_transport_files(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'N2:1';y=gas.Y.tolist()
+        data=(ROOT/'examples/h2_synthetic_transport.rf').read_text()
+        base="transport_model='constant',viscosity_model='sutherland_wilke',transport_file='data/transport data.rf'"
+        invalid=[data.replace('RF_TRANSPORT_V1','RF_TRANSPORT_V9'),
+                 data.replace('10 300','9 300'),data.replace('N2 0.028014','BAD 0.028014'),
+                 data.replace('N2 0.028014','H2 0.002016'),data.replace('0.028014','28.014'),
+                 data.replace('0.000018','NaN'),data.replace('0.000018','-1'),
+                 data.replace('0.000018','/'),data.replace('0.000018','2*1'),
+                 data+'extra\n',data+'x'*5000, '\n'.join(data.splitlines()[:-1])]
+        for i,bad in enumerate(invalid):
+            with self.subTest(i=i):
+                self.run_flow(self.h2,base,y,y,success=False,files={'data/transport data.rf':bad})
+        self.run_flow(self.h2,base,y,y,success=False) # missing file
+        self.run_flow(self.h2,base+',viscosity_reference_temperature=300',y,y,success=False,
+                      files={'data/transport data.rf':data})
+        self.run_flow(self.h2,base.replace("'sutherland_wilke'","'constant'"),y,y,success=False,
+                      files={'data/transport data.rf':data})
+
     def test_eucken_example(self):
         text=(ROOT/'examples/flow1d_h2_eucken.in').read_text()
         controls,rows=text.split('&flow1d',1)[1].split('/',1)
@@ -106,10 +146,14 @@ class FlowTests(unittest.TestCase):
         if not cls.exe.is_file(): raise RuntimeError('Build rf_flow1d first')
         cls.h2=Path(ct.__file__).parent/'data/h2o2.yaml'
 
-    def run_flow(self,source,controls,yl,yr,success=True):
+    def run_flow(self,source,controls,yl,yr,success=True,files=None):
         with tempfile.TemporaryDirectory() as tmp:
             tmp=Path(tmp);data=tmp/'mechanism.rf';inp=tmp/'flow.in';out=tmp/'flow.csv'
             export(import_cantera(source),data)
+            for name,content in (files or {}).items():
+                destination=tmp/name;destination.parent.mkdir(parents=True,exist_ok=True)
+                destination.write_text(content)
+            controls=controls.replace('@ABS_TRANSPORT@',(tmp/'data/transport data.rf').as_posix())
             inp.write_text('&flow1d '+controls+' /\n'+' '.join(map(str,yl))+'\n'+' '.join(map(str,yr))+'\n')
             run=subprocess.run([str(self.exe),str(data),str(inp),str(out)],capture_output=True,text=True,timeout=120)
             if not success:

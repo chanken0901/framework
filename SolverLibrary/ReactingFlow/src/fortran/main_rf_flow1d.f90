@@ -19,6 +19,8 @@ program main_rf_flow1d
   real(dp) :: right_boundary_temperature=-1,right_boundary_pressure=-1,right_boundary_velocity=0
   real(dp), allocatable :: left_boundary_y(:),right_boundary_y(:),fixed_states(:,:)
   character(2048) :: mechanism_file,input_file,output_file
+  character(512) :: input_error=''
+  character(2048) :: transport_file='',resolved_transport_file=''
   character(16) :: left_bc='outflow',right_bc='outflow'
   integer :: nx=100,max_steps=100000,chemistry_max_steps=100000,write_every=50
   real(dp) :: length=1,interface_x=.5_dp,end_time=.001_dp,cfl=.4_dp,max_dt=.00001_dp
@@ -39,7 +41,7 @@ program main_rf_flow1d
     right_boundary_temperature,right_boundary_pressure,right_boundary_velocity,right_boundary_y, &
     transport_temperature_model,transport_reference_temperature,transport_temperature_exponent, &
     viscosity_model,viscosity_reference_temperature,species_reference_viscosities,species_sutherland_temperatures, &
-    conductivity_model
+    conductivity_model,transport_file
   call require(command_argument_count()==3,'Usage: rf_flow1d mechanism.rf flow.in output.csv')
   call get_command_argument(1,mechanism_file)
   call get_command_argument(2,input_file)
@@ -53,22 +55,33 @@ program main_rf_flow1d
   left_boundary_y=-1; right_boundary_y=-1; fixed_states=0
   open(newunit=io,file=trim(input_file),status='old',action='read',iostat=ios)
   call require(ios==0,'Cannot open 1D input')
-  read(io,nml=flow1d,iostat=ios)
-  call require(ios==0,'Invalid flow1d namelist')
+  read(io,nml=flow1d,iostat=ios,iomsg=input_error)
+  call require(ios==0,'Invalid flow1d namelist: '//trim(input_error))
   call validate_reconstruction(reconstruction)
   transport=rf_transport(viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity)
   call require(conductivity_model=='constant'.or.conductivity_model=='eucken_wms','Unknown conductivity model')
   transport%eucken_wms=conductivity_model=='eucken_wms'
   select case(viscosity_model)
   case('constant')
+    call require(len_trim(transport_file)==0,'transport_file requires sutherland_wilke')
     call require(viscosity_reference_temperature==-1.and.all(species_reference_viscosities==-1).and. &
       all(species_sutherland_temperatures==-1),'Species viscosity parameters require sutherland_wilke')
   case('sutherland_wilke')
     call require(transport_model/='none'.and.transport_temperature_model=='constant', &
       'sutherland_wilke requires transport and cannot combine with common power_law')
-    transport%species_viscosity=species_reference_viscosities
-    transport%sutherland_temperature=species_sutherland_temperatures
-    transport%viscosity_reference_temperature=viscosity_reference_temperature
+    if(len_trim(transport_file)>0) then
+      call require(viscosity_reference_temperature==-1.and.all(species_reference_viscosities==-1).and. &
+        all(species_sutherland_temperatures==-1),'Transport file cannot combine with inline viscosity data')
+      resolved_transport_file=resolve_transport_path(trim(input_file),trim(transport_file))
+      call read_transport_data(trim(resolved_transport_file),m,transport)
+      viscosity_reference_temperature=transport%viscosity_reference_temperature
+      species_reference_viscosities=transport%species_viscosity
+      species_sutherland_temperatures=transport%sutherland_temperature
+    else
+      transport%species_viscosity=species_reference_viscosities
+      transport%sutherland_temperature=species_sutherland_temperatures
+      transport%viscosity_reference_temperature=viscosity_reference_temperature
+    end if
   case default
     call require(.false.,'Unknown viscosity model')
   end select
@@ -131,6 +144,7 @@ program main_rf_flow1d
   call require(ios==0,'Cannot create output; existing files are never overwritten')
   write(out,'(a)') '# 1D conservative flow + optional transport + Strang/DVODE chemistry, SI units'
   write(out,'(a)') '# transport_model='//trim(transport_model)
+  if(len_trim(resolved_transport_file)>0) write(out,'(a)') '# transport_file='//trim(resolved_transport_file)
   write(out,'(a)') '# viscosity_model='//trim(viscosity_model)
   write(out,'(a)') '# conductivity_model='//trim(conductivity_model)
   if(viscosity_model=='sutherland_wilke') then
@@ -212,6 +226,27 @@ program main_rf_flow1d
   close(out)
   write(*,'(a)') '[OK] Fortran 1D flow completed: '//trim(output_file)
 contains
+  function resolve_transport_path(input_path,data_path) result(path)
+    character(*), intent(in) :: input_path,data_path
+    character(:), allocatable :: path
+    integer :: i,last
+    path=data_path
+    if(data_path(1:1)=='/'.or.data_path(1:1)==achar(92)) return
+    if(len(data_path)>=2) then
+      if(data_path(2:2)==':') then
+        call require(len(data_path)>=3,'Invalid drive path')
+        call require(data_path(3:3)=='/'.or.data_path(3:3)==achar(92),'Drive-relative transport path is ambiguous')
+        return
+      end if
+    end if
+    last=0
+    do i=1,len(input_path)
+      if(input_path(i:i)=='/'.or.input_path(i:i)==achar(92)) last=i
+    end do
+    path=input_path(:last)//data_path
+    call require(len(path)<=len(resolved_transport_file),'Transport path too long')
+  end function
+
   subroutine initialize_boundary(kind,bt,bp,bu,by,state)
     character(*), intent(in) :: kind
     real(dp), intent(in) :: bt,bp,bu,by(:)

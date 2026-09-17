@@ -84,3 +84,6 @@ R4a〜eの[1次元流体・詳細反応・輸送・MUSCL・再試行の仕様と
 > R4i update: optional original-Eucken species conductivity with WMS mixing, NASA7/9 heat capacity,
 > and conservative interval-based timestep bounds. See [FLOW1D](docs/FLOW1D.md).
 > This remains approximate transport, not validated detailed molecular heat/mass transport.
+
+> R4j: named-species transport files, SI mass checks and input-relative paths are supported.
+> See [remaining work](docs/R4_REMAINING.md) for R4 and subsequent R5-R7 scope.
