@@ -9,6 +9,9 @@ program main_rf_flow1d
   character(16) :: reconstruction='first_order'
   real(dp) :: viscosity=0,bulk_viscosity=0,thermal_conductivity=0,mass_diffusivity=0
   real(dp), allocatable :: species_diffusivities(:)
+  real(dp) :: left_boundary_temperature=-1,left_boundary_pressure=-1,left_boundary_velocity=0
+  real(dp) :: right_boundary_temperature=-1,right_boundary_pressure=-1,right_boundary_velocity=0
+  real(dp), allocatable :: left_boundary_y(:),right_boundary_y(:),fixed_states(:,:)
   character(2048) :: mechanism_file,input_file,output_file
   character(16) :: left_bc='outflow',right_bc='outflow'
   integer :: nx=100,max_steps=100000,chemistry_max_steps=100000,write_every=50
@@ -25,7 +28,9 @@ program main_rf_flow1d
   namelist /flow1d/ nx,length,interface_x,end_time,cfl,max_dt,max_steps,write_every,left_bc,right_bc, &
     left_temperature,left_pressure,left_velocity,right_temperature,right_pressure,right_velocity,chemistry, &
     chemistry_rtol,chemistry_atol_species,chemistry_atol_temperature,chemistry_max_steps, &
-    transport_model,viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity,reconstruction,species_diffusivities
+    transport_model,viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity,reconstruction,species_diffusivities, &
+    left_boundary_temperature,left_boundary_pressure,left_boundary_velocity,left_boundary_y, &
+    right_boundary_temperature,right_boundary_pressure,right_boundary_velocity,right_boundary_y
   call require(command_argument_count()==3,'Usage: rf_flow1d mechanism.rf flow.in output.csv')
   call get_command_argument(1,mechanism_file)
   call get_command_argument(2,input_file)
@@ -33,6 +38,8 @@ program main_rf_flow1d
   call read_mechanism(trim(mechanism_file),m)
   ns=size(m%species)
   allocate(species_diffusivities(ns)); species_diffusivities=-1
+  allocate(left_boundary_y(ns),right_boundary_y(ns),fixed_states(ns+2,2))
+  left_boundary_y=-1; right_boundary_y=-1; fixed_states=0
   open(newunit=io,file=trim(input_file),status='old',action='read',iostat=ios)
   call require(ios==0,'Cannot open 1D input')
   read(io,nml=flow1d,iostat=ios)
@@ -54,8 +61,10 @@ program main_rf_flow1d
   call require(all(ieee_is_finite([length,interface_x,end_time,cfl,max_dt])), 'Nonfinite flow control')
   call require(min(length,end_time,max_dt,cfl)>0.and.cfl<=.5_dp,'Require positive controls, CFL<=0.5')
   call require(interface_x>=0.and.interface_x<=length,'Interface outside domain')
-  call require(left_bc=='periodic'.or.left_bc=='outflow'.or.left_bc=='reflecting','Invalid left boundary')
-  call require(right_bc=='periodic'.or.right_bc=='outflow'.or.right_bc=='reflecting','Invalid right boundary')
+  call require(left_bc=='periodic'.or.left_bc=='outflow'.or.left_bc=='reflecting'.or. &
+    left_bc=='dirichlet','Invalid left boundary')
+  call require(right_bc=='periodic'.or.right_bc=='outflow'.or.right_bc=='reflecting'.or. &
+    right_bc=='dirichlet','Invalid right boundary')
   call require((left_bc=='periodic').eqv.(right_bc=='periodic'),'Periodic boundary must be paired')
   allocate(yl(ns),yr(ns),y(ns),q(ns+2,nx),initial(ns+2),boundary(ns+2),change(ns+2),delta(ns+2))
   allocate(elements0(m%ne),elements(m%ne))
@@ -64,6 +73,10 @@ program main_rf_flow1d
   read(io,*,iostat=ios) yr
   call require(ios==0,'Expected full right mass-fraction row')
   close(io)
+  call initialize_boundary(left_bc,left_boundary_temperature,left_boundary_pressure,left_boundary_velocity, &
+    left_boundary_y,fixed_states(:,1))
+  call initialize_boundary(right_bc,right_boundary_temperature,right_boundary_pressure,right_boundary_velocity, &
+    right_boundary_y,fixed_states(:,2))
   dx=length/nx
   do i=1,nx
     x=(i-.5_dp)*dx
@@ -100,6 +113,8 @@ program main_rf_flow1d
   write(out,'(a,es25.16e3)') '# chemistry_atol_species=',chemistry_atol_species
   write(out,'(a,es25.16e3)') '# chemistry_atol_temperature=',chemistry_atol_temperature
   write(out,'(a)') '# left_bc='//trim(left_bc)//' right_bc='//trim(right_bc)
+  if(left_bc=='dirichlet') write(out,'(a,*(es25.16e3,1x))') '# fixed_state_left=',fixed_states(:,1)
+  if(right_bc=='dirichlet') write(out,'(a,*(es25.16e3,1x))') '# fixed_state_right=',fixed_states(:,2)
   write(out,'(a)',advance='no') 'step,time,x,density,velocity,temperature,pressure'
   do j=1,ns
     write(out,'(a)',advance='no') ',Y_'//trim(m%species(j)%name)
@@ -128,10 +143,10 @@ program main_rf_flow1d
     end if
     if(time>=end_time) exit
     call require(step<max_steps,'Flow exceeded max_steps; output is incomplete')
-    dt=min(max_dt,end_time-time,flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc))
+    dt=min(max_dt,end_time-time,flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states))
     call require(time+dt>time,'Flow timestep underflow')
     call advance_flow(m,q,dx,dt,cfl,left_bc,right_bc,chemistry,chemistry_rtol,chemistry_atol_species, &
-                      chemistry_atol_temperature,chemistry_max_steps,change,transport,reconstruction,rejected_steps)
+                      chemistry_atol_temperature,chemistry_max_steps,change,transport,reconstruction,rejected_steps,fixed_states)
     call require(time+dt>time,'Accepted flow timestep cannot advance time')
     total_rejected=total_rejected+rejected_steps
     boundary=boundary+change
@@ -145,4 +160,17 @@ program main_rf_flow1d
   write(out,'(a)') '# SUCCESS'
   close(out)
   write(*,'(a)') '[OK] Fortran 1D flow completed: '//trim(output_file)
+contains
+  subroutine initialize_boundary(kind,bt,bp,bu,by,state)
+    character(*), intent(in) :: kind
+    real(dp), intent(in) :: bt,bp,bu,by(:)
+    real(dp), intent(out) :: state(:)
+    state=0
+    if(kind=='dirichlet') then
+      call require(bt>0.and.bp>0,'Dirichlet requires positive boundary temperature and pressure')
+      call primitive_to_conserved(m,bt,bp,bu,by,state)
+    else
+      call require(bt==-1.and.bp==-1.and.bu==0.and.all(by==-1),'Boundary state supplied for non-Dirichlet face')
+    end if
+  end subroutine
 end program

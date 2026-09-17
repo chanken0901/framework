@@ -10,6 +10,7 @@ program rf_flow_unit
   logical :: ok
   real(dp) :: result(4,8),ref(4,8),original_dt,reference_change(4),reference_dt
   character(16) :: method
+  real(dp) :: fixed(4,2),fixed_copy(4,2),fixed_dt
   m%ne=1; allocate(m%species(2),m%reactions(0))
   do i=1,2
     m%species(i)%mass=.01_dp; m%species(i)%pref=101325; m%species(i)%model=7
@@ -28,6 +29,18 @@ program rf_flow_unit
   call require(maxval(abs(flux-expected)/max(1._dp,abs(expected)))<1.e-10_dp,'Legacy Euler flux formula')
   call rusanov_flux(m,q(:,1),q(:,2),flux)
   call require(maxval(abs(flux-expected)/max(1._dp,abs(expected)))<1.e-10_dp,'Consistent numerical flux')
+  fixed(:,1)=q(:,1); fixed(:,2)=q(:,8)
+  call primitive_to_conserved(m,1000._dp,101325._dp,2000._dp,y,fixed(:,1))
+  fixed_copy=fixed
+  dt=flow_timestep(m,q,.1_dp,.4_dp)
+  fixed_dt=flow_timestep(m,q,.1_dp,.4_dp,left_bc='dirichlet',right_bc='outflow',fixed_states=fixed)
+  call require(fixed_dt<dt,'Reservoir wave speed restricts timestep')
+  old=q
+  call advance_flow(m,q,.1_dp,fixed_dt,.4_dp,'dirichlet','outflow',.false., &
+    1.e-9_dp,1.e-16_dp,1.e-8_dp,10000,change,reconstruction='muscl',fixed_states=fixed)
+  call require(maxval(abs(.1_dp*sum(q-old,dim=2)-change))<1.e-8_dp,'Fixed inflow boundary conservation')
+  call require(all(fixed==fixed_copy),'Reservoir is not evolved')
+  q=old
   old=q;dt=flow_timestep(m,q,.1_dp,.4_dp)/2
   call advance_flow(m,q,.1_dp,dt,.4_dp,'periodic','periodic',.false.,1.e-9_dp,1.e-16_dp,1.e-8_dp,10000,change)
   call require(maxval(abs(q-old)/max(1._dp,abs(old)))<1.e-12_dp,'Uniform periodic preservation')

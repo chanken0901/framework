@@ -82,3 +82,7 @@ R4では保存的な圧縮性多成分流、衝撃波捕獲、密度・圧力・
 誘導長・反応帯の格子解像度、時間刻み、化学許容誤差、分割誤差への収束を確認する。
 過駆動波と自走波を区別し、境界反射による見かけの定常波を排除する。
 2D/3Dと並列実行への移行はこの検証後に進める。現在これらは未検証・未実装。
+> R4f update: independent left/right Dirichlet states added to the serial Fortran 1D solver.
+> This completes the fixed-state boundary increment, not R4 as a whole.
+> Remaining: molecular transport, characteristic/nonreflecting boundaries, multidimensional/nozzle
+> migration, old-CFD comparisons and CJ/ZND/grid/time/splitting validation. See [FLOW1D](FLOW1D.md).

@@ -4,12 +4,41 @@ module mod_rf_transport
   private
   public :: rf_transport,validate_transport,diffusive_flux,transport_active
   public :: diffusion_bound
+  public :: fixed_diffusive_flux
   type :: rf_transport
     ! Constant SI coefficients. The common species D is not a detailed mixture-averaged model.
     real(dp) :: viscosity=0,bulk_viscosity=0,conductivity=0,diffusivity=0
     real(dp), allocatable :: species_diffusivity(:)
   end type
 contains
+  subroutine fixed_diffusive_flux(m,c,rho,u,t,y,ui,ti,yi,dx,side,flux)
+    ! Prescribed physical boundary state, cell-center distance dx/2.
+    type(rf_mechanism), intent(in) :: m
+    type(rf_transport), intent(in) :: c
+    real(dp), intent(in) :: rho,u,t,y(:),ui,ti,yi(:),dx
+    integer, intent(in) :: side ! -1: left; +1: right
+    real(dp), intent(out) :: flux(:)
+    real(dp) :: jmass(size(y)),tau,cp,h,s,gradt,gradu
+    integer :: i,ns
+    ns=size(m%species)
+    call validate_transport(c,ns)
+    call check_y(m,y); call check_y(m,yi)
+    call require(all(ieee_is_finite([rho,u,t,ui,ti,dx])),'Nonfinite fixed boundary state')
+    call require(abs(side)==1.and.dx>0.and.rho>0,'Invalid fixed boundary geometry/density')
+    call require(size(flux)==ns+2,'Invalid fixed boundary flux size')
+    gradu=side*(u-ui)/(dx/2); gradt=side*(t-ti)/(dx/2)
+    jmass=-rho*c%diffusivity*side*(y-yi)/(dx/2)
+    if(allocated(c%species_diffusivity)) jmass=-rho*c%species_diffusivity*side*(y-yi)/(dx/2)
+    jmass=jmass-y*sum(jmass); jmass(ns)=-sum(jmass(:ns-1))
+    tau=(4._dp/3*c%viscosity+c%bulk_viscosity)*gradu
+    flux(:ns)=jmass; flux(ns+1)=-tau; flux(ns+2)=-u*tau-c%conductivity*gradt
+    do i=1,ns
+      call species_thermo(m%species(i),t,cp,h,s)
+      flux(ns+2)=flux(ns+2)+h/m%species(i)%mass*jmass(i)
+    end do
+    call require(all(ieee_is_finite(flux)),'Nonfinite fixed boundary flux')
+  end subroutine
+
   subroutine validate_transport(c,ns)
     type(rf_transport), intent(in) :: c
     integer, intent(in), optional :: ns

@@ -7,7 +7,7 @@ program rf_transport_unit
   type(rf_transport) :: coeff,none
   type(rf_transport) :: separate
   real(dp) :: flux(4),yl(2),yr(2),y(2),cp,cv,h,e,r,t,p,rho,u,a,pi,expected,err32,err64
-  real(dp) :: q(4,32),dq(4,32),boundary(4),dt,dt_none,sums(4),x
+  real(dp) :: q(4,32),dq(4,32),boundary(4),dt,dt_none,sums(4),x,fixed(4,2),left_flux(4)
   integer :: i,kind
   m%ne=1; allocate(m%species(2),m%reactions(0))
   do i=1,2
@@ -24,6 +24,14 @@ program rf_transport_unit
   call require(abs(flux(3)+5)<1.e-14_dp,'Normal viscous stress including bulk viscosity')
   expected=-15-400+.12_dp*gas_r*1000/.01_dp
   call require(abs(flux(4)-expected)<1.e-8_dp,'Viscous work, Fourier heat, formation enthalpy transport')
+  call fixed_diffusive_flux(m,coeff,1._dp,2._dp,1000._dp,yl,4._dp,1100._dp,yr,1._dp,-1,flux)
+  call require(abs(flux(1)-.12_dp)<1.e-14_dp.and.abs(sum(flux(:2)))<1.e-14_dp,'Fixed face species flux')
+  call require(abs(flux(3)+5)<1.e-14_dp,'Fixed face half-cell stress')
+  expected=-10-400+.12_dp*gas_r*1000/.01_dp
+  call require(abs(flux(4)-expected)<1.e-8_dp,'Fixed face work and enthalpy')
+  left_flux=flux
+  call fixed_diffusive_flux(m,coeff,1._dp,2._dp,1000._dp,yl,4._dp,1100._dp,yr,1._dp,1,flux)
+  call require(maxval(abs(flux+left_flux))<1.e-8_dp,'Right boundary gradient orientation')
   separate=coeff; separate%diffusivity=0; separate%species_diffusivity=[.1_dp,.3_dp]
   call diffusive_flux(m,separate,1._dp,2._dp,1000._dp,yl,1._dp,4._dp,1100._dp,yr,.5_dp,flux)
   call require(abs(flux(1)-.24_dp)<1.e-14_dp.and.abs(sum(flux(:2)))<1.e-14_dp, &
@@ -37,6 +45,19 @@ program rf_transport_unit
   m%species(1)%coeff(6,1)=0
   y=[.5_dp,.5_dp];pi=acos(-1._dp)
   call mixture(m,1000._dp,y,101325._dp,cp,cv,h,e,r)
+  coeff=rf_transport(0._dp,0._dp,2._dp,0._dp)
+  call primitive_to_conserved(m,900._dp,101325._dp,0._dp,y,fixed(:,1))
+  call primitive_to_conserved(m,1100._dp,101325._dp,0._dp,y,fixed(:,2))
+  do i=1,32
+    call primitive_to_conserved(m,900+200*(i-.5_dp)/32,101325._dp,0._dp,y,q(:,i))
+  end do
+  call diffusion_rhs(m,q,1._dp/32,'dirichlet','dirichlet',coeff,dq,boundary,fixed)
+  ! EOS inversion permits relative energy error 1e-11; here |delta T|<=1100e-11.
+  ! Bound the two differences, including the half-cell boundary, before comparing.
+  expected=8*coeff%conductivity*(1100*1.e-11_dp)*32**2
+  call require(maxval(abs(dq))<expected,'Linear temperature steady through fixed boundaries')
+  call require(maxval(abs(boundary))<8*coeff%conductivity*(1100*1.e-11_dp)*32, &
+    'Fixed heat influx equals outflux')
   do i=1,32
     x=(i-.5_dp)/32
     call primitive_to_conserved(m,1000._dp,1000*r,sin(2*pi*x),y,q(:,i)) ! rho=1

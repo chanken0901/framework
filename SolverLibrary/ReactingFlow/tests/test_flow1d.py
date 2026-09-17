@@ -44,6 +44,50 @@ class FlowTests(unittest.TestCase):
             self.assertGreaterEqual(int(diagnostics['rejected_steps']),0)
             return values,diagnostics
 
+    def test_dirichlet_uniform_and_reactive_conservation(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'H2:2,O2:1,N2:3.76'
+        y=gas.Y.tolist();fractions=','.join(map(str,y))
+        for chemistry in (False,True):
+            with self.subTest(chemistry=chemistry):
+                controls=("nx=8,length=0.1,interface_x=0.05,end_time=0.000002,max_dt=0.0000001,"
+                    "left_temperature=1100,right_temperature=1100,left_velocity=20,right_velocity=20,"
+                    "left_bc='dirichlet',right_bc='dirichlet',reconstruction='muscl',"
+                    "transport_model='constant',viscosity=0.00002,thermal_conductivity=0.03,mass_diffusivity=0.00001,"
+                    f"chemistry={'.true.' if chemistry else '.false.'},"
+                    f"left_boundary_temperature=1100,left_boundary_pressure=101325,left_boundary_velocity=20,left_boundary_y={fractions},"
+                    f"right_boundary_temperature=1100,right_boundary_pressure=101325,right_boundary_velocity=20,right_boundary_y={fractions}")
+                values,d=self.run_flow(self.h2,controls,y,y)
+                for key in ('mass_error','momentum_error','energy_error','element_error'):
+                    self.assertLess(float(d[key]),1e-8)
+                self.assertIn('fixed_state_left',d);self.assertIn('fixed_state_right',d)
+                final=values[values[:,0]==values[-1,0]]
+                self.assertGreater(final[:,6].min(),0)
+                if not chemistry:
+                    self.np.testing.assert_allclose(final[:,3:],values[values[:,0]==0][:,3:],rtol=1e-10,atol=1e-12)
+
+    def test_dirichlet_missing_or_unused_state_rejected(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'N2:1';y=gas.Y.tolist()
+        for controls in ("left_bc='dirichlet'", "left_boundary_temperature=1100",
+                         "left_bc='dirichlet',left_boundary_temperature=1100,left_boundary_pressure=101325"):
+            with self.subTest(controls=controls):
+                self.run_flow(self.h2,controls,y,y,success=False)
+
+    def test_dirichlet_example_and_right_inflow(self):
+        example=(ROOT/'examples/flow1d_h2_inflow.in').read_text()
+        body=example.split('&flow1d',1)[1]
+        controls,rows=body.split('/',1)
+        yl,yr=([float(v) for v in line.split()] for line in rows.strip().splitlines())
+        for right in (False,True):
+            selected=controls
+            if right:
+                selected=selected.replace("left_bc='dirichlet', right_bc='outflow'",
+                    "left_bc='outflow', right_bc='dirichlet'").replace('left_boundary_', 'right_boundary_')
+                selected=selected.replace('velocity=20', 'velocity=-20')
+            values,d=self.run_flow(self.h2,selected,yl,yr)
+            self.assertEqual(values[-1,1],0.000002)
+            for key in ('mass_error','momentum_error','energy_error','element_error'):
+                self.assertLess(float(d[key]),1e-8)
+
     def test_uniform_reactive_matches_cantera(self):
         ct=self.ct
         gas=ct.Solution(str(self.h2));gas.TPX=1100,101325,'H2:2,O2:1,N2:3.76'

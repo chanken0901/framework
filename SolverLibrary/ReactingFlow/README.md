@@ -69,3 +69,6 @@ R2の反応速度評価は[速度仕様](docs/KINETICS.md)を参照。
 R3の定容・定圧断熱反応器、保存検査、着火比較は[反応器仕様と実行手順](docs/REACTORS.md)を参照。
 R4a〜eの[1次元流体・詳細反応・輸送・MUSCL・再試行の仕様と手順](docs/FLOW1D.md)を追加した。
 温度・組成依存の分子輸送、多次元・ノズル、デトネーション検証、MPI・GPUはまだ新ライブラリに未実装。
+> R4f update: fixed-state (Dirichlet) boundaries are implemented in the Fortran 1D solver,
+> including conservative convective and transport boundary fluxes. See [FLOW1D](docs/FLOW1D.md).
+> R4 remains in progress; nonreflecting boundaries, molecular transport and detonation validation remain.

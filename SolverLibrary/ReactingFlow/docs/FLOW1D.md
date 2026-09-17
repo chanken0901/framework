@@ -1,11 +1,62 @@
-# R4a〜e：1次元流体・詳細反応・輸送の結合
+# R4a〜f：1次元流体・詳細反応・輸送の結合
 
 R4aのEuler基盤、R4bの定係数輸送、R4cのMUSCL再構築、R4dの流体段棄却・再試行を実装した。
 R4eでは化学種ごとの定係数拡散を追加した。
+R4fでは左右独立の固定状態境界（Dirichlet）を追加した。
 **Fortran、CPU逐次実行、1次元・一様直交格子の基準計算**。
 R4全体の完成ではない。温度・組成依存の分子輸送、2D/3D、ノズル、MPI/OpenMP/CUDA、
 CJ/ZNDデトネーション検証、旧反応流CFDとの全体同値検証は残っている。
 現在のコードを実用的なデトネーションソルバーと見なさない。
+
+## R4f：固定状態境界
+
+Windows/gfortranのDebug・Releaseで回帰テスト57件を通過。
+Fortranの4テストも通過（Debugでは追加後の境界テストを個別再実行）。
+半セル勾配の符号、線形温度場、左右の境界と保存収支、反応、種別拡散、
+無効入力の拒否、固定外部状態の波速制限を確認した。Linux/GPUは今回未実行。
+
+`left_bc='dirichlet'` または `right_bc='dirichlet'` を選択する。
+選択した側の `left_boundary_temperature` [K]、`left_boundary_pressure` [Pa]、
+`left_boundary_y`（機構の全化学種順、和1）を必ず指定する。
+`left_boundary_velocity` [m/s] は既定0。右側は `right_boundary_*` を使う。
+初期条件の `left_temperature` 等とは独立であり、暗黙には流用しない。
+非Dirichlet側への境界状態指定、欠損・負の組成は拒否する。
+
+対流は固定された外部状態と内側状態のRusanov流束で与える。
+境界セルを固定値で上書きする方式ではない。固定状態は化学反応で発展させない。
+MUSCLでも端のセルの勾配は0とするため、境界で2次精度とは主張しない。
+固定状態の波速もCFLに含める。粘性・熱伝導・種拡散の勾配は、
+指定された境界面状態とセル中心の距離dx/2から求める。
+
+```text
+grad(phi)_left  = (phi_1 - phi_boundary)/(dx/2)
+grad(phi)_right = (phi_boundary - phi_N)/(dx/2)
+J_s = -rho_boundary D_s grad(Y_s); J_s <- J_s - Y_s,boundary sum(J)
+tau = (4 mu/3 + bulk_mu) grad(u)
+F_E,diff = -u_boundary*tau - kappa*grad(T) + sum(h_s(T_boundary)*J_s)
+```
+
+共通Dと種別Dに対応。境界流束を保存収支に含め、半セル拡散を考慮して
+時間刻み評価の拡散項係数を2から4へ保守的に変更する。
+CSVの `fixed_state_left/right` は `[rho Y_s..., rho u, rho E]` を記録する。
+Fortran APIでは末尾の省略可能引数 `fixed_states(ns+2,2)` で渡す。
+
+**無反射・特性境界ではない。** 特に亜音速では全状態固定が波の反射を生じ得る。
+任意の流入・流出条件に対する物理的妥当性や、デトネーションの検証完了を意味しない。
+
+実行例は `examples/flow1d_h2_inflow.in`（H2系機構、左固定・右流出）。
+以下はリポジトリ直下で、ビルドとh2o2機構の変換後に実行する。
+`mechanism.rf` はh2o2.yamlを変換したファイルのパスに置き換える。既存CSVは上書きしない。
+
+Windows PowerShell:
+```powershell
+.\build\reactingflow-fortran-ninja\rf_flow1d.exe mechanism.rf SolverLibrary/ReactingFlow/examples/flow1d_h2_inflow.in inflow.csv
+```
+
+Linux（実行ファイルのビルド先に合わせる）:
+```bash
+./build/reactingflow-fortran-ninja/rf_flow1d mechanism.rf SolverLibrary/ReactingFlow/examples/flow1d_h2_inflow.in inflow.csv
+```
 
 ## できること
 
@@ -14,7 +65,7 @@ CJ/ZNDデトネーション検証、旧反応流CFDとの全体同値検証は�
 - `chemistry=.true.`による、R2で対応する詳細機構を使う反応Euler計算。
 - `transport_model='constant'`による粘性・熱伝導・種拡散。反応の有無とは独立。
 - `reconstruction='muscl'`による対流の空間2次再構築。既定は従来の1次精度。
-- 両端周期、左右別々の鏡像壁／ゼロ勾配流出。
+- 両端周期、左右別々の鏡像壁／ゼロ勾配流出／固定状態境界。
 - 初期状態、指定ステップ間隔、最終時刻のCSV出力と保存量監視。
 
 ## 数値仕様
@@ -46,7 +97,7 @@ dtを半分にしてやり直す（初回を含め最大30試行）。これで�
 
 境界の`outflow`はゼロ勾配外挿であり、無反射境界ではない。
 `reflecting`は法線運動量だけ符号反転する滑り鏡像壁。
-`periodic`は両端同時指定のみ。Dirichletと無反射は未移植。
+`periodic`は両端同時指定のみ。DirichletはR4fで追加。無反射は未移植。
 
 ## R4b：粘性・熱伝導・化学種拡散
 
@@ -138,7 +189,7 @@ MC（monotonized central）リミター付きの左右面状態を作る。
 対流CFLの波速はセル中心だけでなく左右再構築面も含めて評価し、SSPRK3各段で再確認する。
 鏡像境界では内側の再構築面状態の運動量を反転、周期境界では周期隣接セルを参照する。
 輸送項は引き続きセル中心間の2次差分であり、対流の再構築とは独立。
-反応の有無、輸送の有無、既存の3種類の境界と組み合わせられる。
+反応の有無、輸送の有無、周期／鏡像／流出／固定状態境界と組み合わせられる。
 WENO/KEEPの移植やCJ/ZND検証が済んだという意味ではない。
 
 Fortran APIでは末尾の任意引数`reconstruction`で指定する。

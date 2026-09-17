@@ -7,8 +7,24 @@ module mod_rf_flow1d
   public :: primitive_to_conserved,conserved_to_primitive,physical_flux,rusanov_flux
   public :: flow_timestep,advance_flow,transport_step,diffusion_rhs
   public :: reconstruct_faces,validate_reconstruction
-  public :: admissible_flow
+  public :: admissible_flow,validate_fixed_states
 contains
+  subroutine validate_fixed_states(m,left_bc,right_bc,fixed_states)
+    type(rf_mechanism), intent(in) :: m
+    character(*), intent(in) :: left_bc,right_bc
+    real(dp), intent(in), optional :: fixed_states(:,:)
+    real(dp) :: rho,u,t,p,a,y(size(m%species))
+    integer :: i
+    if(left_bc/='dirichlet'.and.right_bc/='dirichlet') return
+    call require(present(fixed_states),'Dirichlet boundary requires fixed states')
+    call require(size(fixed_states,1)==size(m%species)+2.and.size(fixed_states,2)==2,'Invalid fixed state shape')
+    do i=1,2
+      if(i==1.and.left_bc/='dirichlet') cycle
+      if(i==2.and.right_bc/='dirichlet') cycle
+      call conserved_to_primitive(m,fixed_states(:,i),rho,u,t,p,a,y)
+    end do
+  end subroutine
+
   subroutine validate_reconstruction(method)
     character(*), intent(in), optional :: method
     if(present(method)) call require(method=='first_order'.or.method=='muscl','Unknown flow reconstruction')
@@ -45,8 +61,8 @@ contains
       v(:,0)=v(:,nx); v(:,nx+1)=v(:,1)
     else
       v(:,0)=v(:,1); v(:,nx+1)=v(:,nx)
-      call require(left_bc=='outflow'.or.left_bc=='reflecting','Unknown reconstruction left boundary')
-      call require(right_bc=='outflow'.or.right_bc=='reflecting','Unknown reconstruction right boundary')
+      call require(left_bc=='outflow'.or.left_bc=='reflecting'.or.left_bc=='dirichlet','Unknown reconstruction left boundary')
+      call require(right_bc=='outflow'.or.right_bc=='reflecting'.or.right_bc=='dirichlet','Unknown reconstruction right boundary')
       if(left_bc=='reflecting') v(3,0)=-v(3,1)
       if(right_bc=='reflecting') v(3,nx+1)=-v(3,nx)
     end if
@@ -159,8 +175,9 @@ contains
     f=(fl+fr-max(sl,sr)*(right-left))/2
   end subroutine
 
-  real(dp) function flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc) result(dt)
+  real(dp) function flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states) result(dt)
     type(rf_mechanism), intent(in) :: m
+    real(dp), intent(in), optional :: fixed_states(:,:)
     real(dp), intent(in) :: q(:,:),dx,cfl
     type(rf_transport), intent(in), optional :: transport
     character(*), intent(in), optional :: reconstruction,left_bc,right_bc
@@ -169,8 +186,15 @@ contains
     real(dp) :: f(size(q,1)),speed,maxspeed
     real(dp) :: rho,u,t,p,a,y(size(m%species)),cp,cv,h,e,r,rhomin,rhomax,rhocvmin,diff
     integer :: i
+    real(dp) :: diffusion_factor
     call require(dx>0.and.cfl>0.and.cfl<=.5_dp,'Require dx>0 and 0<CFL<=0.5')
     call validate_reconstruction(reconstruction)
+    lb='outflow'; rb='outflow'
+    if(present(left_bc)) lb=left_bc
+    if(present(right_bc)) rb=right_bc
+    call validate_fixed_states(m,lb,rb,fixed_states)
+    diffusion_factor=2
+    if(lb=='dirichlet'.or.rb=='dirichlet') diffusion_factor=4
     maxspeed=0
     do i=1,size(q,2)
       call physical_flux(m,q(:,i),f,speed)
@@ -190,6 +214,12 @@ contains
         end do
       end if
     end if
+    do i=1,2
+      if(i==1.and.lb/='dirichlet') cycle
+      if(i==2.and.rb/='dirichlet') cycle
+      call physical_flux(m,fixed_states(:,i),f,speed)
+      maxspeed=max(maxspeed,speed)
+    end do
     dt=cfl*dx/maxspeed
     if(present(transport)) then
       call validate_transport(transport,size(m%species))
@@ -200,20 +230,32 @@ contains
           call mixture(m,t,y,p,cp,cv,h,e,r)
           rhomin=min(rhomin,rho); rhomax=max(rhomax,rho); rhocvmin=min(rhocvmin,rho*cv)
         end do
+        do i=1,2
+          if(i==1.and.lb/='dirichlet') cycle
+          if(i==2.and.rb/='dirichlet') cycle
+          call conserved_to_primitive(m,fixed_states(:,i),rho,u,t,p,a,y)
+          call mixture(m,t,y,p,cp,cv,h,e,r)
+          rhomin=min(rhomin,rho); rhomax=max(rhomax,rho); rhocvmin=min(rhocvmin,rho*cv)
+        end do
         ! Conservative explicit convection/diffusion estimate (cv, not cp, for compressible energy).
         diff=(4._dp/3*transport%viscosity+transport%bulk_viscosity)/rhomin &
               +transport%conductivity/rhocvmin+diffusion_bound(transport)*rhomax/rhomin
-        dt=cfl/(maxspeed/dx+2*diff/dx**2)
+        dt=cfl/(maxspeed/dx+diffusion_factor*diff/dx**2)
       end if
     end if
   end function
 
-  subroutine boundary_state(q,kind,ghost)
+  subroutine boundary_state(q,kind,ghost,fixed_states,side)
     real(dp), intent(in) :: q(:)
     character(*), intent(in) :: kind
     real(dp), intent(out) :: ghost(:)
+    real(dp), intent(in), optional :: fixed_states(:,:)
+    integer, intent(in) :: side
     ghost=q
     select case(kind)
+    case('dirichlet')
+      call require(present(fixed_states),'Missing Dirichlet state')
+      ghost=fixed_states(:,side)
     case('outflow') ! zero-gradient extrapolation, NOT a nonreflecting boundary
     case('reflecting')
       ghost(size(q)-1)=-ghost(size(q)-1)
@@ -222,14 +264,16 @@ contains
     end select
   end subroutine
 
-  subroutine diffusion_rhs(m,q,dx,left_bc,right_bc,transport,dq,net_boundary)
+  subroutine diffusion_rhs(m,q,dx,left_bc,right_bc,transport,dq,net_boundary,fixed_states)
     type(rf_mechanism), intent(in) :: m
+    real(dp), intent(in), optional :: fixed_states(:,:)
     real(dp), intent(in) :: q(:,:),dx
     character(*), intent(in) :: left_bc,right_bc
     type(rf_transport), intent(in) :: transport
     real(dp), intent(out) :: dq(:,:),net_boundary(:)
     real(dp) :: face(size(q,1),0:size(q,2)),rho(size(q,2)),u(size(q,2)),t(size(q,2))
     real(dp) :: y(size(m%species),size(q,2)),p,a
+    real(dp) :: rb,ub,tb,yb(size(m%species))
     integer :: i,nx
     nx=size(q,2)
     call validate_transport(transport,size(m%species))
@@ -237,6 +281,7 @@ contains
     call require(all(shape(dq)==shape(q)).and.size(net_boundary)==size(q,1),'Invalid diffusion output shape')
     call require(dx>0.and.ieee_is_finite(dx),'Invalid diffusion spacing')
     call require((left_bc=='periodic').eqv.(right_bc=='periodic'),'Periodic boundary must be paired')
+    call validate_fixed_states(m,left_bc,right_bc,fixed_states)
     dq=0; net_boundary=0
     if(.not.transport_active(transport)) return
     do i=1,nx
@@ -253,6 +298,9 @@ contains
       ! Reflecting: u_wall=0, zero temperature/species normal gradients.
       ! Outflow: zero primitive gradients, hence zero diffusive flux.
       select case(left_bc)
+      case('dirichlet')
+        call conserved_to_primitive(m,fixed_states(:,1),rb,ub,tb,p,a,yb)
+        call fixed_diffusive_flux(m,transport,rb,ub,tb,yb,u(1),t(1),y(:,1),dx,-1,face(:,0))
       case('reflecting')
         call diffusive_flux(m,transport,rho(1),-u(1),t(1),y(:,1),rho(1),u(1),t(1),y(:,1),dx,face(:,0))
       case('outflow')
@@ -260,6 +308,9 @@ contains
         call require(.false.,'Unknown diffusion left boundary')
       end select
       select case(right_bc)
+      case('dirichlet')
+        call conserved_to_primitive(m,fixed_states(:,2),rb,ub,tb,p,a,yb)
+        call fixed_diffusive_flux(m,transport,rb,ub,tb,yb,u(nx),t(nx),y(:,nx),dx,1,face(:,nx))
       case('reflecting')
         call diffusive_flux(m,transport,rho(nx),u(nx),t(nx),y(:,nx),rho(nx),-u(nx),t(nx),y(:,nx),dx,face(:,nx))
       case('outflow')
@@ -273,8 +324,9 @@ contains
     net_boundary=face(:,0)-face(:,nx)
   end subroutine
 
-  subroutine rhs(m,q,dx,left_bc,right_bc,dq,net_boundary,transport,reconstruction)
+  subroutine rhs(m,q,dx,left_bc,right_bc,dq,net_boundary,transport,reconstruction,fixed_states)
     type(rf_mechanism), intent(in) :: m
+    real(dp), intent(in), optional :: fixed_states(:,:)
     real(dp), intent(in) :: q(:,:),dx
     character(*), intent(in) :: left_bc,right_bc
     real(dp), intent(out) :: dq(:,:),net_boundary(:)
@@ -284,6 +336,7 @@ contains
     character(*), intent(in), optional :: reconstruction
     real(dp) :: qm(size(q,1),size(q,2)),qp(size(q,1),size(q,2))
     integer :: i,nx
+    call validate_fixed_states(m,left_bc,right_bc,fixed_states)
     nx=size(q,2)
     call reconstruct_faces(m,q,left_bc,right_bc,qm,qp,reconstruction)
     call require((left_bc=='periodic').eqv.(right_bc=='periodic'),'Periodic boundary must be paired')
@@ -291,9 +344,9 @@ contains
       call rusanov_flux(m,qp(:,nx),qm(:,1),faces(:,0))
       faces(:,nx)=faces(:,0)
     else
-      call boundary_state(qm(:,1),left_bc,ghost)
+      call boundary_state(qm(:,1),left_bc,ghost,fixed_states,1)
       call rusanov_flux(m,ghost,qm(:,1),faces(:,0))
-      call boundary_state(qp(:,nx),right_bc,ghost)
+      call boundary_state(qp(:,nx),right_bc,ghost,fixed_states,2)
       call rusanov_flux(m,qp(:,nx),ghost,faces(:,nx))
     end if
     do i=1,nx-1
@@ -304,13 +357,14 @@ contains
     end do
     net_boundary=faces(:,0)-faces(:,nx)
     if(present(transport)) then
-      call diffusion_rhs(m,q,dx,left_bc,right_bc,transport,diffusion,diff_boundary)
+      call diffusion_rhs(m,q,dx,left_bc,right_bc,transport,diffusion,diff_boundary,fixed_states)
       dq=dq+diffusion; net_boundary=net_boundary+diff_boundary
     end if
   end subroutine
 
-  subroutine transport_step(m,q,dx,dt,cfl,left_bc,right_bc,result,boundary_change,ok,transport,reconstruction)
+  subroutine transport_step(m,q,dx,dt,cfl,left_bc,right_bc,result,boundary_change,ok,transport,reconstruction,fixed_states)
     type(rf_mechanism), intent(in) :: m
+    real(dp), intent(in), optional :: fixed_states(:,:)
     real(dp), intent(in) :: q(:,:),dx,dt,cfl
     character(*), intent(in) :: left_bc,right_bc
     real(dp), intent(out) :: result(:,:),boundary_change(:)
@@ -322,16 +376,16 @@ contains
     ok=.false.; boundary_change=0
     result=q
     if(.not.admissible_flow(m,q)) return
-    if(dt>flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc)*(1+1.e-12_dp)) return
-    call rhs(m,q,dx,left_bc,right_bc,dq,f1,transport,reconstruction)
+    if(dt>flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states)*(1+1.e-12_dp)) return
+    call rhs(m,q,dx,left_bc,right_bc,dq,f1,transport,reconstruction,fixed_states)
     a=q+dt*dq
     if(.not.admissible_flow(m,a)) return
-    if(dt>flow_timestep(m,a,dx,cfl,transport,reconstruction,left_bc,right_bc)*(1+1.e-12_dp)) return
-    call rhs(m,a,dx,left_bc,right_bc,dq,f2,transport,reconstruction)
+    if(dt>flow_timestep(m,a,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states)*(1+1.e-12_dp)) return
+    call rhs(m,a,dx,left_bc,right_bc,dq,f2,transport,reconstruction,fixed_states)
     b=.75_dp*q+.25_dp*(a+dt*dq)
     if(.not.admissible_flow(m,b)) return
-    if(dt>flow_timestep(m,b,dx,cfl,transport,reconstruction,left_bc,right_bc)*(1+1.e-12_dp)) return
-    call rhs(m,b,dx,left_bc,right_bc,dq,f3,transport,reconstruction)
+    if(dt>flow_timestep(m,b,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states)*(1+1.e-12_dp)) return
+    call rhs(m,b,dx,left_bc,right_bc,dq,f3,transport,reconstruction,fixed_states)
     result=q/3+2._dp/3*(b+dt*dq)
     if(.not.admissible_flow(m,result)) then
       result=q
@@ -370,8 +424,9 @@ contains
   end subroutine
 
   subroutine advance_flow(m,q,dx,dt,cfl,left_bc,right_bc,chemistry,rtol,atoly,atolt,maxsteps,boundary_change, &
-                          transport,reconstruction,rejected_steps)
+                          transport,reconstruction,rejected_steps,fixed_states)
     type(rf_mechanism), intent(in), target :: m
+    real(dp), intent(in), optional :: fixed_states(:,:)
     real(dp), intent(inout) :: q(:,:),dt
     real(dp), intent(in) :: dx,cfl,rtol,atoly,atolt
     character(*), intent(in) :: left_bc,right_bc
@@ -387,15 +442,16 @@ contains
     call require(ieee_is_finite(dt).and.dt>0,'Require positive finite flow dt')
     call require(size(q,1)==size(m%species)+2.and.size(q,2)>=2,'Invalid 1D field shape')
     call require(admissible_flow(m,q),'Invalid input flow state; cannot recover by reducing dt')
+    call validate_fixed_states(m,left_bc,right_bc,fixed_states)
     if(present(rejected_steps)) rejected_steps=0
     old=q
     do retry=1,30
       stage=old
       if(chemistry) call chemistry_cells(m,stage,dt/2,rtol,atoly,atolt,maxsteps)
-      call transport_step(m,stage,dx,dt,cfl,left_bc,right_bc,newq,boundary_change,ok,transport,reconstruction)
+      call transport_step(m,stage,dx,dt,cfl,left_bc,right_bc,newq,boundary_change,ok,transport,reconstruction,fixed_states)
       if(ok) then
         if(chemistry) call chemistry_cells(m,newq,dt/2,rtol,atoly,atolt,maxsteps)
-        check_dt=flow_timestep(m,newq,dx,cfl,transport,reconstruction,left_bc,right_bc) ! validate complete step
+        check_dt=flow_timestep(m,newq,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states) ! validate complete step
         call require(check_dt>0,'Invalid final flow state')
         q=newq
         if(present(rejected_steps)) rejected_steps=retry-1
