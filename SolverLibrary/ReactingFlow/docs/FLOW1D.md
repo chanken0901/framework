@@ -1,12 +1,106 @@
-# R4a〜f：1次元流体・詳細反応・輸送の結合
+# R4a〜h：1次元流体・詳細反応・輸送の結合
 
 R4aのEuler基盤、R4bの定係数輸送、R4cのMUSCL再構築、R4dの流体段棄却・再試行を実装した。
 R4eでは化学種ごとの定係数拡散を追加した。
 R4fでは左右独立の固定状態境界（Dirichlet）を追加した。
+R4gでは共通べき指数の温度依存輸送を追加した。分子輸送モデルそのものではない。
+R4hではSutherlandの種粘性とWilke混合則による温度・組成依存のせん断粘性を追加した。
 **Fortran、CPU逐次実行、1次元・一様直交格子の基準計算**。
 R4全体の完成ではない。温度・組成依存の分子輸送、2D/3D、ノズル、MPI/OpenMP/CUDA、
 CJ/ZNDデトネーション検証、旧反応流CFDとの全体同値検証は残っている。
 現在のコードを実用的なデトネーションソルバーと見なさない。
+
+## R4h：Sutherland–Wilke混合粘性
+
+検証: Windows/gfortran Debug・Releaseとも回帰62件、Fortran単体4件が成功。
+純成分極限、二成分の解析値、質量分率からモル分率への変換、組成によらない上限、
+内部面・固定境界の応力／粘性仕事、拡散刻み、反応の有無での保存収支、不正入力を確認した。
+これは実験物性やCanteraの輸送係数との一致の検証ではない。Linux/GPUは未実行。
+
+`transport_model='constant'` または `'species_constant'` に、独立の粘性モデルを指定する。
+従来の `viscosity` は0（既定値）のままとし、全化学種のデータを機構の種順に渡す。
+以下の配列は2種機構の書式例であり、実用の物性値ではない。
+
+```fortran
+viscosity_model='sutherland_wilke',
+viscosity_reference_temperature=300,
+species_reference_viscosities=0.00004,0.00001,
+species_sutherland_temperatures=100,200,
+```
+
+基準種粘性はPa s、基準温度とSutherland温度はK。
+種粘性は正、Sutherland温度は0以上、全値は有限とする。未指定・配列不足を拒否する。
+入力機構の分子量Mから、質量分率Yをモル分率Xに変換して評価する。
+
+```text
+mu_i(T) = mu_i,ref (T/Tref)^(3/2) (Tref+S_i)/(T+S_i)
+X_i = (Y_i/M_i) / sum_j(Y_j/M_j)
+phi_ij = [1+sqrt(mu_i/mu_j)(M_j/M_i)^(1/4)]² / sqrt[8(1+M_i/M_j)]
+mu_mix = sum_i X_i mu_i / sum_j X_j phi_ij
+```
+
+Sutherland式は [OpenFOAM公式説明](https://doc.openfoam.com/2212/tools/processing/models/thermophysical/transport/rtm/sutherland/)、
+Wilke混合則は [IDAES公式説明](https://idaes-pse.readthedocs.io/en/stable/explanations/components/property_package/general/transport_properties/viscosity_wilke.html) に基づく。
+低圧気体向けの半経験モデル。係数の適用温度範囲は利用者が確認する。
+Canteraの衝突積分による種粘性を再現するものではなく、Cantera YAMLの輸送物性の自動変換もまだない。
+
+内部面は算術平均T/Y、固定状態境界は境界T/Yを使う。
+粘性応力と粘性仕事の両方にmu_mixを使用し、保存形の面流束として計算する。
+粘性だけが非ゼロの場合も輸送処理と拡散刻み制限を有効にする。
+既存の定数体積粘性・熱伝導・共通／種別拡散とは併用できる。
+共通power_lawとは二重の温度補正を防ぐため併用不可。
+**熱伝導率・拡散係数の組成依存、分子衝突積分、多成分拡散は今回の対象外。**
+
+刻み評価はセルと固定境界の最大温度Tmaxを使い、
+`mu_upper = max_i [mu_i(Tmax)*sqrt(8*(1+M_i/min(M)))]` とする。
+S_i>=0で種粘性は温度について単調増加し、phiの分子は1以上なので、
+この上限は全モル組成と全算術平均面温度を覆う。
+軽い化学種を含む場合には保守的で、実際の混合粘性より大きくなり刻みが小さくなる。
+非線形スキーム全体の厳密な安定性保証ではなく、既存の段棄却も併用する。
+
+`examples/flow1d_h2_wilke.in` をR4fのコマンドで入力ファイルとして指定すると実行できる。
+同梱の係数はコード検証用の仮想値であり、水素燃焼の物性として使用しない。
+CSVには粘性モデル、基準温度、種名付きの基準粘性・Sutherland温度を記録する。
+Fortran APIはrf_transportのspecies_viscosity、sutherland_temperature、
+viscosity_reference_temperatureに対応する。配列未割当時は従来経路を使う。
+
+## R4g：温度依存輸送の基盤
+
+検証: Windows/gfortran Debug・Releaseとも回帰60件、Fortran単体4件が成功。
+可変熱伝導の解析演算子に対する2次格子収束、保存収支、境界温度による係数評価、
+高温での刻み縮小、指数0の従来モデルとの完全一致、不正入力の拒否を確認した。
+Linux・GPUは今回未実行。
+
+従来の `transport_model='constant'`（共通D）または `'species_constant'`（種別D）に、
+独立した温度依存則を組み合わせる。係数はSIで、基準温度における値を指定する。
+
+```fortran
+transport_model='species_constant',
+transport_temperature_model='power_law',
+transport_reference_temperature=1000,
+transport_temperature_exponent=0.7,
+```
+
+mu、体積粘性、kappa、全てのDに共通の係数 `(T/Tref)**exponent` を掛ける。
+面の温度は隣接セルの算術平均、Dirichlet面は指定温度を使う。
+可変係数を面流束に含めてその発散を取るため、係数勾配の効果も含まれる。
+エネルギー流束の粘性仕事・種エンタルピー輸送にも同じ係数を適用する。
+
+既定は `transport_temperature_model='constant'` であり、従来入力は変更不要。
+指数0なら従来モデルと同一。power_lawではTrefと指数を必須とし、
+Trefは正の有限値、指数は0以上の有限値に制限する。
+他モードでの温度パラメータ指定、noneとの併用、非有限スケーリングは拒否する。
+時間刻みは各RK段のセル・固定境界の最大温度で輸送係数を上から評価する。
+非負指数と算術平均面温度を使うため、その値が全輸送面を覆う。
+これは非線形拡散の厳密な安定性証明ではなく、既存の段棄却・再試行も維持する。
+
+例は `examples/flow1d_h2_power_law.in`。R4fの実行コマンドの入力ファイルを置き換える。
+CSVには温度モデル、基準温度、指数を出力する。
+Fortran APIはrf_transportのreference_temperature、temperature_exponentで指定する。
+
+**適用範囲:** 簡易べき乗則であり、衝突積分・組成依存混合則・圧力依存D・
+Stefan–Maxwell・Soretを実装したものではない。各物性に異なる指数を持たせるモデルでもない。
+例の係数は実行確認用であり、水素燃焼の実測分子物性として使わない。
 
 ## R4f：固定状態境界
 
@@ -118,7 +212,8 @@ Fortran APIの`rf_transport`に係数をまとめ、既存の流体APIでは末�
 constantでも個別係数を0にできるため、熱伝導だけなどの切り分けが可能。
 機構YAMLの輸送パラメーターから自動算出しない。例の係数は検証用であり実在気体の推奨値ではない。
 化学種ごとの定係数DはR4eの別モデルで指定する（下記）。
-**温度依存粘性、分子物性からの混合平均／多成分輸送、Soret、Dufour、圧力拡散は未実装**。
+温度依存はR4gの簡易べき乗則とR4hのSutherland–Wilkeせん断粘性。
+**詳細分子物性からの熱伝導・混合平均／多成分拡散、Soret、Dufour、圧力拡散は未実装**。
 これらが必要な燃焼速度・火炎構造を定量評価できる完成段階とは見なさない。
 
 全流束は`F=F_Euler+F_diff`として同じセル面で保存的に差分する。

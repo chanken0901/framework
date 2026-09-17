@@ -3,14 +3,78 @@ module mod_rf_transport
   implicit none
   private
   public :: rf_transport,validate_transport,diffusive_flux,transport_active
-  public :: diffusion_bound
+  public :: diffusion_bound,transport_scale
   public :: fixed_diffusive_flux
+  public :: mixture_viscosity,viscosity_bound
   type :: rf_transport
     ! Constant SI coefficients. The common species D is not a detailed mixture-averaged model.
     real(dp) :: viscosity=0,bulk_viscosity=0,conductivity=0,diffusivity=0
     real(dp), allocatable :: species_diffusivity(:)
+    real(dp) :: reference_temperature=1,temperature_exponent=0
+    real(dp), allocatable :: species_viscosity(:),sutherland_temperature(:)
+    real(dp) :: viscosity_reference_temperature=300
   end type
 contains
+  function pure_viscosities(c,t) result(mu)
+    type(rf_transport), intent(in) :: c
+    real(dp), intent(in) :: t
+    real(dp) :: mu(size(c%species_viscosity))
+    call require(ieee_is_finite(t).and.t>0,'Invalid viscosity temperature')
+    mu=c%species_viscosity*(t/c%viscosity_reference_temperature)**1.5_dp * &
+      (c%viscosity_reference_temperature+c%sutherland_temperature)/(t+c%sutherland_temperature)
+    call require(all(ieee_is_finite(mu)).and.all(mu>0),'Nonfinite/zero Sutherland viscosity')
+  end function
+
+  real(dp) function mixture_viscosity(m,c,t,y) result(mu)
+    type(rf_mechanism), intent(in) :: m
+    type(rf_transport), intent(in) :: c
+    real(dp), intent(in) :: t,y(:)
+    real(dp) :: x(size(y)),pure(size(y)),mass(size(y)),phi,denom
+    integer :: i,j
+    mu=c%viscosity
+    if(.not.allocated(c%species_viscosity)) return
+    call validate_transport(c,size(m%species)); call check_y(m,y)
+    mass=m%species%mass; pure=pure_viscosities(c,t)
+    x=y/mass;x=x/sum(x);mu=0
+    do i=1,size(y)
+      if(x(i)==0) cycle
+      denom=0
+      do j=1,size(y)
+        if(x(j)==0) cycle
+        phi=(1+sqrt(pure(i)/pure(j))*(mass(j)/mass(i))**.25_dp)**2 / &
+          sqrt(8*(1+mass(i)/mass(j)))
+        denom=denom+x(j)*phi
+      end do
+      mu=mu+x(i)*pure(i)/denom
+    end do
+    call require(ieee_is_finite(mu).and.mu>0,'Invalid Wilke viscosity')
+  end function
+
+  real(dp) function viscosity_bound(m,c,tmax) result(mu)
+    type(rf_mechanism), intent(in) :: m
+    type(rf_transport), intent(in) :: c
+    real(dp), intent(in) :: tmax
+    real(dp) :: mass(size(m%species))
+    mu=c%viscosity
+    if(.not.allocated(c%species_viscosity)) return
+    call validate_transport(c,size(m%species))
+    mass=m%species%mass
+    ! phi_ij >= 1/sqrt(8*(1+Mi/Mj)); sum(x)=1. Bound holds for every composition.
+    ! S>=0 makes each pure viscosity monotone in T, so Tmax bounds all diffusion faces.
+    mu=maxval(pure_viscosities(c,tmax)*sqrt(8*(1+mass/minval(mass))))
+    call require(ieee_is_finite(mu).and.mu>0,'Invalid Wilke viscosity bound')
+  end function
+
+  real(dp) function transport_scale(c,t) result(scale)
+    type(rf_transport), intent(in) :: c
+    real(dp), intent(in) :: t
+    call require(ieee_is_finite(t).and.t>0,'Invalid transport temperature')
+    scale=1
+    if(c%temperature_exponent==0) return
+    scale=(t/c%reference_temperature)**c%temperature_exponent
+    call require(ieee_is_finite(scale).and.scale>0,'Transport temperature scaling overflow/underflow')
+  end function
+
   subroutine fixed_diffusive_flux(m,c,rho,u,t,y,ui,ti,yi,dx,side,flux)
     ! Prescribed physical boundary state, cell-center distance dx/2.
     type(rf_mechanism), intent(in) :: m
@@ -30,12 +94,13 @@ contains
     jmass=-rho*c%diffusivity*side*(y-yi)/(dx/2)
     if(allocated(c%species_diffusivity)) jmass=-rho*c%species_diffusivity*side*(y-yi)/(dx/2)
     jmass=jmass-y*sum(jmass); jmass(ns)=-sum(jmass(:ns-1))
-    tau=(4._dp/3*c%viscosity+c%bulk_viscosity)*gradu
+    tau=(4._dp/3*mixture_viscosity(m,c,t,y)+c%bulk_viscosity)*gradu
     flux(:ns)=jmass; flux(ns+1)=-tau; flux(ns+2)=-u*tau-c%conductivity*gradt
     do i=1,ns
       call species_thermo(m%species(i),t,cp,h,s)
       flux(ns+2)=flux(ns+2)+h/m%species(i)%mass*jmass(i)
     end do
+    flux=flux*transport_scale(c,t)
     call require(all(ieee_is_finite(flux)),'Nonfinite fixed boundary flux')
   end subroutine
 
@@ -45,6 +110,25 @@ contains
     real(dp) :: v(4)
     v=[c%viscosity,c%bulk_viscosity,c%conductivity,c%diffusivity]
     call require(all(ieee_is_finite(v)).and.all(v>=0),'Transport coefficients must be finite and nonnegative')
+    call require(ieee_is_finite(c%reference_temperature).and.c%reference_temperature>0, &
+      'Transport reference temperature must be positive and finite')
+    call require(ieee_is_finite(c%temperature_exponent).and.c%temperature_exponent>=0, &
+      'Transport exponent must be finite and nonnegative')
+    call require(allocated(c%species_viscosity).eqv.allocated(c%sutherland_temperature), &
+      'Sutherland viscosity requires both species arrays')
+    if(allocated(c%species_viscosity)) then
+      call require(size(c%species_viscosity)>0,'Empty species viscosity array')
+      if(present(ns)) call require(size(c%species_viscosity)==ns,'Species viscosity count mismatch')
+      call require(size(c%sutherland_temperature)==size(c%species_viscosity),'Sutherland array size mismatch')
+      call require(all(ieee_is_finite(c%species_viscosity)).and.all(c%species_viscosity>0), &
+        'Species reference viscosities must be positive and finite')
+      call require(all(ieee_is_finite(c%sutherland_temperature)).and.all(c%sutherland_temperature>=0), &
+        'Sutherland temperatures must be nonnegative and finite')
+      call require(ieee_is_finite(c%viscosity_reference_temperature).and.c%viscosity_reference_temperature>0, &
+        'Invalid viscosity reference temperature')
+      call require(c%viscosity==0.and.c%temperature_exponent==0, &
+        'Wilke cannot combine with scalar viscosity or common temperature scaling')
+    end if
     if(allocated(c%species_diffusivity)) then
       call require(size(c%species_diffusivity)>0,'Empty species diffusivity array')
       if(present(ns)) call require(size(c%species_diffusivity)==ns,'Species diffusivity count mismatch')
@@ -64,6 +148,7 @@ contains
   logical function transport_active(c) result(active)
     type(rf_transport), intent(in) :: c
     active=max(c%viscosity,c%bulk_viscosity,c%conductivity,diffusion_bound(c))>0
+    active=active.or.allocated(c%species_viscosity)
   end function
 
   subroutine diffusive_flux(m,c,rhol,ul,tl,yl,rhor,ur,tr,yr,dx,flux)
@@ -87,13 +172,14 @@ contains
     ! Correction velocity, followed by a roundoff-only closure on the final species.
     jmass=jmass-yf*sum(jmass)
     jmass(ns)=-sum(jmass(:ns-1))
-    tau=(4._dp/3*c%viscosity+c%bulk_viscosity)*(ur-ul)/dx
+    tau=(4._dp/3*mixture_viscosity(m,c,temp,yf)+c%bulk_viscosity)*(ur-ul)/dx
     flux(:ns)=jmass; flux(ns+1)=-tau
     flux(ns+2)=-velocity*tau-c%conductivity*(tr-tl)/dx
     do i=1,ns
       call species_thermo(m%species(i),temp,cp,h,s)
       flux(ns+2)=flux(ns+2)+h/m%species(i)%mass*jmass(i)
     end do
+    flux=flux*transport_scale(c,temp)
     call require(all(ieee_is_finite(flux)),'Nonfinite diffusive flux')
   end subroutine
 end module

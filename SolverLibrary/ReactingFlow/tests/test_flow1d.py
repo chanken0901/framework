@@ -14,6 +14,65 @@ from reactingflow.importer import import_cantera
 
 
 class FlowTests(unittest.TestCase):
+    def test_wilke_example_conservation(self):
+        text=(ROOT/'examples/flow1d_h2_wilke.in').read_text()
+        controls,rows=text.split('&flow1d',1)[1].split('/',1)
+        yl,yr=([float(v) for v in line.split()] for line in rows.strip().splitlines())
+        for reactive in (False,True):
+            selected=controls if reactive else controls.replace('chemistry=.true.','chemistry=.false.')
+            values,d=self.run_flow(self.h2,selected,yl,yr)
+            self.assertEqual(values[-1,1],0.000002)
+            self.assertEqual(d['viscosity_model'],'sutherland_wilke')
+            self.assertAlmostEqual(float(d['reference_viscosity_H2']),1e-5)
+            for key in ('mass_error','momentum_error','energy_error','element_error'):
+                self.assertLess(float(d[key]),1e-8)
+
+    def test_invalid_wilke_parameters(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'N2:1';y=gas.Y.tolist()
+        base=("transport_model='constant',viscosity_model='sutherland_wilke',"
+              "viscosity_reference_temperature=300,species_reference_viscosities=10*0.00001,"
+              "species_sutherland_temperatures=10*100")
+        cases=[base.replace('10*0.00001','9*0.00001'),base.replace('10*100','10*-1'),
+               base.replace('temperature=300','temperature=0'),base+',viscosity=0.001',
+               base+",transport_temperature_model='power_law',transport_reference_temperature=300,transport_temperature_exponent=1",
+               base.replace("viscosity_model='sutherland_wilke'","viscosity_model='constant'"),
+               base.replace("transport_model='constant'","transport_model='none'")]
+        for controls in cases:
+            with self.subTest(controls=controls):
+                self.run_flow(self.h2,controls,y,y,success=False)
+
+    def test_power_law_example(self):
+        text=(ROOT/'examples/flow1d_h2_power_law.in').read_text()
+        controls,rows=text.split('&flow1d',1)[1].split('/',1)
+        yl,yr=([float(v) for v in line.split()] for line in rows.strip().splitlines())
+        values,d=self.run_flow(self.h2,controls,yl,yr)
+        self.assertEqual(values[-1,1],0.000002)
+        self.assertEqual(d['transport_temperature_model'],'power_law')
+        self.assertLess(float(d['energy_error']),1e-8)
+
+    def test_power_law_reactive_and_constant_limit(self):
+        example=(ROOT/'examples/flow1d_h2_inflow.in').read_text()
+        controls,rows=example.split('&flow1d',1)[1].split('/',1)
+        yl,yr=([float(v) for v in line.split()] for line in rows.strip().splitlines())
+        baseline,_=self.run_flow(self.h2,controls,yl,yr)
+        for exponent in (0,0.7):
+            values,d=self.run_flow(self.h2,controls+",transport_temperature_model='power_law',"
+                f"transport_reference_temperature=1000,transport_temperature_exponent={exponent}",yl,yr)
+            self.assertEqual(d['transport_temperature_model'],'power_law')
+            for key in ('mass_error','momentum_error','energy_error','element_error'):
+                self.assertLess(float(d[key]),1e-8)
+            if exponent==0:
+                self.np.testing.assert_array_equal(values,baseline)
+
+    def test_invalid_temperature_transport(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'N2:1';y=gas.Y.tolist()
+        for extra in ("transport_temperature_model='bad'", "transport_reference_temperature=1000",
+                      "transport_temperature_model='power_law'",
+                      "transport_temperature_model='power_law',transport_reference_temperature=0,transport_temperature_exponent=1",
+                      "transport_temperature_model='power_law',transport_reference_temperature=1000,transport_temperature_exponent=-2"):
+            with self.subTest(extra=extra):
+                self.run_flow(self.h2,"transport_model='constant',viscosity=0.01,"+extra,y,y,success=False)
+
     @classmethod
     def setUpClass(cls):
         if not os.environ.get('RF_FORTRAN_BUILD'):

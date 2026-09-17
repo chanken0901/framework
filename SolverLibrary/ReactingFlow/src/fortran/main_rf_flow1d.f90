@@ -6,6 +6,11 @@ program main_rf_flow1d
   type(rf_mechanism) :: m
   type(rf_transport) :: transport
   character(16) :: transport_model='none'
+  character(16) :: viscosity_model='constant'
+  real(dp) :: viscosity_reference_temperature=-1
+  real(dp), allocatable :: species_reference_viscosities(:),species_sutherland_temperatures(:)
+  character(16) :: transport_temperature_model='constant'
+  real(dp) :: transport_reference_temperature=-1,transport_temperature_exponent=-1
   character(16) :: reconstruction='first_order'
   real(dp) :: viscosity=0,bulk_viscosity=0,thermal_conductivity=0,mass_diffusivity=0
   real(dp), allocatable :: species_diffusivities(:)
@@ -30,7 +35,9 @@ program main_rf_flow1d
     chemistry_rtol,chemistry_atol_species,chemistry_atol_temperature,chemistry_max_steps, &
     transport_model,viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity,reconstruction,species_diffusivities, &
     left_boundary_temperature,left_boundary_pressure,left_boundary_velocity,left_boundary_y, &
-    right_boundary_temperature,right_boundary_pressure,right_boundary_velocity,right_boundary_y
+    right_boundary_temperature,right_boundary_pressure,right_boundary_velocity,right_boundary_y, &
+    transport_temperature_model,transport_reference_temperature,transport_temperature_exponent, &
+    viscosity_model,viscosity_reference_temperature,species_reference_viscosities,species_sutherland_temperatures
   call require(command_argument_count()==3,'Usage: rf_flow1d mechanism.rf flow.in output.csv')
   call get_command_argument(1,mechanism_file)
   call get_command_argument(2,input_file)
@@ -38,6 +45,8 @@ program main_rf_flow1d
   call read_mechanism(trim(mechanism_file),m)
   ns=size(m%species)
   allocate(species_diffusivities(ns)); species_diffusivities=-1
+  allocate(species_reference_viscosities(ns),species_sutherland_temperatures(ns))
+  species_reference_viscosities=-1;species_sutherland_temperatures=-1
   allocate(left_boundary_y(ns),right_boundary_y(ns),fixed_states(ns+2,2))
   left_boundary_y=-1; right_boundary_y=-1; fixed_states=0
   open(newunit=io,file=trim(input_file),status='old',action='read',iostat=ios)
@@ -46,6 +55,30 @@ program main_rf_flow1d
   call require(ios==0,'Invalid flow1d namelist')
   call validate_reconstruction(reconstruction)
   transport=rf_transport(viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity)
+  select case(viscosity_model)
+  case('constant')
+    call require(viscosity_reference_temperature==-1.and.all(species_reference_viscosities==-1).and. &
+      all(species_sutherland_temperatures==-1),'Species viscosity parameters require sutherland_wilke')
+  case('sutherland_wilke')
+    call require(transport_model/='none'.and.transport_temperature_model=='constant', &
+      'sutherland_wilke requires transport and cannot combine with common power_law')
+    transport%species_viscosity=species_reference_viscosities
+    transport%sutherland_temperature=species_sutherland_temperatures
+    transport%viscosity_reference_temperature=viscosity_reference_temperature
+  case default
+    call require(.false.,'Unknown viscosity model')
+  end select
+  select case(transport_temperature_model)
+  case('constant')
+    call require(transport_reference_temperature==-1.and.transport_temperature_exponent==-1, &
+      'Temperature parameters require power_law transport')
+  case('power_law')
+    call require(transport_model/='none','power_law requires active transport model')
+    transport%reference_temperature=transport_reference_temperature
+    transport%temperature_exponent=transport_temperature_exponent
+  case default
+    call require(.false.,'Unknown transport temperature model')
+  end select
   call require(transport_model=='none'.or.transport_model=='constant'.or. &
     transport_model=='species_constant','Unknown transport model')
   if(transport_model=='species_constant') then
@@ -94,6 +127,19 @@ program main_rf_flow1d
   call require(ios==0,'Cannot create output; existing files are never overwritten')
   write(out,'(a)') '# 1D conservative flow + optional transport + Strang/DVODE chemistry, SI units'
   write(out,'(a)') '# transport_model='//trim(transport_model)
+  write(out,'(a)') '# viscosity_model='//trim(viscosity_model)
+  if(viscosity_model=='sutherland_wilke') then
+    write(out,'(a,es25.16e3)') '# viscosity_reference_temperature=',viscosity_reference_temperature
+    do j=1,ns
+      write(out,'(a,es25.16e3)') '# reference_viscosity_'//trim(m%species(j)%name)//'=',species_reference_viscosities(j)
+      write(out,'(a,es25.16e3)') '# sutherland_temperature_'//trim(m%species(j)%name)//'=',species_sutherland_temperatures(j)
+    end do
+  end if
+  write(out,'(a)') '# transport_temperature_model='//trim(transport_temperature_model)
+  if(transport_temperature_model=='power_law') then
+    write(out,'(a,es25.16e3)') '# transport_reference_temperature=',transport%reference_temperature
+    write(out,'(a,es25.16e3)') '# transport_temperature_exponent=',transport%temperature_exponent
+  end if
   write(out,'(a)') '# reconstruction='//trim(reconstruction)
   write(out,'(a,es25.16e3)') '# viscosity=',viscosity
   write(out,'(a,es25.16e3)') '# bulk_viscosity=',bulk_viscosity

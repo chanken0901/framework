@@ -72,3 +72,11 @@ R4a〜eの[1次元流体・詳細反応・輸送・MUSCL・再試行の仕様と
 > R4f update: fixed-state (Dirichlet) boundaries are implemented in the Fortran 1D solver,
 > including conservative convective and transport boundary fluxes. See [FLOW1D](docs/FLOW1D.md).
 > R4 remains in progress; nonreflecting boundaries, molecular transport and detonation validation remain.
+
+> R4g update: optional common-exponent power-law temperature scaling for transport is implemented.
+> Constant models remain available. This is a simplified model, not molecular mixture transport.
+> See [FLOW1D](docs/FLOW1D.md) and `examples/flow1d_h2_power_law.in`.
+
+> R4h update: species Sutherland viscosity with Wilke mixture viscosity is available.
+> This adds composition-dependent shear viscosity, not a full molecular transport package.
+> Parameters are supplied explicitly; see [FLOW1D](docs/FLOW1D.md) and `examples/flow1d_h2_wilke.in`.

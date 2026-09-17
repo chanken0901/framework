@@ -86,3 +86,9 @@ R4では保存的な圧縮性多成分流、衝撃波捕獲、密度・圧力・
 > This completes the fixed-state boundary increment, not R4 as a whole.
 > Remaining: molecular transport, characteristic/nonreflecting boundaries, multidimensional/nozzle
 > migration, old-CFD comparisons and CJ/ZND/grid/time/splitting validation. See [FLOW1D](FLOW1D.md).
+
+> R4g update: temperature-dependent transport infrastructure added using a common power law.
+> Molecular mixture transport and its reference validation remain unfinished; R4 is still in progress.
+
+> R4h: Sutherland/Wilke shear viscosity implemented. Molecular heat conduction/diffusion,
+> transport-data import, characteristic boundaries and detonation validation remain outstanding.

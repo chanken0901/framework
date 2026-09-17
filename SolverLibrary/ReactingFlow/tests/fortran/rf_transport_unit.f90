@@ -30,6 +30,9 @@ program rf_transport_unit
   expected=-10-400+.12_dp*gas_r*1000/.01_dp
   call require(abs(flux(4)-expected)<1.e-8_dp,'Fixed face work and enthalpy')
   left_flux=flux
+  separate=coeff; separate%reference_temperature=500; separate%temperature_exponent=1
+  call fixed_diffusive_flux(m,separate,1._dp,2._dp,1000._dp,yl,4._dp,1100._dp,yr,1._dp,-1,flux)
+  call require(maxval(abs(flux-2*left_flux))<1.e-8_dp,'Boundary temperature scales every transport flux')
   call fixed_diffusive_flux(m,coeff,1._dp,2._dp,1000._dp,yl,4._dp,1100._dp,yr,1._dp,1,flux)
   call require(maxval(abs(flux+left_flux))<1.e-8_dp,'Right boundary gradient orientation')
   separate=coeff; separate%diffusivity=0; separate%species_diffusivity=[.1_dp,.3_dp]
@@ -83,6 +86,10 @@ program rf_transport_unit
     call require(err64<.3_dp*err32,'Second-order diffusion spatial convergence')
   end do
   dt_none=flow_timestep(m,q,.1_dp,.4_dp)
+  separate=rf_transport(100._dp,0._dp,0._dp,0._dp)
+  dt=flow_timestep(m,q,.1_dp,.4_dp,separate)
+  separate%reference_temperature=500; separate%temperature_exponent=1
+  call require(flow_timestep(m,q,.1_dp,.4_dp,separate)<dt,'Hot transport reduces stable timestep')
   dt=flow_timestep(m,q,.1_dp,.4_dp,none)
   call require(abs(dt-dt_none)<1.e-15_dp,'Disabled transport timestep compatibility')
   separate=rf_transport(); separate%species_diffusivity=[100._dp,200._dp]
@@ -100,7 +107,65 @@ program rf_transport_unit
   err32=unequal_rhs_error(32); err64=unequal_rhs_error(64)
   call require(err64<.3_dp*err32,'Unequal species diffusion operator second-order convergence')
   write(*,'(a,2es15.6)') '[OK] unequal species diffusion operator errors 32/64: ',err32,err64
+  err32=variable_heat_error(32);err64=variable_heat_error(64)
+  call require(err64<.3_dp*err32,'Temperature-dependent heat flux second-order convergence')
+  write(*,'(a,2es15.6)') '[OK] variable conductivity errors 32/64: ',err32,err64
+  call check_wilke()
 contains
+  subroutine check_wilke()
+    type(rf_transport) :: c
+    real(dp) :: value,exact,ys(2),ff(4),state(4,2),dt0,dt1
+    integer :: j
+    m%species(1)%mass=.032_dp;m%species(2)%mass=.002_dp
+    c%species_viscosity=[4.e-5_dp,1.e-5_dp];c%sutherland_temperature=[100._dp,200._dp]
+    c%viscosity_reference_temperature=300
+    call require(transport_active(c),'Wilke alone activates transport')
+    value=mixture_viscosity(m,c,300._dp,[1._dp,0._dp])
+    call require(abs(value-4.e-5_dp)<1.e-16_dp,'Pure species reference viscosity')
+    value=mixture_viscosity(m,c,1200._dp,[0._dp,1._dp])
+    exact=1.e-5_dp*8*500/1400
+    call require(abs(value-exact)<1.e-16_dp,'Pure species Sutherland law')
+    ys=[16._dp/17,1._dp/17] ! equal mole fractions, NOT equal mass fractions
+    exact=4.e-5_dp/(1+4/sqrt(136._dp))+1.e-5_dp/(1+4/sqrt(8.5_dp))
+    value=mixture_viscosity(m,c,300._dp,ys)
+    call require(abs(value-exact)<1.e-16_dp,'Unequal mass Wilke analytic mixture')
+    do j=0,100
+      ys=[real(j,dp)/100,1-real(j,dp)/100]
+      call require(mixture_viscosity(m,c,900._dp,ys)<=viscosity_bound(m,c,1200._dp), &
+        'Composition-independent viscosity upper bound')
+    end do
+    ys=[16._dp/17,1._dp/17]
+    call diffusive_flux(m,c,1._dp,0._dp,300._dp,ys,1._dp,2._dp,300._dp,ys,1._dp,ff)
+    call require(abs(ff(3)+4._dp/3*exact*2)<1.e-15_dp,'Wilke face stress')
+    call require(abs(ff(4)-ff(3))<1.e-15_dp,'Wilke viscous work')
+    call fixed_diffusive_flux(m,c,1._dp,0._dp,300._dp,ys,2._dp,300._dp,ys,1._dp,-1,ff)
+    call require(abs(ff(3)+4._dp/3*exact*4)<1.e-15_dp,'Wilke fixed-face stress')
+    call require(abs(ff(4))<1.e-15_dp,'Fixed zero-velocity reservoir work')
+    call primitive_to_conserved(m,900._dp,101325._dp,0._dp,ys,state(:,1));state(:,2)=state(:,1)
+    dt0=flow_timestep(m,state,1.e-7_dp,.4_dp)
+    dt1=flow_timestep(m,state,1.e-7_dp,.4_dp,c)
+    call require(dt1<dt0,'Wilke-only timestep includes diffusion')
+    write(*,'(a)') '[OK] Sutherland/Wilke pure/mixed values, mass-to-mole, bound, stress/work, timestep'
+  end subroutine
+  real(dp) function variable_heat_error(nx) result(error)
+    integer, intent(in) :: nx
+    type(rf_transport) :: c
+    real(dp) :: state(4,nx),rhs(4,nx),bnd(4),xx,tt,exact
+    integer :: j
+    c%conductivity=2;c%reference_temperature=1000;c%temperature_exponent=1
+    do j=1,nx
+      xx=(j-.5_dp)/nx;tt=1000+20*sin(2*pi*xx)
+      call primitive_to_conserved(m,tt,r*tt,0._dp,[.5_dp,.5_dp],state(:,j))
+    end do
+    call diffusion_rhs(m,state,1._dp/nx,'periodic','periodic',c,rhs,bnd)
+    error=0
+    do j=1,nx
+      xx=(j-.5_dp)/nx;tt=1000+20*sin(2*pi*xx)
+      exact=2._dp/1000*((20*2*pi*cos(2*pi*xx))**2-tt*20*(2*pi)**2*sin(2*pi*xx))
+      error=error+abs(rhs(4,j)-exact)/nx
+    end do
+    call require(maxval(abs(sum(rhs,dim=2)))<1.e-8_dp,'Variable transport conservation')
+  end function
   real(dp) function unequal_rhs_error(nx) result(error)
     integer, intent(in) :: nx
     type(rf_transport) :: c
