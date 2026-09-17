@@ -110,12 +110,14 @@ program rf_transport_unit
   err32=variable_heat_error(32);err64=variable_heat_error(64)
   call require(err64<.3_dp*err32,'Temperature-dependent heat flux second-order convergence')
   write(*,'(a,2es15.6)') '[OK] variable conductivity errors 32/64: ',err32,err64
+  err32=variable_heat_error(32,.true.);err64=variable_heat_error(64,.true.)
+  call require(err64<.3_dp*err32,'Eucken/WMS heat flux second-order convergence')
   call check_wilke()
 contains
   subroutine check_wilke()
     type(rf_transport) :: c
-    real(dp) :: value,exact,ys(2),ff(4),state(4,2),dt0,dt1
-    integer :: j
+    real(dp) :: value,exact,ys(2),ff(4),state(4,2),dt0,dt1,k1,k2,kbound,tt
+    integer :: j,l
     m%species(1)%mass=.032_dp;m%species(2)%mass=.002_dp
     c%species_viscosity=[4.e-5_dp,1.e-5_dp];c%sutherland_temperature=[100._dp,200._dp]
     c%viscosity_reference_temperature=300
@@ -145,14 +147,47 @@ contains
     dt0=flow_timestep(m,state,1.e-7_dp,.4_dp)
     dt1=flow_timestep(m,state,1.e-7_dp,.4_dp,c)
     call require(dt1<dt0,'Wilke-only timestep includes diffusion')
+    c%eucken_wms=.true.
+    k1=4.e-5_dp*4.75_dp*gas_r/.032_dp;k2=1.e-5_dp*4.75_dp*gas_r/.002_dp
+    value=mixture_conductivity(m,c,300._dp,[1._dp,0._dp])
+    call require(abs(value-k1)<1.e-14_dp,'Pure Eucken conductivity with molar cp and mass')
+    exact=k1/(1+4/sqrt(136._dp))+k2/(1+4/sqrt(8.5_dp))
+    value=mixture_conductivity(m,c,300._dp,ys)
+    call require(abs(value-exact)<1.e-14_dp,'Binary WMS analytic conductivity')
+    call diffusive_flux(m,c,1._dp,0._dp,290._dp,ys,1._dp,0._dp,310._dp,ys,1._dp,ff)
+    call require(abs(ff(4)+20*exact)<1.e-12_dp,'Eucken/WMS internal face heat flux')
+    call fixed_diffusive_flux(m,c,1._dp,0._dp,300._dp,ys,0._dp,310._dp,ys,1._dp,-1,ff)
+    call require(abs(ff(4)+20*exact)<1.e-12_dp,'Eucken/WMS fixed face heat flux')
+    call require(flow_timestep(m,state,1.e-7_dp,.4_dp,c)<dt1,'Eucken/WMS heat timestep restriction')
+    ! Test the interval bound with nonmonotone NASA7 and inverse-power NASA9 heat capacities.
+    m%species(1)%coeff(:,1)=0;m%species(1)%coeff(1:3,1)=[3._dp,.008_dp,-4.e-6_dp]
+    m%species(2)%model=9;m%species(2)%coeff(:,1)=0
+    m%species(2)%coeff(1:5,1)=[20000._dp,-10._dp,3.5_dp,.001_dp,-1.e-7_dp]
+    kbound=conductivity_bound(m,c,300._dp,1500._dp)
+    do j=0,10
+      ys=[real(j,dp)/10,1-real(j,dp)/10]
+      do l=0,20
+        tt=300+60._dp*l
+        call require(mixture_conductivity(m,c,tt,ys)<=kbound,'NASA7/9 interval conductivity upper bound')
+      end do
+    end do
+    write(*,'(a)') '[OK] Eucken/WMS pure/binary values, face heat flux, NASA7/9 bound, timestep'
     write(*,'(a)') '[OK] Sutherland/Wilke pure/mixed values, mass-to-mole, bound, stress/work, timestep'
   end subroutine
-  real(dp) function variable_heat_error(nx) result(error)
+  real(dp) function variable_heat_error(nx,molecular) result(error)
     integer, intent(in) :: nx
+    logical, intent(in), optional :: molecular
     type(rf_transport) :: c
     real(dp) :: state(4,nx),rhs(4,nx),bnd(4),xx,tt,exact
     integer :: j
     c%conductivity=2;c%reference_temperature=1000;c%temperature_exponent=1
+    if(present(molecular)) then
+      if(molecular) then
+        c=rf_transport();c%eucken_wms=.true.;c%viscosity_reference_temperature=1000
+        c%species_viscosity=[2*.01_dp/(4.75_dp*gas_r),2*.01_dp/(4.75_dp*gas_r)]
+        c%sutherland_temperature=[0._dp,0._dp]
+      end if
+    end if
     do j=1,nx
       xx=(j-.5_dp)/nx;tt=1000+20*sin(2*pi*xx)
       call primitive_to_conserved(m,tt,r*tt,0._dp,[.5_dp,.5_dp],state(:,j))
@@ -162,6 +197,8 @@ contains
     do j=1,nx
       xx=(j-.5_dp)/nx;tt=1000+20*sin(2*pi*xx)
       exact=2._dp/1000*((20*2*pi*cos(2*pi*xx))**2-tt*20*(2*pi)**2*sin(2*pi*xx))
+      if(c%eucken_wms) exact=2*sqrt(tt/1000)* &
+        ((20*2*pi*cos(2*pi*xx))**2/(2*tt)-20*(2*pi)**2*sin(2*pi*xx))
       error=error+abs(rhs(4,j)-exact)/nx
     end do
     call require(maxval(abs(sum(rhs,dim=2)))<1.e-8_dp,'Variable transport conservation')

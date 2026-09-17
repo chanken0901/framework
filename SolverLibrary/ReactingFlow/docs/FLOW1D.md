@@ -1,14 +1,65 @@
-# R4a〜h：1次元流体・詳細反応・輸送の結合
+# R4a〜i：1次元流体・詳細反応・輸送の結合
 
 R4aのEuler基盤、R4bの定係数輸送、R4cのMUSCL再構築、R4dの流体段棄却・再試行を実装した。
 R4eでは化学種ごとの定係数拡散を追加した。
 R4fでは左右独立の固定状態境界（Dirichlet）を追加した。
 R4gでは共通べき指数の温度依存輸送を追加した。分子輸送モデルそのものではない。
 R4hではSutherlandの種粘性とWilke混合則による温度・組成依存のせん断粘性を追加した。
+R4iではNASA比熱・種粘性からのEucken熱伝導率とWMS混合則を追加した。
 **Fortran、CPU逐次実行、1次元・一様直交格子の基準計算**。
 R4全体の完成ではない。温度・組成依存の分子輸送、2D/3D、ノズル、MPI/OpenMP/CUDA、
 CJ/ZNDデトネーション検証、旧反応流CFDとの全体同値検証は残っている。
 現在のコードを実用的なデトネーションソルバーと見なさない。
+
+## R4i：Eucken–WMS混合熱伝導
+
+検証: Windows/gfortran Debug・Releaseとも回帰64件、Fortran単体4件が成功。
+純成分・二成分の解析値、熱流束の符号、NASA7/9の非単調比熱を含む区間上限、
+解析熱伝導演算子への2次格子収束、反応の有無での保存収支、定数モデルの互換性を確認。
+実験物性やCantera輸送物性との一致は未検証。Linux/GPUは今回未実行。
+
+R4hの粘性設定に `conductivity_model='eucken_wms'` を追加する。
+`thermal_conductivity` は0（既定値）のままとする。定数との併記はエラー。
+既定の `conductivity_model='constant'` は従来の熱伝導率を使い、既存入力は変更不要。
+Eucken/WMSには `viscosity_model='sutherland_wilke'` と全種の粘性パラメータが必要。
+R4gの共通power_lawとの併用は不可。種拡散・体積粘性の既存設定は維持する。
+
+```text
+k_i(T) = mu_i(T)/M_i * [Cp_i(T) + (5/4) R]
+       = mu_i(T)/M_i * [Cv_i(T) + (9/4) R]
+k_mix(T,Y) = sum_i X_i k_i(T) / sum_j X_j phi_ij(T)
+```
+
+Cp_iはNASA-7/9によるモル比熱[J/(mol K)]、M_iはkg/mol、kはW/(m K)。
+Xはモル分率、phiはR4hのWilkeと共通の粘性由来係数。
+種熱伝導率の比からphiを作る方式ではない。混合計算は粘性と共通ルーチンを使用する。
+原型Eucken式を使用し、modified Euckenや任意の補正係数は今回導入しない。
+式の参照: [Chemicals Eucken](https://chemicals.readthedocs.io/chemicals.thermal_conductivity.html#chemicals.thermal_conductivity.Eucken)、
+[IDAES WMS](https://idaes-pse.readthedocs.io/en/2.7.0/explanations/components/property_package/general/transport_properties/thermal_conductivity_wms.html)。
+
+内部面は算術平均T/Y、Dirichlet面は指定T/Yを使う。
+熱流束 `-k_mix grad(T)` を保存形で差分し、粘性仕事・種エンタルピー流束と合算する。
+従来の周期面共有、断熱鏡像壁、ゼロ勾配流出、固定状態境界に対応する。
+
+### 時間刻み
+
+現在の全セルと固定境界からTmin/Tmaxを求める。
+NASA比熱は非単調になり得るため、Tmaxだけの比熱評価は使わない。
+区間と交わる全NASA領域で、Cp/Rの各項 `a*T^n` を
+`abs(a)*max(Tlo^n,Thi^n)` で抑え、和の最大値を上限とする（NASA9の負指数も含む）。
+これとTmaxの種粘性、Wilkeの分母下限を組み合わせ、全組成・全算術平均面のkを上から抑える。
+既存の最小rho*Cvで割って拡散刻み評価へ加える。
+係数の相殺を使わないため保守的で、実際の熱伝導率より大きい上限になり得る。
+非線形スキーム全体の安定性証明ではなく、既存の段棄却・刻み縮小も維持する。
+
+例: `examples/flow1d_h2_eucken.in`。R4fのWindows/Linux実行コマンドの入力名を置き換える。
+CSVには `conductivity_model` を記録し、粘性パラメータと機構ハッシュも従来どおり残す。
+Fortran APIは `rf_transport%eucken_wms=.true.`。定数熱伝導率の既定経路は変更しない。
+
+**限界:** 低圧気体向けの近似モデルであり、高圧物性・衝突積分による詳細熱伝導や
+Cantera輸送物性との一致を保証しない。例のSutherland係数は仮想値であり実用物性ではない。
+温度・圧力・組成依存の種拡散、Soret/Dufour、物性データ自動取込みはまだ未実装。
+R4全体、デトネーション検証、並列化の完了を意味しない。
 
 ## R4h：Sutherland–Wilke混合粘性
 
@@ -213,7 +264,8 @@ constantでも個別係数を0にできるため、熱伝導だけなどの切�
 機構YAMLの輸送パラメーターから自動算出しない。例の係数は検証用であり実在気体の推奨値ではない。
 化学種ごとの定係数DはR4eの別モデルで指定する（下記）。
 温度依存はR4gの簡易べき乗則とR4hのSutherland–Wilkeせん断粘性。
-**詳細分子物性からの熱伝導・混合平均／多成分拡散、Soret、Dufour、圧力拡散は未実装**。
+R4iでは近似Eucken/WMS熱伝導を追加。
+**衝突積分による詳細輸送、混合平均／多成分拡散、Soret、Dufour、圧力拡散は未実装**。
 これらが必要な燃焼速度・火炎構造を定量評価できる完成段階とは見なさない。
 
 全流束は`F=F_Euler+F_diff`として同じセル面で保存的に差分する。

@@ -186,7 +186,7 @@ contains
     real(dp) :: f(size(q,1)),speed,maxspeed
     real(dp) :: rho,u,t,p,a,y(size(m%species)),cp,cv,h,e,r,rhomin,rhomax,rhocvmin,diff
     integer :: i
-    real(dp) :: diffusion_factor,tmax
+    real(dp) :: diffusion_factor,tmax,tmin
     call require(dx>0.and.cfl>0.and.cfl<=.5_dp,'Require dx>0 and 0<CFL<=0.5')
     call validate_reconstruction(reconstruction)
     lb='outflow'; rb='outflow'
@@ -224,12 +224,12 @@ contains
     if(present(transport)) then
       call validate_transport(transport,size(m%species))
       if(transport_active(transport)) then
-        rhomin=huge(rhomin); rhomax=0; rhocvmin=huge(rhocvmin); tmax=0
+        rhomin=huge(rhomin); rhomax=0; rhocvmin=huge(rhocvmin); tmax=0;tmin=huge(tmin)
         do i=1,size(q,2)
           call conserved_to_primitive(m,q(:,i),rho,u,t,p,a,y)
           call mixture(m,t,y,p,cp,cv,h,e,r)
           rhomin=min(rhomin,rho); rhomax=max(rhomax,rho); rhocvmin=min(rhocvmin,rho*cv)
-          tmax=max(tmax,t)
+          tmax=max(tmax,t);tmin=min(tmin,t)
         end do
         do i=1,2
           if(i==1.and.lb/='dirichlet') cycle
@@ -237,11 +237,11 @@ contains
           call conserved_to_primitive(m,fixed_states(:,i),rho,u,t,p,a,y)
           call mixture(m,t,y,p,cp,cv,h,e,r)
           rhomin=min(rhomin,rho); rhomax=max(rhomax,rho); rhocvmin=min(rhocvmin,rho*cv)
-          tmax=max(tmax,t)
+          tmax=max(tmax,t);tmin=min(tmin,t)
         end do
         ! Conservative explicit convection/diffusion estimate (cv, not cp, for compressible energy).
         diff=(4._dp/3*viscosity_bound(m,transport,tmax)+transport%bulk_viscosity)/rhomin &
-              +transport%conductivity/rhocvmin+diffusion_bound(transport)*rhomax/rhomin
+              +conductivity_bound(m,transport,tmin,tmax)/rhocvmin+diffusion_bound(transport)*rhomax/rhomin
         ! Nonnegative exponent: cell/boundary Tmax bounds all arithmetic face temperatures.
         diff=diff*transport_scale(transport,tmax)
         dt=cfl/(maxspeed/dx+diffusion_factor*diff/dx**2)

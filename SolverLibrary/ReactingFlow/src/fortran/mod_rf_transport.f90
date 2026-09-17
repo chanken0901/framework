@@ -6,6 +6,7 @@ module mod_rf_transport
   public :: diffusion_bound,transport_scale
   public :: fixed_diffusive_flux
   public :: mixture_viscosity,viscosity_bound
+  public :: mixture_conductivity,conductivity_bound
   type :: rf_transport
     ! Constant SI coefficients. The common species D is not a detailed mixture-averaged model.
     real(dp) :: viscosity=0,bulk_viscosity=0,conductivity=0,diffusivity=0
@@ -13,6 +14,7 @@ module mod_rf_transport
     real(dp) :: reference_temperature=1,temperature_exponent=0
     real(dp), allocatable :: species_viscosity(:),sutherland_temperature(:)
     real(dp) :: viscosity_reference_temperature=300
+    logical :: eucken_wms=.false.
   end type
 contains
   function pure_viscosities(c,t) result(mu)
@@ -29,13 +31,21 @@ contains
     type(rf_mechanism), intent(in) :: m
     type(rf_transport), intent(in) :: c
     real(dp), intent(in) :: t,y(:)
-    real(dp) :: x(size(y)),pure(size(y)),mass(size(y)),phi,denom
-    integer :: i,j
+    real(dp) :: pure(size(y))
     mu=c%viscosity
     if(.not.allocated(c%species_viscosity)) return
     call validate_transport(c,size(m%species)); call check_y(m,y)
-    mass=m%species%mass; pure=pure_viscosities(c,t)
-    x=y/mass;x=x/sum(x);mu=0
+    pure=pure_viscosities(c,t)
+    mu=wilke_property(m,pure,y,pure)
+    call require(ieee_is_finite(mu).and.mu>0,'Invalid Wilke viscosity')
+  end function
+
+  real(dp) function wilke_property(m,pure,y,property) result(value)
+    type(rf_mechanism), intent(in) :: m
+    real(dp), intent(in) :: pure(:),y(:),property(:)
+    real(dp) :: x(size(y)),mass(size(y)),phi,denom
+    integer :: i,j
+    mass=m%species%mass;x=y/mass;x=x/sum(x);value=0
     do i=1,size(y)
       if(x(i)==0) cycle
       denom=0
@@ -45,9 +55,58 @@ contains
           sqrt(8*(1+mass(i)/mass(j)))
         denom=denom+x(j)*phi
       end do
-      mu=mu+x(i)*pure(i)/denom
+      value=value+x(i)*property(i)/denom
     end do
-    call require(ieee_is_finite(mu).and.mu>0,'Invalid Wilke viscosity')
+  end function
+
+  real(dp) function mixture_conductivity(m,c,t,y) result(kappa)
+    type(rf_mechanism), intent(in) :: m
+    type(rf_transport), intent(in) :: c
+    real(dp), intent(in) :: t,y(:)
+    real(dp) :: pure(size(y)),ki(size(y)),cp,h,s
+    integer :: i
+    kappa=c%conductivity
+    if(.not.c%eucken_wms) return
+    call validate_transport(c,size(m%species));call check_y(m,y)
+    pure=pure_viscosities(c,t)
+    do i=1,size(y)
+      call species_thermo(m%species(i),t,cp,h,s)
+      ki(i)=pure(i)*(cp+1.25_dp*gas_r)/m%species(i)%mass
+    end do
+    kappa=wilke_property(m,pure,y,ki)
+    call require(ieee_is_finite(kappa).and.kappa>0,'Invalid Eucken/WMS conductivity')
+  end function
+
+  real(dp) function conductivity_bound(m,c,tmin,tmax) result(kappa)
+    type(rf_mechanism), intent(in) :: m
+    type(rf_transport), intent(in) :: c
+    real(dp), intent(in) :: tmin,tmax
+    real(dp) :: upper(size(m%species)),cp_upper,piece,lo,hi,mass(size(m%species))
+    integer :: i,j,n,power
+    kappa=c%conductivity
+    if(.not.c%eucken_wms) return
+    call validate_transport(c,size(m%species))
+    call require(tmin>0.and.tmax>=tmin,'Invalid conductivity bound interval')
+    mass=m%species%mass
+    do i=1,size(m%species)
+      call require(tmin>=m%species(i)%bounds(1).and. &
+        tmax<=m%species(i)%bounds(size(m%species(i)%bounds)),'Conductivity interval outside NASA range')
+      cp_upper=0
+      do j=1,size(m%species(i)%coeff,2)
+        lo=max(tmin,m%species(i)%bounds(j));hi=min(tmax,m%species(i)%bounds(j+1))
+        if(lo>hi) cycle
+        piece=0
+        do n=1,merge(5,7,m%species(i)%model==7)
+          power=n-1
+          if(m%species(i)%model==9) power=n-3
+          piece=piece+abs(m%species(i)%coeff(n,j))*max(lo**power,hi**power)
+        end do
+        cp_upper=max(cp_upper,piece*gas_r)
+      end do
+      upper(i)=(cp_upper+1.25_dp*gas_r)/mass(i)
+    end do
+    kappa=maxval(pure_viscosities(c,tmax)*upper*sqrt(8*(1+mass/minval(mass))))
+    call require(ieee_is_finite(kappa).and.kappa>0,'Invalid conductivity upper bound')
   end function
 
   real(dp) function viscosity_bound(m,c,tmax) result(mu)
@@ -95,7 +154,7 @@ contains
     if(allocated(c%species_diffusivity)) jmass=-rho*c%species_diffusivity*side*(y-yi)/(dx/2)
     jmass=jmass-y*sum(jmass); jmass(ns)=-sum(jmass(:ns-1))
     tau=(4._dp/3*mixture_viscosity(m,c,t,y)+c%bulk_viscosity)*gradu
-    flux(:ns)=jmass; flux(ns+1)=-tau; flux(ns+2)=-u*tau-c%conductivity*gradt
+    flux(:ns)=jmass; flux(ns+1)=-tau; flux(ns+2)=-u*tau-mixture_conductivity(m,c,t,y)*gradt
     do i=1,ns
       call species_thermo(m%species(i),t,cp,h,s)
       flux(ns+2)=flux(ns+2)+h/m%species(i)%mass*jmass(i)
@@ -116,6 +175,10 @@ contains
       'Transport exponent must be finite and nonnegative')
     call require(allocated(c%species_viscosity).eqv.allocated(c%sutherland_temperature), &
       'Sutherland viscosity requires both species arrays')
+    if(c%eucken_wms) then
+      call require(allocated(c%species_viscosity),'Eucken/WMS requires species viscosities')
+      call require(c%conductivity==0,'Eucken/WMS cannot combine with constant conductivity')
+    end if
     if(allocated(c%species_viscosity)) then
       call require(size(c%species_viscosity)>0,'Empty species viscosity array')
       if(present(ns)) call require(size(c%species_viscosity)==ns,'Species viscosity count mismatch')
@@ -174,7 +237,7 @@ contains
     jmass(ns)=-sum(jmass(:ns-1))
     tau=(4._dp/3*mixture_viscosity(m,c,temp,yf)+c%bulk_viscosity)*(ur-ul)/dx
     flux(:ns)=jmass; flux(ns+1)=-tau
-    flux(ns+2)=-velocity*tau-c%conductivity*(tr-tl)/dx
+    flux(ns+2)=-velocity*tau-mixture_conductivity(m,c,temp,yf)*(tr-tl)/dx
     do i=1,ns
       call species_thermo(m%species(i),temp,cp,h,s)
       flux(ns+2)=flux(ns+2)+h/m%species(i)%mass*jmass(i)

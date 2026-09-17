@@ -14,6 +14,28 @@ from reactingflow.importer import import_cantera
 
 
 class FlowTests(unittest.TestCase):
+    def test_eucken_example(self):
+        text=(ROOT/'examples/flow1d_h2_eucken.in').read_text()
+        controls,rows=text.split('&flow1d',1)[1].split('/',1)
+        yl,yr=([float(v) for v in line.split()] for line in rows.strip().splitlines())
+        for reactive in (False,True):
+            selected=controls if reactive else controls.replace('chemistry=.true.','chemistry=.false.')
+            values,d=self.run_flow(self.h2,selected,yl,yr)
+            self.assertEqual(values[-1,1],0.000002)
+            self.assertEqual(d['conductivity_model'],'eucken_wms')
+            for key in ('mass_error','momentum_error','energy_error','element_error'):
+                self.assertLess(float(d[key]),1e-8)
+        self.run_flow(self.h2,controls+',thermal_conductivity=0.03',yl,yr,success=False)
+
+    def test_invalid_conductivity_and_legacy_default(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'N2:1';y=gas.Y.tolist()
+        base="nx=4,end_time=0.000001,transport_model='constant',thermal_conductivity=0.03"
+        a,_=self.run_flow(self.h2,base,y,y)
+        b,_=self.run_flow(self.h2,base+",conductivity_model='constant'",y,y)
+        self.np.testing.assert_array_equal(a,b)
+        for extra in ("conductivity_model='bad'", "conductivity_model='eucken_wms'"):
+            self.run_flow(self.h2,"transport_model='constant',"+extra,y,y,success=False)
+
     def test_wilke_example_conservation(self):
         text=(ROOT/'examples/flow1d_h2_wilke.in').read_text()
         controls,rows=text.split('&flow1d',1)[1].split('/',1)

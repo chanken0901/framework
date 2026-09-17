@@ -7,6 +7,7 @@ program main_rf_flow1d
   type(rf_transport) :: transport
   character(16) :: transport_model='none'
   character(16) :: viscosity_model='constant'
+  character(16) :: conductivity_model='constant'
   real(dp) :: viscosity_reference_temperature=-1
   real(dp), allocatable :: species_reference_viscosities(:),species_sutherland_temperatures(:)
   character(16) :: transport_temperature_model='constant'
@@ -37,7 +38,8 @@ program main_rf_flow1d
     left_boundary_temperature,left_boundary_pressure,left_boundary_velocity,left_boundary_y, &
     right_boundary_temperature,right_boundary_pressure,right_boundary_velocity,right_boundary_y, &
     transport_temperature_model,transport_reference_temperature,transport_temperature_exponent, &
-    viscosity_model,viscosity_reference_temperature,species_reference_viscosities,species_sutherland_temperatures
+    viscosity_model,viscosity_reference_temperature,species_reference_viscosities,species_sutherland_temperatures, &
+    conductivity_model
   call require(command_argument_count()==3,'Usage: rf_flow1d mechanism.rf flow.in output.csv')
   call get_command_argument(1,mechanism_file)
   call get_command_argument(2,input_file)
@@ -55,6 +57,8 @@ program main_rf_flow1d
   call require(ios==0,'Invalid flow1d namelist')
   call validate_reconstruction(reconstruction)
   transport=rf_transport(viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity)
+  call require(conductivity_model=='constant'.or.conductivity_model=='eucken_wms','Unknown conductivity model')
+  transport%eucken_wms=conductivity_model=='eucken_wms'
   select case(viscosity_model)
   case('constant')
     call require(viscosity_reference_temperature==-1.and.all(species_reference_viscosities==-1).and. &
@@ -128,6 +132,7 @@ program main_rf_flow1d
   write(out,'(a)') '# 1D conservative flow + optional transport + Strang/DVODE chemistry, SI units'
   write(out,'(a)') '# transport_model='//trim(transport_model)
   write(out,'(a)') '# viscosity_model='//trim(viscosity_model)
+  write(out,'(a)') '# conductivity_model='//trim(conductivity_model)
   if(viscosity_model=='sutherland_wilke') then
     write(out,'(a,es25.16e3)') '# viscosity_reference_temperature=',viscosity_reference_temperature
     do j=1,ns
