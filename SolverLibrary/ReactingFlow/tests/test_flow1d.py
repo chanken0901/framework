@@ -14,6 +14,29 @@ from reactingflow.importer import import_cantera
 
 
 class FlowTests(unittest.TestCase):
+    def test_mixture_diffusion_example(self):
+        text=(ROOT/'examples/flow1d_h2_mixture_diffusion.in').read_text()
+        controls,rows=text.split('&flow1d',1)[1].split('/',1)
+        yl,yr=([float(v) for v in line.split()] for line in rows.strip().splitlines())
+        values,d=self.run_flow(self.h2,controls,yl,yr)
+        self.assertEqual(values[-1,1],1.e-6)
+        self.assertEqual(d['transport_model'],'mixture_averaged')
+        self.assertAlmostEqual(float(d['binary_diffusivity_H2_N2']),1.e-4)
+
+    def test_binary_diffusion_input(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'H2:1,N2:2'
+        yl=gas.Y.tolist();gas.TPX=1100,101325,'H2:2,N2:1';yr=gas.Y.tolist()
+        matrix=','.join('0' if i==j else '0.0001' for j in range(10) for i in range(10))
+        base="nx=8,end_time=0.000001,left_bc='periodic',right_bc='periodic',transport_model='mixture_averaged'"
+        values,d=self.run_flow(self.h2,base+',binary_diffusivities='+matrix,yl,yr)
+        self.assertEqual(d['transport_model'],'mixture_averaged')
+        for key in ('mass_error','momentum_error','energy_error','element_error'):
+            self.assertLess(float(d[key]),1e-8)
+        for bad in (matrix.replace('0.0001','-1',1),matrix.replace('0.0001','0.0002',1),
+                    '1'+matrix[1:], '0,0.0001'):
+            self.run_flow(self.h2,base+',binary_diffusivities='+bad,yl,yr,success=False)
+        self.run_flow(self.h2,base+',binary_diffusivities='+matrix+',mass_diffusivity=0.1',yl,yr,success=False)
+
     def test_named_transport_file_matches_inline(self):
         text=(ROOT/'examples/flow1d_h2_eucken.in').read_text()
         controls,rows=text.split('&flow1d',1)[1].split('/',1)

@@ -568,3 +568,8 @@ Sod参考：[Clawpack Euler Riemann問題](https://www.clawpack.org/riemann_book
 R4残作業：旧CFDとの全体同値検証、分子輸送モデルと境界の拡充、より高次・頑健性検証、
 ノズル／一般座標、1D反応波のCJ速度・ZND構造・格子／分割誤差の検証。
 この確認が済むまではR5（並列化）完了へ進めない。
+## R4k: mixture_averaged transport
+
+`transport_model='mixture_averaged'` adds composition-dependent diffusion from prescribed binary coefficients.
+See [MIXTURE_DIFFUSION.md](MIXTURE_DIFFUSION.md) for namelist input, equations, validation and limitations.
+Existing constant and species_constant transport choices remain supported.

@@ -15,6 +15,7 @@ program main_rf_flow1d
   character(16) :: reconstruction='first_order'
   real(dp) :: viscosity=0,bulk_viscosity=0,thermal_conductivity=0,mass_diffusivity=0
   real(dp), allocatable :: species_diffusivities(:)
+  real(dp), allocatable :: binary_diffusivities(:,:)
   real(dp) :: left_boundary_temperature=-1,left_boundary_pressure=-1,left_boundary_velocity=0
   real(dp) :: right_boundary_temperature=-1,right_boundary_pressure=-1,right_boundary_velocity=0
   real(dp), allocatable :: left_boundary_y(:),right_boundary_y(:),fixed_states(:,:)
@@ -41,7 +42,7 @@ program main_rf_flow1d
     right_boundary_temperature,right_boundary_pressure,right_boundary_velocity,right_boundary_y, &
     transport_temperature_model,transport_reference_temperature,transport_temperature_exponent, &
     viscosity_model,viscosity_reference_temperature,species_reference_viscosities,species_sutherland_temperatures, &
-    conductivity_model,transport_file
+    conductivity_model,transport_file,binary_diffusivities
   call require(command_argument_count()==3,'Usage: rf_flow1d mechanism.rf flow.in output.csv')
   call get_command_argument(1,mechanism_file)
   call get_command_argument(2,input_file)
@@ -49,6 +50,7 @@ program main_rf_flow1d
   call read_mechanism(trim(mechanism_file),m)
   ns=size(m%species)
   allocate(species_diffusivities(ns)); species_diffusivities=-1
+  allocate(binary_diffusivities(ns,ns));binary_diffusivities=-1
   allocate(species_reference_viscosities(ns),species_sutherland_temperatures(ns))
   species_reference_viscosities=-1;species_sutherland_temperatures=-1
   allocate(left_boundary_y(ns),right_boundary_y(ns),fixed_states(ns+2,2))
@@ -97,7 +99,12 @@ program main_rf_flow1d
     call require(.false.,'Unknown transport temperature model')
   end select
   call require(transport_model=='none'.or.transport_model=='constant'.or. &
-    transport_model=='species_constant','Unknown transport model')
+    transport_model=='species_constant'.or.transport_model=='mixture_averaged','Unknown transport model')
+  if(transport_model=='mixture_averaged') then
+    transport%binary_diffusivity=binary_diffusivities
+  else
+    call require(all(binary_diffusivities==-1),'binary_diffusivities requires mixture_averaged')
+  end if
   if(transport_model=='species_constant') then
     ! -1 sentinels make incomplete lists fail rather than silently supplying zero diffusivity.
     transport%species_diffusivity=species_diffusivities
@@ -106,7 +113,7 @@ program main_rf_flow1d
   end if
   call validate_transport(transport,ns)
   if(transport_model=='none') call require(.not.transport_active(transport), &
-    'Nonzero transport coefficients require constant or species_constant transport')
+    'Nonzero transport coefficients require an active transport model')
   call require(nx>=2.and.max_steps>0.and.write_every>0,'Invalid grid/step/output count')
   call require(all(ieee_is_finite([length,interface_x,end_time,cfl,max_dt])), 'Nonfinite flow control')
   call require(min(length,end_time,max_dt,cfl)>0.and.cfl<=.5_dp,'Require positive controls, CFL<=0.5')
@@ -164,6 +171,14 @@ program main_rf_flow1d
   write(out,'(a,es25.16e3)') '# bulk_viscosity=',bulk_viscosity
   write(out,'(a,es25.16e3)') '# thermal_conductivity=',thermal_conductivity
   write(out,'(a,es25.16e3)') '# mass_diffusivity=',mass_diffusivity
+  if(allocated(transport%binary_diffusivity)) then
+    do i=1,ns
+      do j=i+1,ns
+        write(out,'(a,es25.16e3)') '# binary_diffusivity_'//trim(m%species(i)%name)//'_'// &
+          trim(m%species(j)%name)//'=',binary_diffusivities(i,j)
+      end do
+    end do
+  end if
   if(allocated(transport%species_diffusivity)) then
     do j=1,ns
       write(out,'(a,es25.16e3)') '# diffusivity_'//trim(m%species(j)%name)//'=',species_diffusivities(j)

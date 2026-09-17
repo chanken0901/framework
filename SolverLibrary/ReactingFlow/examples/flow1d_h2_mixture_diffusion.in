@@ -1,0 +1,23 @@
+! Synthetic coefficients: numerical verification only, not physical hydrogen transport.
+! Species order: H2 H O O2 OH H2O HO2 H2O2 AR N2 (Cantera h2o2).
+&flow1d
+  nx=16, length=0.01, interface_x=0.005,
+  end_time=1.e-6, max_dt=1.e-7, write_every=10,
+  left_bc='periodic', right_bc='periodic',
+  left_temperature=1100, right_temperature=1100,
+  left_pressure=101325, right_pressure=101325,
+  transport_model='mixture_averaged',
+  binary_diffusivities(:,1)=0, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4,
+  binary_diffusivities(:,2)=1.e-4, 0, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4,
+  binary_diffusivities(:,3)=1.e-4, 1.e-4, 0, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4,
+  binary_diffusivities(:,4)=1.e-4, 1.e-4, 1.e-4, 0, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4,
+  binary_diffusivities(:,5)=1.e-4, 1.e-4, 1.e-4, 1.e-4, 0, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4,
+  binary_diffusivities(:,6)=1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 0, 1.e-4, 1.e-4, 1.e-4, 1.e-4,
+  binary_diffusivities(:,7)=1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 0, 1.e-4, 1.e-4, 1.e-4,
+  binary_diffusivities(:,8)=1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 0, 1.e-4, 1.e-4,
+  binary_diffusivities(:,9)=1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 0, 1.e-4,
+  binary_diffusivities(:,10)=1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 1.e-4, 0,
+/
+0.1 0 0 0 0 0 0 0 0 0.9
+0.2 0 0 0 0 0 0 0 0 0.8
+

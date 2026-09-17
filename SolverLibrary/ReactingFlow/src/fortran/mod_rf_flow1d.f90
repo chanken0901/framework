@@ -241,7 +241,7 @@ contains
         end do
         ! Conservative explicit convection/diffusion estimate (cv, not cp, for compressible energy).
         diff=(4._dp/3*viscosity_bound(m,transport,tmax)+transport%bulk_viscosity)/rhomin &
-              +conductivity_bound(m,transport,tmin,tmax)/rhocvmin+diffusion_bound(transport)*rhomax/rhomin
+              +conductivity_bound(m,transport,tmin,tmax)/rhocvmin+diffusion_bound(transport,m)*rhomax/rhomin
         ! Nonnegative exponent: cell/boundary Tmax bounds all arithmetic face temperatures.
         diff=diff*transport_scale(transport,tmax)
         dt=cfl/(maxspeed/dx+diffusion_factor*diff/dx**2)

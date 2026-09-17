@@ -98,3 +98,6 @@ R4では保存的な圧縮性多成分流、衝撃波捕獲、密度・圧力・
 
 > R4j: a named Sutherland-data file interface is implemented; external collision-integral data import remains.
 > [Remaining work](R4_REMAINING.md) separates implementation increments from R4 completion criteria.
+
+> R4k: prescribed binary coefficients now support composition-dependent mixture-averaged mass diffusion.
+> See [MIXTURE_DIFFUSION](MIXTURE_DIFFUSION.md); physical binary-coefficient models remain outstanding.

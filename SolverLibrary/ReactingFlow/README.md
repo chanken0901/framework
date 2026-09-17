@@ -87,3 +87,7 @@ R4a〜eの[1次元流体・詳細反応・輸送・MUSCL・再試行の仕様と
 
 > R4j: named-species transport files, SI mass checks and input-relative paths are supported.
 > See [remaining work](docs/R4_REMAINING.md) for R4 and subsequent R5-R7 scope.
+
+> R4k: composition-dependent mixture-averaged diffusion from prescribed constant binary coefficients.
+> See [input, equations and limitations](docs/MIXTURE_DIFFUSION.md). Detailed temperature/pressure-dependent
+> binary transport properties and full multicomponent diffusion remain future work.

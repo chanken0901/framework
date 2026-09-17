@@ -16,6 +16,7 @@ module mod_rf_transport
     real(dp), allocatable :: species_viscosity(:),sutherland_temperature(:)
     real(dp) :: viscosity_reference_temperature=300
     logical :: eucken_wms=.false.
+    real(dp), allocatable :: binary_diffusivity(:,:)
   end type
 contains
   subroutine read_transport_data(path,m,c)
@@ -244,6 +245,7 @@ contains
     gradu=side*(u-ui)/(dx/2); gradt=side*(t-ti)/(dx/2)
     jmass=-rho*c%diffusivity*side*(y-yi)/(dx/2)
     if(allocated(c%species_diffusivity)) jmass=-rho*c%species_diffusivity*side*(y-yi)/(dx/2)
+    if(allocated(c%binary_diffusivity)) jmass=binary_mass_flux(m,c,rho,y,side*(y-yi)/(dx/2))
     jmass=jmass-y*sum(jmass); jmass(ns)=-sum(jmass(:ns-1))
     tau=(4._dp/3*mixture_viscosity(m,c,t,y)+c%bulk_viscosity)*gradu
     flux(:ns)=jmass; flux(ns+1)=-tau; flux(ns+2)=-u*tau-mixture_conductivity(m,c,t,y)*gradt
@@ -259,7 +261,23 @@ contains
     type(rf_transport), intent(in) :: c
     integer, intent(in), optional :: ns
     real(dp) :: v(4)
+    integer :: i,j,n
     v=[c%viscosity,c%bulk_viscosity,c%conductivity,c%diffusivity]
+    if(allocated(c%binary_diffusivity)) then
+      n=size(c%binary_diffusivity,1)
+      call require(n>0.and.size(c%binary_diffusivity,2)==n,'Binary diffusion matrix must be square')
+      if(present(ns)) call require(n==ns,'Binary diffusion species count mismatch')
+      call require(c%diffusivity==0.and..not.allocated(c%species_diffusivity), &
+        'Binary diffusion cannot combine with common/species diffusivity')
+      call require(all(ieee_is_finite(c%binary_diffusivity)),'Nonfinite binary diffusivity')
+      do i=1,n
+        call require(c%binary_diffusivity(i,i)==0,'Binary diffusion diagonal must be zero')
+        do j=i+1,n
+          call require(c%binary_diffusivity(i,j)>0,'Binary diffusivities must be positive')
+          call require(c%binary_diffusivity(i,j)==c%binary_diffusivity(j,i),'Binary diffusion must be symmetric')
+        end do
+      end do
+    end if
     call require(all(ieee_is_finite(v)).and.all(v>=0),'Transport coefficients must be finite and nonnegative')
     call require(ieee_is_finite(c%reference_temperature).and.c%reference_temperature>0, &
       'Transport reference temperature must be positive and finite')
@@ -293,16 +311,49 @@ contains
     end if
   end subroutine
 
-  real(dp) function diffusion_bound(c) result(d)
+  real(dp) function diffusion_bound(c,m) result(d)
     type(rf_transport), intent(in) :: c
+    type(rf_mechanism), intent(in), optional :: m
+    real(dp) :: ratio
     d=c%diffusivity
     ! Include a conservative estimate of the correction-velocity coupling.
     if(allocated(c%species_diffusivity)) d=2*maxval(c%species_diffusivity)-minval(c%species_diffusivity)
+    if(allocated(c%binary_diffusivity)) then
+      call require(present(m),'Binary diffusion bound requires mechanism')
+      ratio=maxval(m%species%mass)/minval(m%species%mass)
+      ! Bound the mole-gradient Jacobian and correction velocity in induced 1-norm.
+      d=2*maxval(c%binary_diffusivity)*ratio*(1+ratio)
+    end if
+  end function
+
+  function binary_mass_flux(m,c,rho,y,gradient) result(jmass)
+    type(rf_mechanism), intent(in) :: m
+    type(rf_transport), intent(in) :: c
+    real(dp), intent(in) :: rho,y(:),gradient(:)
+    real(dp) :: jmass(size(y)),x(size(y)),mass(size(y)),w,denom,numerator,d,weighted_gradient
+    integer :: i,j
+    mass=m%species%mass;w=1/sum(y/mass);x=y*w/mass
+    weighted_gradient=w*sum(gradient/mass)
+    do i=1,size(y)
+      denom=0;numerator=0
+      do j=1,size(y)
+        if(j==i) cycle
+        denom=denom+x(j)/c%binary_diffusivity(i,j)
+        numerator=numerator+y(j)
+      end do
+      d=0
+      if(denom>0) d=numerator/denom
+      ! (M_i/W)*grad(X_i), evaluated by the chain rule at the face.
+      ! At a pure-species face the undefined dominant raw flux is removed by correction.
+      jmass(i)=-rho*d*(gradient(i)-y(i)*weighted_gradient)
+    end do
   end function
 
   logical function transport_active(c) result(active)
     type(rf_transport), intent(in) :: c
-    active=max(c%viscosity,c%bulk_viscosity,c%conductivity,diffusion_bound(c))>0
+    active=max(c%viscosity,c%bulk_viscosity,c%conductivity,c%diffusivity)>0
+    if(allocated(c%species_diffusivity)) active=active.or.maxval(c%species_diffusivity)>0
+    if(allocated(c%binary_diffusivity)) active=active.or.maxval(c%binary_diffusivity)>0
     active=active.or.allocated(c%species_viscosity)
   end function
 
@@ -324,6 +375,7 @@ contains
     yf=(yl+yr)/2; temp=(tl+tr)/2; velocity=(ul+ur)/2
     jmass=-(rhol+rhor)/2*c%diffusivity*(yr-yl)/dx
     if(allocated(c%species_diffusivity)) jmass=-(rhol+rhor)/2*c%species_diffusivity*(yr-yl)/dx
+    if(allocated(c%binary_diffusivity)) jmass=binary_mass_flux(m,c,(rhol+rhor)/2,yf,(yr-yl)/dx)
     ! Correction velocity, followed by a roundoff-only closure on the final species.
     jmass=jmass-yf*sum(jmass)
     jmass(ns)=-sum(jmass(:ns-1))

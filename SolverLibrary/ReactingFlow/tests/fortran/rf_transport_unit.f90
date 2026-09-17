@@ -113,7 +113,51 @@ program rf_transport_unit
   err32=variable_heat_error(32,.true.);err64=variable_heat_error(64,.true.)
   call require(err64<.3_dp*err32,'Eucken/WMS heat flux second-order convergence')
   call check_wilke()
+  call check_binary()
 contains
+  subroutine check_binary()
+    type(rf_mechanism) :: local
+    type(rf_transport) :: binary,common
+    real(dp) :: f(4),g(4),a(2),b(2)
+    real(dp) :: ff(5),yy(3),grad(3),xx(3),xp(3),xm(3),gx(3),raw(3),reference(3),w,d
+    integer :: k,j
+    local=m
+    local%species(1)%mass=.002_dp;local%species(2)%mass=.032_dp
+    binary%binary_diffusivity=reshape([0._dp,.01_dp,.01_dp,0._dp],[2,2])
+    common%diffusivity=.01_dp
+    call require(transport_active(binary),'Binary transport activation')
+    call require(diffusion_bound(binary,local)>=.01_dp,'Binary diffusion bound')
+    do k=0,10
+      a=[real(k,dp)/10,1-real(k,dp)/10];b=[.3_dp,.7_dp]
+      call diffusive_flux(local,binary,1._dp,0._dp,1000._dp,a,1._dp,0._dp,1000._dp,b,.1_dp,f)
+      call diffusive_flux(local,common,1._dp,0._dp,1000._dp,a,1._dp,0._dp,1000._dp,b,.1_dp,g)
+      call require(maxval(abs(f-g))<1.e-8_dp,'Unequal-mass binary mixture recovers Fick flux and enthalpy')
+      call fixed_diffusive_flux(local,binary,1._dp,0._dp,1000._dp,a,0._dp,1000._dp,b,.1_dp,-1,f)
+      call fixed_diffusive_flux(local,common,1._dp,0._dp,1000._dp,a,0._dp,1000._dp,b,.1_dp,-1,g)
+      call require(maxval(abs(f-g))<1.e-8_dp,'Binary fixed face including pure-species limit')
+    end do
+    local%species=[m%species(1),m%species(1),m%species(1)]
+    local%species(1)%mass=.002_dp;local%species(2)%mass=.016_dp;local%species(3)%mass=.032_dp
+    binary%binary_diffusivity=reshape([0._dp,.01_dp,.02_dp,.01_dp,0._dp,.03_dp,.02_dp,.03_dp,0._dp],[3,3])
+    yy=[.2_dp,.3_dp,.5_dp];grad=[.1_dp,-.3_dp,.2_dp]
+    w=1/sum(yy/local%species%mass);xx=yy*w/local%species%mass
+    xp=(yy+1.e-5_dp*grad)/local%species%mass;xp=xp/sum(xp)
+    xm=(yy-1.e-5_dp*grad)/local%species%mass;xm=xm/sum(xm)
+    gx=(xp-xm)/2.e-5_dp
+    do k=1,3
+      d=0
+      do j=1,3
+        if(j/=k) d=d+xx(j)/binary%binary_diffusivity(k,j)
+      end do
+      d=(1-yy(k))/d
+      raw(k)=-local%species(k)%mass/w*d*gx(k)
+    end do
+    reference=raw-yy*sum(raw)
+    call diffusive_flux(local,binary,1._dp,0._dp,1000._dp,yy-.05_dp*grad, &
+      1._dp,0._dp,1000._dp,yy+.05_dp*grad,.1_dp,ff)
+    call require(maxval(abs(ff(:3)-reference))<1.e-11_dp,'Ternary mole-gradient independent difference reference')
+    call require(abs(sum(ff(:3)))<1.e-16_dp,'Ternary total mass closure')
+  end subroutine
   subroutine check_wilke()
     type(rf_transport) :: c
     real(dp) :: value,exact,ys(2),ff(4),state(4,2),dt0,dt1,k1,k2,kbound,tt
