@@ -91,3 +91,9 @@ R4a〜eの[1次元流体・詳細反応・輸送・MUSCL・再試行の仕様と
 > R4k: composition-dependent mixture-averaged diffusion from prescribed constant binary coefficients.
 > See [input, equations and limitations](docs/MIXTURE_DIFFUSION.md). Detailed temperature/pressure-dependent
 > binary transport properties and full multicomponent diffusion remain future work.
+
+> R4l: named-species binary diffusion files are supported, with molar-mass checks and complete pair validation.
+> See [format and example](docs/MIXTURE_DIFFUSION.md) and `examples/flow1d_h2_binary_file.in`.
+
+> R4m: optional binary diffusion T-power/p scaling, independent of viscosity and conductivity.
+> See [parameters and limitations](docs/MIXTURE_DIFFUSION.md). This is not a collision-integral model.

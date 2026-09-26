@@ -1,0 +1,58 @@
+# Synthetic constant coefficients for regression only.
+RF_BINARY_DIFFUSION_V1
+10
+H2 0.002016
+H 0.001008
+O 0.015999
+O2 0.031998
+OH 0.017007
+H2O 0.018015
+HO2 0.033006
+H2O2 0.034014
+AR 0.03995
+N2 0.028014
+H2 H 1.e-4
+H2 O 1.e-4
+H2 O2 1.e-4
+H2 OH 1.e-4
+H2 H2O 1.e-4
+H2 HO2 1.e-4
+H2 H2O2 1.e-4
+H2 AR 1.e-4
+H2 N2 1.e-4
+H O 1.e-4
+H O2 1.e-4
+H OH 1.e-4
+H H2O 1.e-4
+H HO2 1.e-4
+H H2O2 1.e-4
+H AR 1.e-4
+H N2 1.e-4
+O O2 1.e-4
+O OH 1.e-4
+O H2O 1.e-4
+O HO2 1.e-4
+O H2O2 1.e-4
+O AR 1.e-4
+O N2 1.e-4
+O2 OH 1.e-4
+O2 H2O 1.e-4
+O2 HO2 1.e-4
+O2 H2O2 1.e-4
+O2 AR 1.e-4
+O2 N2 1.e-4
+OH H2O 1.e-4
+OH HO2 1.e-4
+OH H2O2 1.e-4
+OH AR 1.e-4
+OH N2 1.e-4
+H2O HO2 1.e-4
+H2O H2O2 1.e-4
+H2O AR 1.e-4
+H2O N2 1.e-4
+HO2 H2O2 1.e-4
+HO2 AR 1.e-4
+HO2 N2 1.e-4
+H2O2 AR 1.e-4
+H2O2 N2 1.e-4
+AR N2 1.e-4

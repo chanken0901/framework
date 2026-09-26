@@ -101,3 +101,9 @@ R4では保存的な圧縮性多成分流、衝撃波捕獲、密度・圧力・
 
 > R4k: prescribed binary coefficients now support composition-dependent mixture-averaged mass diffusion.
 > See [MIXTURE_DIFFUSION](MIXTURE_DIFFUSION.md); physical binary-coefficient models remain outstanding.
+
+> R4l: named constant binary-coefficient files complement the existing inline matrix input.
+> Runtime parsing is Fortran; external molecular-transport data conversion is not yet implemented.
+
+> R4m: optional common binary-coefficient temperature-power / inverse-pressure scaling is implemented.
+> Constant input remains the default. Collision-integral transport and physical validation remain outstanding.

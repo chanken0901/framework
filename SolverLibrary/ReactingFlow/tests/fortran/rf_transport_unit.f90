@@ -157,6 +157,18 @@ contains
       1._dp,0._dp,1000._dp,yy+.05_dp*grad,.1_dp,ff)
     call require(maxval(abs(ff(:3)-reference))<1.e-11_dp,'Ternary mole-gradient independent difference reference')
     call require(abs(sum(ff(:3)))<1.e-16_dp,'Ternary total mass closure')
+    binary%binary_power_law=.true.
+    binary%binary_reference_temperature=500;binary%binary_exponent=2
+    binary%binary_reference_pressure=gas_r*1000*sum(yy/local%species%mass)
+    call validate_transport(binary,3)
+    call require(abs(binary_diffusion_scale(binary,1000._dp,binary%binary_reference_pressure)-4)<1.e-14_dp, &
+      'Binary temperature power law')
+    call require(abs(binary_diffusion_scale(binary,500._dp,2*binary%binary_reference_pressure)-.5_dp)<1.e-14_dp, &
+      'Binary inverse pressure law')
+    reference=ff(:3)
+    call diffusive_flux(local,binary,1._dp,0._dp,1000._dp,yy-.05_dp*grad, &
+      1._dp,0._dp,1000._dp,yy+.05_dp*grad,.1_dp,ff)
+    call require(maxval(abs(ff(:3)-4*reference))<1.e-13_dp,'Binary face T/p scales species flux')
   end subroutine
   subroutine check_wilke()
     type(rf_transport) :: c

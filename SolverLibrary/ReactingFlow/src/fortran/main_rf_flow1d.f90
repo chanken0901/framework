@@ -6,6 +6,8 @@ program main_rf_flow1d
   type(rf_mechanism) :: m
   type(rf_transport) :: transport
   character(16) :: transport_model='none'
+  character(16) :: binary_diffusion_model='constant'
+  real(dp) :: binary_reference_temperature=-1,binary_reference_pressure=-1,binary_temperature_exponent=-1
   character(16) :: viscosity_model='constant'
   character(16) :: conductivity_model='constant'
   real(dp) :: viscosity_reference_temperature=-1
@@ -22,6 +24,7 @@ program main_rf_flow1d
   character(2048) :: mechanism_file,input_file,output_file
   character(512) :: input_error=''
   character(2048) :: transport_file='',resolved_transport_file=''
+  character(2048) :: binary_diffusion_file='',resolved_binary_diffusion_file=''
   character(16) :: left_bc='outflow',right_bc='outflow'
   integer :: nx=100,max_steps=100000,chemistry_max_steps=100000,write_every=50
   real(dp) :: length=1,interface_x=.5_dp,end_time=.001_dp,cfl=.4_dp,max_dt=.00001_dp
@@ -42,7 +45,8 @@ program main_rf_flow1d
     right_boundary_temperature,right_boundary_pressure,right_boundary_velocity,right_boundary_y, &
     transport_temperature_model,transport_reference_temperature,transport_temperature_exponent, &
     viscosity_model,viscosity_reference_temperature,species_reference_viscosities,species_sutherland_temperatures, &
-    conductivity_model,transport_file,binary_diffusivities
+    conductivity_model,transport_file,binary_diffusivities,binary_diffusion_file, &
+    binary_diffusion_model,binary_reference_temperature,binary_reference_pressure,binary_temperature_exponent
   call require(command_argument_count()==3,'Usage: rf_flow1d mechanism.rf flow.in output.csv')
   call get_command_argument(1,mechanism_file)
   call get_command_argument(2,input_file)
@@ -101,8 +105,16 @@ program main_rf_flow1d
   call require(transport_model=='none'.or.transport_model=='constant'.or. &
     transport_model=='species_constant'.or.transport_model=='mixture_averaged','Unknown transport model')
   if(transport_model=='mixture_averaged') then
-    transport%binary_diffusivity=binary_diffusivities
+    if(len_trim(binary_diffusion_file)>0) then
+      call require(all(binary_diffusivities==-1),'Binary diffusion file cannot combine with inline coefficients')
+      resolved_binary_diffusion_file=resolve_transport_path(trim(input_file),trim(binary_diffusion_file))
+      call read_binary_diffusion_data(trim(resolved_binary_diffusion_file),m,transport)
+      binary_diffusivities=transport%binary_diffusivity
+    else
+      transport%binary_diffusivity=binary_diffusivities
+    end if
   else
+    call require(len_trim(binary_diffusion_file)==0,'binary_diffusion_file requires mixture_averaged')
     call require(all(binary_diffusivities==-1),'binary_diffusivities requires mixture_averaged')
   end if
   if(transport_model=='species_constant') then
@@ -111,6 +123,21 @@ program main_rf_flow1d
   else
     call require(all(species_diffusivities==-1),'species_diffusivities requires transport_model=species_constant')
   end if
+  call validate_transport(transport,ns)
+  select case(binary_diffusion_model)
+  case('constant')
+    call require(all([binary_reference_temperature,binary_reference_pressure,binary_temperature_exponent]==-1), &
+      'Binary T/p parameters require power_law')
+  case('power_law')
+    call require(transport_model=='mixture_averaged'.and.transport_temperature_model=='constant', &
+      'Binary power law requires mixture_averaged and no common transport power law')
+    transport%binary_power_law=.true.
+    transport%binary_reference_temperature=binary_reference_temperature
+    transport%binary_reference_pressure=binary_reference_pressure
+    transport%binary_exponent=binary_temperature_exponent
+  case default
+    call require(.false.,'Unknown binary diffusion model')
+  end select
   call validate_transport(transport,ns)
   if(transport_model=='none') call require(.not.transport_active(transport), &
     'Nonzero transport coefficients require an active transport model')
@@ -171,7 +198,14 @@ program main_rf_flow1d
   write(out,'(a,es25.16e3)') '# bulk_viscosity=',bulk_viscosity
   write(out,'(a,es25.16e3)') '# thermal_conductivity=',thermal_conductivity
   write(out,'(a,es25.16e3)') '# mass_diffusivity=',mass_diffusivity
+  write(out,'(a)') '# binary_diffusion_model='//trim(binary_diffusion_model)
+  if(transport%binary_power_law) then
+    write(out,'(a,es25.16e3)') '# binary_reference_temperature=',binary_reference_temperature
+    write(out,'(a,es25.16e3)') '# binary_reference_pressure=',binary_reference_pressure
+    write(out,'(a,es25.16e3)') '# binary_temperature_exponent=',binary_temperature_exponent
+  end if
   if(allocated(transport%binary_diffusivity)) then
+    if(len_trim(binary_diffusion_file)>0) write(out,'(a)') '# binary_diffusion_file='//trim(resolved_binary_diffusion_file)
     do i=1,ns
       do j=i+1,ns
         write(out,'(a,es25.16e3)') '# binary_diffusivity_'//trim(m%species(i)%name)//'_'// &

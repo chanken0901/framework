@@ -14,6 +14,75 @@ from reactingflow.importer import import_cantera
 
 
 class FlowTests(unittest.TestCase):
+    def test_binary_power_law(self):
+        text=(ROOT/'examples/flow1d_h2_binary_file.in').read_text()
+        controls,rows=text.split('&flow1d',1)[1].split('/',1)
+        yl,yr=([float(v) for v in line.split()] for line in rows.strip().splitlines())
+        files={'h2_synthetic_binary.rf':(ROOT/'examples/h2_synthetic_binary.rf').read_text()}
+        suffix=",binary_diffusion_model='power_law',binary_reference_temperature=300," \
+               "binary_reference_pressure=101325,binary_temperature_exponent=1.75"
+        values,d=self.run_flow(self.h2,controls+suffix,yl,yr,files=files)
+        self.assertEqual(d['binary_diffusion_model'],'power_law')
+        self.assertTrue(self.np.isfinite(values).all())
+        for key in ('mass_error','momentum_error','energy_error','element_error'):
+            self.assertLess(float(d[key]),1e-8)
+        for bad in (suffix.replace('=300','=0'),suffix.replace('=101325','=-1'),
+                    suffix.replace('=1.75','=-1'),suffix.replace(",binary_reference_temperature=300",''),
+                    suffix.replace("'power_law'","'unknown'"),
+                    suffix+",transport_temperature_model='power_law',transport_reference_temperature=300,"
+                    "transport_temperature_exponent=1"):
+            self.run_flow(self.h2,controls+bad,yl,yr,success=False,files=files)
+
+    def test_named_binary_diffusion_file(self):
+        gas=self.ct.Solution(str(self.h2));names=gas.species_names
+        gas.TPX=1100,101325,'H2:1,O2:1,N2:2';yl=gas.Y.tolist()
+        gas.TPX=1100,101325,'H2:2,O2:1,N2:1';yr=gas.Y.tolist()
+        species=[f'{s} {gas.molecular_weights[i]/1000:.12g}' for i,s in enumerate(names)]
+        coeff=lambda i,j: 1.e-5*(1+min(i,j)+2*max(i,j))
+        pairs=[f'{names[i]} {names[j]} {coeff(i,j):.12g}' for i in range(10) for j in range(i+1,10)]
+        data='RF_BINARY_DIFFUSION_V1\n10\n'+'\n'.join(species+pairs)+'\n'
+        matrix=','.join('0' if i==j else f'{coeff(i,j):.12g}' for j in range(10) for i in range(10))
+        base="nx=8,end_time=1.e-6,left_bc='periodic',right_bc='periodic',transport_model='mixture_averaged'"
+        expected,_=self.run_flow(self.h2,base+',binary_diffusivities='+matrix,yl,yr)
+        shuffled='RF_BINARY_DIFFUSION_V1 # comment\n10\n\n'+'\n'.join(species[::-1])+ '\n'
+        shuffled+='\n'.join(' '.join([p.split()[1],p.split()[0],p.split()[2]]) for p in pairs[::-1])+'\n'
+        for path,contents in [('data/transport data.rf',data),('@ABS_TRANSPORT@',shuffled)]:
+            actual,d=self.run_flow(self.h2,base+f",binary_diffusion_file='{path}'",yl,yr,
+                                   files={'data/transport data.rf':contents})
+            self.np.testing.assert_array_equal(actual,expected)
+            self.assertAlmostEqual(float(d['binary_diffusivity_H2_N2']),coeff(0,9))
+            self.assertIn('binary_diffusion_file',d)
+        chosen=base+",binary_diffusion_file='data.rf'"
+        invalid=[data.replace('V1','V2',1), data.replace('\n10\n','\n9\n',1),
+                 data.replace(species[0], 'UNKNOWN 0.002016',1),
+                 data.replace(species[0],species[1],1),data.replace(species[0],'H2 2.016',1),
+                 '\n'.join(data.splitlines()[:-1]), data+'H2 N2 1.e-4\n',
+                 data.replace(pairs[0],'H2 H2 1.e-4',1),
+                 data.replace(pairs[1],'H H2 1.e-4',1),
+                 data.replace(pairs[0],'H2 UNKNOWN 1.e-4',1),
+                 data.replace(pairs[0],pairs[0]+' extra',1),data+'x'*5000]
+        for value in ('NaN','0','-1','/','2*1'):
+            invalid.append(data.replace(pairs[0],'H2 H '+value,1))
+        for k,bad in enumerate(invalid):
+            with self.subTest(invalid=k):
+                self.run_flow(self.h2,chosen,yl,yr,success=False,files={'data.rf':bad})
+        self.run_flow(self.h2,chosen,yl,yr,success=False)
+        for extra in (',binary_diffusivities(1,1)=0',',mass_diffusivity=1.e-4'):
+            self.run_flow(self.h2,chosen+extra,yl,yr,success=False,files={'data.rf':data})
+        self.run_flow(self.h2,chosen.replace("'mixture_averaged'","'constant'"),yl,yr,
+                      success=False,files={'data.rf':data})
+
+    def test_named_binary_diffusion_example(self):
+        text=(ROOT/'examples/flow1d_h2_mixture_diffusion.in').read_text()
+        controls,rows=text.split('&flow1d',1)[1].split('/',1)
+        yl,yr=([float(v) for v in line.split()] for line in rows.strip().splitlines())
+        expected,_=self.run_flow(self.h2,controls,yl,yr)
+        text=(ROOT/'examples/flow1d_h2_binary_file.in').read_text()
+        selected=text.split('&flow1d',1)[1].split('/',1)[0]
+        data=(ROOT/'examples/h2_synthetic_binary.rf').read_text()
+        values,_=self.run_flow(self.h2,selected,yl,yr,files={'h2_synthetic_binary.rf':data})
+        self.np.testing.assert_array_equal(values,expected)
+
     def test_mixture_diffusion_example(self):
         text=(ROOT/'examples/flow1d_h2_mixture_diffusion.in').read_text()
         controls,rows=text.split('&flow1d',1)[1].split('/',1)

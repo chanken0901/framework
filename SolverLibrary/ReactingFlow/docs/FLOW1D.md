@@ -573,3 +573,9 @@ R4残作業：旧CFDとの全体同値検証、分子輸送モデルと境界の
 `transport_model='mixture_averaged'` adds composition-dependent diffusion from prescribed binary coefficients.
 See [MIXTURE_DIFFUSION.md](MIXTURE_DIFFUSION.md) for namelist input, equations, validation and limitations.
 Existing constant and species_constant transport choices remain supported.
+
+R4l adds `binary_diffusion_file` as an alternative to the inline binary matrix.
+Named species and unordered pairs remove dependence on file row order; see the same diffusion guide.
+
+R4m adds optional `binary_diffusion_model='power_law'` with reference T/p and an explicit exponent.
+See the diffusion guide; the default remains constant binary coefficients.
