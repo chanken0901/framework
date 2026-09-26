@@ -14,6 +14,30 @@ from reactingflow.importer import import_cantera
 
 
 class FlowTests(unittest.TestCase):
+    def test_binary_temperature_table(self):
+        text=(ROOT/'examples/flow1d_h2_binary_file.in').read_text()
+        controls,rows=text.split('&flow1d',1)[1].split('/',1)
+        yl,yr=([float(v) for v in line.split()] for line in rows.strip().splitlines())
+        original=(ROOT/'examples/h2_synthetic_binary.rf').read_text()
+        lines=[s for s in original.splitlines() if s and not s.startswith('#')]
+        data='RF_BINARY_TABLE_V1\n10\n2 101325\n'+'\n'.join(lines[2:12])+'\n'
+        pairs='\n'.join(lines[12:])+'\n'
+        data+='300\n'+pairs+'3000\n'+pairs
+        selected=controls+",binary_diffusion_model='tabulated'"
+        actual,d=self.run_flow(self.h2,selected,yl,yr,files={'h2_synthetic_binary.rf':data})
+        expected,_=self.run_flow(self.h2,controls+",binary_diffusion_model='power_law',"
+            "binary_reference_temperature=300,binary_reference_pressure=101325,binary_temperature_exponent=0",
+            yl,yr,files={'h2_synthetic_binary.rf':original})
+        self.np.testing.assert_allclose(actual,expected,rtol=1e-10,atol=1e-10)
+        self.assertEqual(d['binary_diffusion_model'],'tabulated')
+        for bad in (data.replace('2 101325','1 101325'),data.replace('2 101325','2 -1'),
+                    data.replace('\n3000\n','\n300\n'),data.replace('\n3000\n','\n500\n'),
+                    data.replace('1.e-4','-1',1), '\n'.join(data.splitlines()[:-1])):
+            self.run_flow(self.h2,selected,yl,yr,success=False,files={'h2_synthetic_binary.rf':bad})
+        self.run_flow(self.h2,selected+',binary_reference_pressure=101325',yl,yr,
+            success=False,files={'h2_synthetic_binary.rf':data})
+        self.run_flow(self.h2,controls,yl,yr,success=False,files={'h2_synthetic_binary.rf':data})
+
     def test_binary_power_law(self):
         text=(ROOT/'examples/flow1d_h2_binary_file.in').read_text()
         controls,rows=text.split('&flow1d',1)[1].split('/',1)

@@ -35,7 +35,7 @@ program main_rf_flow1d
   real(dp), allocatable :: q(:,:),yl(:),yr(:),initial(:),boundary(:),change(:)
   real(dp) :: time,dt,dx,rho,u,t,p,a,mass_error,momentum_error,energy_error,element_error,x
   real(dp), allocatable :: y(:),delta(:),elements0(:),elements(:)
-  integer :: ns,io,out,ios,i,j,step
+  integer :: ns,io,out,ios,i,j,step,l
   integer :: rejected_steps,total_rejected=0
   namelist /flow1d/ nx,length,interface_x,end_time,cfl,max_dt,max_steps,write_every,left_bc,right_bc, &
     left_temperature,left_pressure,left_velocity,right_temperature,right_pressure,right_velocity,chemistry, &
@@ -108,7 +108,7 @@ program main_rf_flow1d
     if(len_trim(binary_diffusion_file)>0) then
       call require(all(binary_diffusivities==-1),'Binary diffusion file cannot combine with inline coefficients')
       resolved_binary_diffusion_file=resolve_transport_path(trim(input_file),trim(binary_diffusion_file))
-      call read_binary_diffusion_data(trim(resolved_binary_diffusion_file),m,transport)
+      call read_binary_diffusion_data(trim(resolved_binary_diffusion_file),m,transport,binary_diffusion_model=='tabulated')
       binary_diffusivities=transport%binary_diffusivity
     else
       transport%binary_diffusivity=binary_diffusivities
@@ -125,6 +125,11 @@ program main_rf_flow1d
   end if
   call validate_transport(transport,ns)
   select case(binary_diffusion_model)
+  case('tabulated')
+    call require(allocated(transport%binary_table),'Tabulated diffusion requires binary_diffusion_file')
+    call require(transport_temperature_model=='constant','Binary table cannot combine with common power law')
+    call require(all([binary_reference_temperature,binary_reference_pressure,binary_temperature_exponent]==-1), &
+      'Tabulated reference pressure is specified in the file; power law parameters are not allowed')
   case('constant')
     call require(all([binary_reference_temperature,binary_reference_pressure,binary_temperature_exponent]==-1), &
       'Binary T/p parameters require power_law')
@@ -199,6 +204,18 @@ program main_rf_flow1d
   write(out,'(a,es25.16e3)') '# thermal_conductivity=',thermal_conductivity
   write(out,'(a,es25.16e3)') '# mass_diffusivity=',mass_diffusivity
   write(out,'(a)') '# binary_diffusion_model='//trim(binary_diffusion_model)
+  if(allocated(transport%binary_table)) then
+    write(out,'(a,es25.16e3)') '# binary_table_reference_pressure=',transport%binary_reference_pressure
+    do l=1,size(transport%binary_temperatures)
+      write(out,'(a,es25.16e3)') '# binary_table_temperature=',transport%binary_temperatures(l)
+      do i=1,ns
+        do j=i+1,ns
+          write(out,'(a,es25.16e3)') '# binary_table_'//trim(m%species(i)%name)//'_'// &
+            trim(m%species(j)%name)//'=',transport%binary_table(i,j,l)
+        end do
+      end do
+    end do
+  end if
   if(transport%binary_power_law) then
     write(out,'(a,es25.16e3)') '# binary_reference_temperature=',binary_reference_temperature
     write(out,'(a,es25.16e3)') '# binary_reference_pressure=',binary_reference_pressure

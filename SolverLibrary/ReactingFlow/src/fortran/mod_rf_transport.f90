@@ -10,6 +10,7 @@ module mod_rf_transport
   public :: read_transport_data
   public :: read_binary_diffusion_data
   public :: binary_diffusion_scale
+  public :: binary_coefficient
   type :: rf_transport
     ! Constant SI coefficients. The common species D is not a detailed mixture-averaged model.
     real(dp) :: viscosity=0,bulk_viscosity=0,conductivity=0,diffusivity=0
@@ -21,30 +22,50 @@ module mod_rf_transport
     real(dp), allocatable :: binary_diffusivity(:,:)
     logical :: binary_power_law=.false.
     real(dp) :: binary_reference_temperature=1,binary_reference_pressure=1,binary_exponent=0
+    real(dp), allocatable :: binary_temperatures(:),binary_table(:,:,:)
   end type
 contains
-  subroutine read_binary_diffusion_data(path,m,c)
+  subroutine read_binary_diffusion_data(path,m,c,tabulated)
     ! Constant SI binary coefficients; named species and unordered pairs.
     character(*), intent(in) :: path
     type(rf_mechanism), intent(in) :: m
     type(rf_transport), intent(inout) :: c
+    logical, optional, intent(in) :: tabulated
     character(256) :: fields(3)
-    integer :: unit,ios,ns,n,k,i,j
+    integer :: unit,ios,ns,n,k,i,j,nt,l
+    logical :: table_mode
     logical :: found,seen(size(m%species))
     real(dp) :: mass,value
     ns=size(m%species)
+    table_mode=.false.;if(present(tabulated)) table_mode=tabulated
+    nt=1
     call require(.not.allocated(c%binary_diffusivity),'Binary file cannot overwrite existing coefficients')
     open(newunit=unit,file=path,status='old',action='read',iostat=ios)
     call require(ios==0,'Cannot open binary diffusion file: '//path)
     call transport_record(unit,fields(:1),found)
     call require(found,'Empty binary diffusion file')
-    call require(fields(1)=='RF_BINARY_DIFFUSION_V1','Unsupported binary diffusion file version')
+    if(table_mode) then
+      call require(fields(1)=='RF_BINARY_TABLE_V1','Expected RF_BINARY_TABLE_V1')
+    else
+      call require(fields(1)=='RF_BINARY_DIFFUSION_V1','Unsupported binary diffusion file version')
+    end if
     call transport_record(unit,fields(:1),found)
     call require(found,'Missing binary diffusion species count')
     call require(verify(trim(fields(1)),'0123456789')==0,'Invalid binary diffusion species count')
     read(fields(1),*,iostat=ios) n
     call require(ios==0,'Invalid binary diffusion species count')
     call require(n==ns,'Binary file must list all mechanism species')
+    if(table_mode) then
+      call transport_record(unit,fields(:2),found)
+      call require(found,'Missing binary table count and reference pressure')
+      call require(verify(trim(fields(1)),'0123456789')==0,'Invalid binary table count')
+      read(fields(1),*,iostat=ios) nt
+      call require(ios==0,'Invalid binary table count')
+      call require(nt>=2,'Binary table requires at least two temperatures')
+      c%binary_reference_pressure=transport_number(fields(2))
+      call require(c%binary_reference_pressure>0,'Binary table reference pressure must be positive')
+      allocate(c%binary_temperatures(nt),c%binary_table(ns,ns,nt))
+    end if
     seen=.false.
     do k=1,ns
       call transport_record(unit,fields(:2),found)
@@ -56,7 +77,17 @@ contains
       call require(abs(mass-m%species(i)%mass)<=1.e-8_dp*m%species(i)%mass, &
         'Binary diffusion molar mass differs from mechanism: '//trim(fields(1)))
     end do
-    allocate(c%binary_diffusivity(ns,ns));c%binary_diffusivity=-1
+    allocate(c%binary_diffusivity(ns,ns))
+    do l=1,nt
+    c%binary_diffusivity=-1
+    if(table_mode) then
+      call transport_record(unit,fields(:1),found)
+      call require(found,'Missing table temperature')
+      c%binary_temperatures(l)=transport_number(fields(1))
+      call require(c%binary_temperatures(l)>0,'Table temperature must be positive')
+      if(l>1) call require(c%binary_temperatures(l)>c%binary_temperatures(l-1), &
+        'Table temperatures must strictly increase')
+    end if
     do i=1,ns
       c%binary_diffusivity(i,i)=0
     end do
@@ -70,6 +101,9 @@ contains
       call require(value>0,'Binary diffusion coefficient must be positive (m2/s)')
       c%binary_diffusivity(i,j)=value;c%binary_diffusivity(j,i)=value
     end do
+    if(table_mode) c%binary_table(:,:,l)=c%binary_diffusivity
+    end do
+    if(table_mode) c%binary_diffusivity=c%binary_table(:,:,1)
     call transport_record(unit,fields,found)
     call require(.not.found,'Extra binary diffusion file records')
     close(unit)
@@ -313,7 +347,7 @@ contains
     gradu=side*(u-ui)/(dx/2); gradt=side*(t-ti)/(dx/2)
     jmass=-rho*c%diffusivity*side*(y-yi)/(dx/2)
     if(allocated(c%species_diffusivity)) jmass=-rho*c%species_diffusivity*side*(y-yi)/(dx/2)
-    if(allocated(c%binary_diffusivity)) jmass=binary_mass_flux(m,c,rho,y,side*(y-yi)/(dx/2))
+    if(allocated(c%binary_diffusivity)) jmass=binary_mass_flux(m,c,rho,y,side*(y-yi)/(dx/2),t)
     if(c%binary_power_law) jmass=jmass*binary_diffusion_scale(c,t,rho*gas_r*t*sum(y/m%species%mass))
     jmass=jmass-y*sum(jmass); jmass(ns)=-sum(jmass(:ns-1))
     tau=(4._dp/3*mixture_viscosity(m,c,t,y)+c%bulk_viscosity)*gradu
@@ -332,6 +366,28 @@ contains
     real(dp) :: v(4)
     integer :: i,j,n
     v=[c%viscosity,c%bulk_viscosity,c%conductivity,c%diffusivity]
+    if(allocated(c%binary_table)) then
+      call require(.not.c%binary_power_law.and.c%temperature_exponent==0,'Binary table cannot combine with power laws')
+      call require(allocated(c%binary_temperatures).and.allocated(c%binary_diffusivity),'Incomplete binary table')
+      call require(size(c%binary_temperatures)>=2,'Binary table needs two temperatures')
+      call require(size(c%binary_table,1)==size(c%binary_diffusivity,1).and. &
+        size(c%binary_table,2)==size(c%binary_diffusivity,2).and. &
+        size(c%binary_table,3)==size(c%binary_temperatures),'Binary table shape mismatch')
+      call require(all(ieee_is_finite(c%binary_temperatures)).and.all(c%binary_temperatures>0), &
+        'Invalid binary table temperatures')
+      call require(all(c%binary_temperatures(2:)>c%binary_temperatures(:size(c%binary_temperatures)-1)), &
+        'Binary table temperatures must increase')
+      call require(ieee_is_finite(c%binary_reference_pressure).and.c%binary_reference_pressure>0, &
+        'Invalid binary table reference pressure')
+      call require(all(ieee_is_finite(c%binary_table)),'Nonfinite binary table')
+      do i=1,size(c%binary_table,1)
+        call require(all(c%binary_table(i,i,:)==0),'Binary table diagonal must be zero')
+        do j=i+1,size(c%binary_table,1)
+          call require(all(c%binary_table(i,j,:)>0).and. &
+            all(c%binary_table(i,j,:)==c%binary_table(j,i,:)),'Binary table must be positive and symmetric')
+        end do
+      end do
+    end if
     if(c%binary_power_law) then
       call require(allocated(c%binary_diffusivity),'Binary power law requires binary diffusivity')
       call require(c%temperature_exponent==0,'Binary power law cannot combine with common transport scaling')
@@ -401,6 +457,11 @@ contains
       ratio=maxval(m%species%mass)/minval(m%species%mass)
       ! Bound the mole-gradient Jacobian and correction velocity in induced 1-norm.
       d=2*maxval(c%binary_diffusivity)*ratio*(1+ratio)
+      if(allocated(c%binary_table)) then
+        call require(present(pmin),'Binary table bound requires pressure lower bound')
+        call require(pmin>0,'Invalid table pressure bound')
+        d=2*maxval(c%binary_table)*ratio*(1+ratio)*c%binary_reference_pressure/pmin
+      end if
       if(c%binary_power_law) then
         call require(present(tmax).and.present(pmin),'Binary bound requires temperature/pressure bounds')
         d=d*binary_diffusion_scale(c,tmax,pmin)
@@ -418,10 +479,35 @@ contains
     call require(ieee_is_finite(scale).and.scale>0,'Invalid binary diffusion scale')
   end function
 
-  function binary_mass_flux(m,c,rho,y,gradient) result(jmass)
+  real(dp) function binary_coefficient(c,i,j,t,p) result(d)
+    type(rf_transport), intent(in) :: c
+    integer, intent(in) :: i,j
+    real(dp), intent(in) :: t,p
+    integer :: l,nt
+    real(dp) :: weight
+    d=c%binary_diffusivity(i,j)
+    if(.not.allocated(c%binary_table)) return
+    nt=size(c%binary_temperatures)
+    call require(ieee_is_finite(t).and.t>=c%binary_temperatures(1).and.t<=c%binary_temperatures(nt), &
+      'Temperature outside binary diffusion table; extrapolation is disabled')
+    call require(ieee_is_finite(p).and.p>0,'Invalid binary table pressure')
+    if(i==j) return
+    l=1
+    do while(l<nt-1)
+      if(t<=c%binary_temperatures(l+1)) exit
+      l=l+1
+    end do
+    weight=(log(t)-log(c%binary_temperatures(l)))/ &
+      (log(c%binary_temperatures(l+1))-log(c%binary_temperatures(l)))
+    d=exp((1-weight)*log(c%binary_table(i,j,l))+weight*log(c%binary_table(i,j,l+1))) &
+      *c%binary_reference_pressure/p
+    call require(ieee_is_finite(d).and.d>0,'Invalid interpolated binary coefficient')
+  end function
+
+  function binary_mass_flux(m,c,rho,y,gradient,t) result(jmass)
     type(rf_mechanism), intent(in) :: m
     type(rf_transport), intent(in) :: c
-    real(dp), intent(in) :: rho,y(:),gradient(:)
+    real(dp), intent(in) :: rho,y(:),gradient(:),t
     real(dp) :: jmass(size(y)),x(size(y)),mass(size(y)),w,denom,numerator,d,weighted_gradient
     integer :: i,j
     mass=m%species%mass;w=1/sum(y/mass);x=y*w/mass
@@ -430,7 +516,7 @@ contains
       denom=0;numerator=0
       do j=1,size(y)
         if(j==i) cycle
-        denom=denom+x(j)/c%binary_diffusivity(i,j)
+        denom=denom+x(j)/binary_coefficient(c,i,j,t,rho*gas_r*t/w)
         numerator=numerator+y(j)
       end do
       d=0
@@ -467,7 +553,7 @@ contains
     yf=(yl+yr)/2; temp=(tl+tr)/2; velocity=(ul+ur)/2
     jmass=-(rhol+rhor)/2*c%diffusivity*(yr-yl)/dx
     if(allocated(c%species_diffusivity)) jmass=-(rhol+rhor)/2*c%species_diffusivity*(yr-yl)/dx
-    if(allocated(c%binary_diffusivity)) jmass=binary_mass_flux(m,c,(rhol+rhor)/2,yf,(yr-yl)/dx)
+    if(allocated(c%binary_diffusivity)) jmass=binary_mass_flux(m,c,(rhol+rhor)/2,yf,(yr-yl)/dx,temp)
     if(c%binary_power_law) jmass=jmass*binary_diffusion_scale(c,temp, &
       (rhol+rhor)/2*gas_r*temp*sum(yf/m%species%mass))
     ! Correction velocity, followed by a roundoff-only closure on the final species.

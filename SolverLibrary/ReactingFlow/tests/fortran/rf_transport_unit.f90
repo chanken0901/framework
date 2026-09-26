@@ -169,6 +169,21 @@ contains
     call diffusive_flux(local,binary,1._dp,0._dp,1000._dp,yy-.05_dp*grad, &
       1._dp,0._dp,1000._dp,yy+.05_dp*grad,.1_dp,ff)
     call require(maxval(abs(ff(:3)-4*reference))<1.e-13_dp,'Binary face T/p scales species flux')
+    binary%binary_power_law=.false.
+    binary%binary_temperatures=[500._dp,2000._dp]
+    allocate(binary%binary_table(3,3,2))
+    binary%binary_table(:,:,1)=binary%binary_diffusivity
+    binary%binary_table(:,:,2)=16*binary%binary_diffusivity
+    ! A different species pair follows a different power, also reconstructed exactly.
+    binary%binary_table(1,3,2)=4*binary%binary_diffusivity(1,3)
+    binary%binary_table(3,1,2)=binary%binary_table(1,3,2)
+    call validate_transport(binary,3)
+    call require(abs(binary_coefficient(binary,1,2,1000._dp,binary%binary_reference_pressure)- &
+      4*binary%binary_diffusivity(1,2))<1.e-14_dp,'Log table interpolation')
+    call require(abs(binary_coefficient(binary,1,3,1000._dp,2*binary%binary_reference_pressure)- &
+      binary%binary_diffusivity(1,3))<1.e-14_dp,'Pair-specific temperature law and inverse pressure')
+    call require(diffusion_bound(binary,local,1000._dp,binary%binary_reference_pressure)> &
+      maxval(binary%binary_table),'Table maximum diffusion bound')
   end subroutine
   subroutine check_wilke()
     type(rf_transport) :: c

@@ -97,3 +97,6 @@ R4a〜eの[1次元流体・詳細反応・輸送・MUSCL・再試行の仕様と
 
 > R4m: optional binary diffusion T-power/p scaling, independent of viscosity and conductivity.
 > See [parameters and limitations](docs/MIXTURE_DIFFUSION.md). This is not a collision-integral model.
+
+> R4n: named binary diffusion temperature tables, log interpolation and inverse-pressure correction.
+> Out-of-range temperatures are rejected. See the same diffusion guide for the file format.

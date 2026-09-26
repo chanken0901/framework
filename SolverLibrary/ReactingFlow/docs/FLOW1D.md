@@ -579,3 +579,6 @@ Named species and unordered pairs remove dependence on file row order; see the s
 
 R4m adds optional `binary_diffusion_model='power_law'` with reference T/p and an explicit exponent.
 See the diffusion guide; the default remains constant binary coefficients.
+
+R4n adds `binary_diffusion_model='tabulated'` using a named temperature-table file.
+Tables require full species-pair coverage at every temperature; no extrapolation is performed.
