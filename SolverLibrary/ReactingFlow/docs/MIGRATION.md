@@ -112,3 +112,6 @@ R4では保存的な圧縮性多成分流、衝撃波捕獲、密度・圧力・
 
 > R4o: selected chemistry failures participate in the existing whole-step rollback/retry path.
 > See [limits and tests](CHEMISTRY_RETRY.md); generic RHS/domain recovery remains outstanding.
+
+> R4 consolidation 1: a local acoustic characteristic outlet is available; reverse flow is rejected.
+> Full reacting NSCBC, CJ/ZND validation and multidimensional migration remain outstanding.

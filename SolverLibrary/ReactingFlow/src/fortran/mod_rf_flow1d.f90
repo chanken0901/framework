@@ -8,19 +8,46 @@ module mod_rf_flow1d
   public :: flow_timestep,advance_flow,transport_step,diffusion_rhs
   public :: reconstruct_faces,validate_reconstruction
   public :: admissible_flow,validate_fixed_states
+  public :: characteristic_outlet,needs_reference
 contains
+  logical function needs_reference(kind)
+    character(*), intent(in) :: kind
+    needs_reference=kind=='dirichlet'.or.kind=='characteristic'
+  end function
+
+  subroutine characteristic_outlet(m,q,reference,side,ghost)
+    ! Frozen local acoustic projection. Outflow only; not full reacting NSCBC.
+    type(rf_mechanism), intent(in) :: m
+    real(dp), intent(in) :: q(:),reference(:)
+    integer, intent(in) :: side
+    real(dp), intent(out) :: ghost(:)
+    real(dp) :: rho,u,t,p,a,y(size(m%species)),rr,ur,tr,pr,ar,yr(size(m%species)),normal,wave,rhob,pb,ub
+    call require(side==1.or.side==2,'Invalid characteristic boundary side')
+    normal=real(2*side-3,dp)
+    call conserved_to_primitive(m,q,rho,u,t,p,a,y)
+    call require(normal*u>=0,'Characteristic outlet reverse flow: use an inflow boundary')
+    ghost=q
+    if(normal*u>=a) return
+    call conserved_to_primitive(m,reference,rr,ur,tr,pr,ar,yr)
+    wave=((pr-p)-rho*a*normal*(ur-u))/2
+    rhob=rho+wave/a**2;pb=p+wave;ub=u-normal*wave/(rho*a)
+    call require(min(rhob,pb)>0,'Characteristic boundary state is nonphysical')
+    call require(normal*ub>=0,'Characteristic reference produces reverse flow')
+    call primitive_to_conserved(m,t*(pb/p)*(rho/rhob),pb,ub,y,ghost)
+  end subroutine
+
   subroutine validate_fixed_states(m,left_bc,right_bc,fixed_states)
     type(rf_mechanism), intent(in) :: m
     character(*), intent(in) :: left_bc,right_bc
     real(dp), intent(in), optional :: fixed_states(:,:)
     real(dp) :: rho,u,t,p,a,y(size(m%species))
     integer :: i
-    if(left_bc/='dirichlet'.and.right_bc/='dirichlet') return
-    call require(present(fixed_states),'Dirichlet boundary requires fixed states')
+    if(.not.needs_reference(left_bc).and..not.needs_reference(right_bc)) return
+    call require(present(fixed_states),'Dirichlet/characteristic boundary requires reference states')
     call require(size(fixed_states,1)==size(m%species)+2.and.size(fixed_states,2)==2,'Invalid fixed state shape')
     do i=1,2
-      if(i==1.and.left_bc/='dirichlet') cycle
-      if(i==2.and.right_bc/='dirichlet') cycle
+      if(i==1.and..not.needs_reference(left_bc)) cycle
+      if(i==2.and..not.needs_reference(right_bc)) cycle
       call conserved_to_primitive(m,fixed_states(:,i),rho,u,t,p,a,y)
     end do
   end subroutine
@@ -61,8 +88,8 @@ contains
       v(:,0)=v(:,nx); v(:,nx+1)=v(:,1)
     else
       v(:,0)=v(:,1); v(:,nx+1)=v(:,nx)
-      call require(left_bc=='outflow'.or.left_bc=='reflecting'.or.left_bc=='dirichlet','Unknown reconstruction left boundary')
-      call require(right_bc=='outflow'.or.right_bc=='reflecting'.or.right_bc=='dirichlet','Unknown reconstruction right boundary')
+      call require(left_bc=='outflow'.or.left_bc=='reflecting'.or.needs_reference(left_bc),'Unknown left boundary')
+      call require(right_bc=='outflow'.or.right_bc=='reflecting'.or.needs_reference(right_bc),'Unknown right boundary')
       if(left_bc=='reflecting') v(3,0)=-v(3,1)
       if(right_bc=='reflecting') v(3,nx+1)=-v(3,nx)
     end if
@@ -183,7 +210,7 @@ contains
     character(*), intent(in), optional :: reconstruction,left_bc,right_bc
     character(16) :: lb,rb
     real(dp) :: qm(size(q,1),size(q,2)),qp(size(q,1),size(q,2))
-    real(dp) :: f(size(q,1)),speed,maxspeed
+    real(dp) :: f(size(q,1)),speed,maxspeed,ghost(size(q,1))
     real(dp) :: rho,u,t,p,a,y(size(m%species)),cp,cv,h,e,r,rhomin,rhomax,rhocvmin,diff
     integer :: i
     real(dp) :: diffusion_factor,tmax,tmin
@@ -215,10 +242,18 @@ contains
       end if
     end if
     do i=1,2
-      if(i==1.and.lb/='dirichlet') cycle
-      if(i==2.and.rb/='dirichlet') cycle
+      if(i==1.and..not.needs_reference(lb)) cycle
+      if(i==2.and..not.needs_reference(rb)) cycle
       call physical_flux(m,fixed_states(:,i),f,speed)
       maxspeed=max(maxspeed,speed)
+      if(i==1.and.lb=='characteristic') then
+        call characteristic_outlet(m,q(:,1),fixed_states(:,1),1,ghost)
+        call physical_flux(m,ghost,f,speed);maxspeed=max(maxspeed,speed)
+      end if
+      if(i==2.and.rb=='characteristic') then
+        call characteristic_outlet(m,q(:,size(q,2)),fixed_states(:,2),2,ghost)
+        call physical_flux(m,ghost,f,speed);maxspeed=max(maxspeed,speed)
+      end if
     end do
     dt=cfl*dx/maxspeed
     if(present(transport)) then
@@ -250,7 +285,8 @@ contains
     end if
   end function
 
-  subroutine boundary_state(q,kind,ghost,fixed_states,side)
+  subroutine boundary_state(m,q,kind,ghost,fixed_states,side)
+    type(rf_mechanism), intent(in) :: m
     real(dp), intent(in) :: q(:)
     character(*), intent(in) :: kind
     real(dp), intent(out) :: ghost(:)
@@ -258,6 +294,9 @@ contains
     integer, intent(in) :: side
     ghost=q
     select case(kind)
+    case('characteristic')
+      call require(present(fixed_states),'Missing characteristic reference state')
+      call characteristic_outlet(m,q,fixed_states(:,side),side,ghost)
     case('dirichlet')
       call require(present(fixed_states),'Missing Dirichlet state')
       ghost=fixed_states(:,side)
@@ -308,7 +347,7 @@ contains
         call fixed_diffusive_flux(m,transport,rb,ub,tb,yb,u(1),t(1),y(:,1),dx,-1,face(:,0))
       case('reflecting')
         call diffusive_flux(m,transport,rho(1),-u(1),t(1),y(:,1),rho(1),u(1),t(1),y(:,1),dx,face(:,0))
-      case('outflow')
+      case('outflow','characteristic')
       case default
         call require(.false.,'Unknown diffusion left boundary')
       end select
@@ -318,7 +357,7 @@ contains
         call fixed_diffusive_flux(m,transport,rb,ub,tb,yb,u(nx),t(nx),y(:,nx),dx,1,face(:,nx))
       case('reflecting')
         call diffusive_flux(m,transport,rho(nx),u(nx),t(nx),y(:,nx),rho(nx),-u(nx),t(nx),y(:,nx),dx,face(:,nx))
-      case('outflow')
+      case('outflow','characteristic')
       case default
         call require(.false.,'Unknown diffusion right boundary')
       end select
@@ -349,9 +388,9 @@ contains
       call rusanov_flux(m,qp(:,nx),qm(:,1),faces(:,0))
       faces(:,nx)=faces(:,0)
     else
-      call boundary_state(qm(:,1),left_bc,ghost,fixed_states,1)
+      call boundary_state(m,qm(:,1),left_bc,ghost,fixed_states,1)
       call rusanov_flux(m,ghost,qm(:,1),faces(:,0))
-      call boundary_state(qp(:,nx),right_bc,ghost,fixed_states,2)
+      call boundary_state(m,qp(:,nx),right_bc,ghost,fixed_states,2)
       call rusanov_flux(m,qp(:,nx),ghost,faces(:,nx))
     end if
     do i=1,nx-1

@@ -151,9 +151,9 @@ program main_rf_flow1d
   call require(min(length,end_time,max_dt,cfl)>0.and.cfl<=.5_dp,'Require positive controls, CFL<=0.5')
   call require(interface_x>=0.and.interface_x<=length,'Interface outside domain')
   call require(left_bc=='periodic'.or.left_bc=='outflow'.or.left_bc=='reflecting'.or. &
-    left_bc=='dirichlet','Invalid left boundary')
+    needs_reference(left_bc),'Invalid left boundary')
   call require(right_bc=='periodic'.or.right_bc=='outflow'.or.right_bc=='reflecting'.or. &
-    right_bc=='dirichlet','Invalid right boundary')
+    needs_reference(right_bc),'Invalid right boundary')
   call require((left_bc=='periodic').eqv.(right_bc=='periodic'),'Periodic boundary must be paired')
   allocate(yl(ns),yr(ns),y(ns),q(ns+2,nx),initial(ns+2),boundary(ns+2),change(ns+2),delta(ns+2))
   allocate(elements0(m%ne),elements(m%ne))
@@ -244,8 +244,8 @@ program main_rf_flow1d
   write(out,'(a,es25.16e3)') '# chemistry_atol_species=',chemistry_atol_species
   write(out,'(a,es25.16e3)') '# chemistry_atol_temperature=',chemistry_atol_temperature
   write(out,'(a)') '# left_bc='//trim(left_bc)//' right_bc='//trim(right_bc)
-  if(left_bc=='dirichlet') write(out,'(a,*(es25.16e3,1x))') '# fixed_state_left=',fixed_states(:,1)
-  if(right_bc=='dirichlet') write(out,'(a,*(es25.16e3,1x))') '# fixed_state_right=',fixed_states(:,2)
+  if(needs_reference(left_bc)) write(out,'(a,*(es25.16e3,1x))') '# fixed_state_left=',fixed_states(:,1)
+  if(needs_reference(right_bc)) write(out,'(a,*(es25.16e3,1x))') '# fixed_state_right=',fixed_states(:,2)
   write(out,'(a)',advance='no') 'step,time,x,density,velocity,temperature,pressure'
   do j=1,ns
     write(out,'(a)',advance='no') ',Y_'//trim(m%species(j)%name)
@@ -318,11 +318,11 @@ contains
     real(dp), intent(in) :: bt,bp,bu,by(:)
     real(dp), intent(out) :: state(:)
     state=0
-    if(kind=='dirichlet') then
-      call require(bt>0.and.bp>0,'Dirichlet requires positive boundary temperature and pressure')
+    if(needs_reference(kind)) then
+      call require(bt>0.and.bp>0,'Reference boundary requires positive temperature and pressure')
       call primitive_to_conserved(m,bt,bp,bu,by,state)
     else
-      call require(bt==-1.and.bp==-1.and.bu==0.and.all(by==-1),'Boundary state supplied for non-Dirichlet face')
+      call require(bt==-1.and.bp==-1.and.bu==0.and.all(by==-1),'Unused boundary reference state supplied')
     end if
   end subroutine
 end program

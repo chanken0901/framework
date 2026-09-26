@@ -14,6 +14,28 @@ from reactingflow.importer import import_cantera
 
 
 class FlowTests(unittest.TestCase):
+    def test_characteristic_outlets(self):
+        gas=self.ct.Solution(str(self.h2));gas.TPX=1100,101325,'N2:1';y=gas.Y.tolist()
+        row=','.join(map(str,y))
+        for side,velocity in [('right',100),('left',-100)]:
+            base=f"nx=8,end_time=1.e-6,left_velocity={velocity},right_velocity={velocity}," \
+                 f"{side}_bc='characteristic',reconstruction='muscl'," \
+                 f"{side}_boundary_temperature=1100,{side}_boundary_pressure=101325," \
+                 f"{side}_boundary_velocity={velocity},{side}_boundary_y={row}"
+            values,d=self.run_flow(self.h2,base,y,y)
+            self.np.testing.assert_allclose(values[:,4],velocity,rtol=1e-10)
+            for key in ('mass_error','momentum_error','energy_error','element_error'):
+                self.assertLess(float(d[key]),1e-8)
+            self.run_flow(self.h2,base.replace(f'{side}_boundary_temperature=1100,',''),y,y,success=False)
+            reversed_flow=base.replace(f'left_velocity={velocity}',f'left_velocity={-velocity}') \
+                              .replace(f'right_velocity={velocity}',f'right_velocity={-velocity}')
+            self.run_flow(self.h2,reversed_flow,y,y,success=False)
+        example=(ROOT/'examples/flow1d_h2_characteristic.in').read_text()
+        controls,rows=example.split('&flow1d',1)[1].split('/',1)
+        yl,yr=([float(v) for v in line.split()] for line in rows.strip().splitlines())
+        values,_=self.run_flow(self.h2,controls,yl,yr)
+        self.assertEqual(values[-1,1],1.e-5)
+
     def test_binary_temperature_table(self):
         text=(ROOT/'examples/flow1d_h2_binary_file.in').read_text()
         controls,rows=text.split('&flow1d',1)[1].split('/',1)

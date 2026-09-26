@@ -85,4 +85,54 @@ program rf_flow_unit
   end do
   write(*,'(a)') '[OK] invalid states rejected, reduced-step recovery and rollback for first-order/MUSCL'
   write(*,'(a)') '[OK] 1D flux, uniform state, periodic/wall conservation, inert chemistry'
+  call check_characteristic()
+contains
+  subroutine check_characteristic()
+    integer, parameter :: cells=64
+    real(dp) :: base(4),refstates(4,2),field(4,cells),start(4),net(4),bc(4),ghost(4)
+    real(dp) :: rho0,a0,step_dt,time,amp,temp,pressure,vel,rr,aa,yy(2),reflection(2),x,drho
+    integer :: mode,j
+    character(16) :: outlet
+    yy=[.25_dp,.75_dp]
+    call primitive_to_conserved(m,1000._dp,101325._dp,100._dp,yy,base)
+    call conserved_to_primitive(m,base,rho0,vel,temp,pressure,a0,yy)
+    refstates(:,1)=base;refstates(:,2)=base
+    call characteristic_outlet(m,base,base,2,ghost)
+    call require(maxval(abs(ghost-base)/max(1._dp,abs(base)))<1.e-10_dp,'Uniform characteristic outlet')
+    call primitive_to_conserved(m,1000._dp,101325._dp,2*a0,yy,ghost)
+    bc=ghost
+    call characteristic_outlet(m,bc,base,2,ghost)
+    call require(all(ghost==bc),'Supersonic outlet ignores reference')
+    do mode=1,2
+      outlet='dirichlet'
+      if(mode==2) outlet='characteristic'
+      do j=1,cells
+        x=(real(j,dp)-.5_dp)/cells
+        amp=10*exp(-((x-.3_dp)/.06_dp)**2)
+        drho=amp/a0**2
+        temp=(101325+amp)/(gas_r/.01_dp*(rho0+drho))
+        call primitive_to_conserved(m,temp,101325+amp,100+amp/(rho0*a0),yy,field(:,j))
+      end do
+      start=sum(field,dim=2)/cells;net=0;time=0
+      do while(time<.001_dp)
+        step_dt=min(.001_dp-time,flow_timestep(m,field,1._dp/cells,.4_dp, &
+          reconstruction='muscl',left_bc='dirichlet',right_bc=outlet,fixed_states=refstates))
+        call advance_flow(m,field,1._dp/cells,step_dt,.4_dp,'dirichlet',outlet,.false., &
+          1.e-9_dp,1.e-16_dp,1.e-8_dp,10000,bc,reconstruction='muscl',fixed_states=refstates)
+        net=net+bc;time=time+step_dt
+      end do
+      reflection(mode)=0
+      do j=1,cells
+        call conserved_to_primitive(m,field(:,j),rr,vel,temp,pressure,aa,yy)
+        reflection(mode)=reflection(mode)+((pressure-101325)-rho0*a0*(vel-100))**2/cells
+      end do
+      reflection(mode)=sqrt(reflection(mode))
+      call require(maxval(abs(sum(field,dim=2)/cells-start-net)/max(1._dp,abs(start)))<1.e-10_dp, &
+        'Characteristic boundary flux conservation')
+    end do
+    write(*,'(a,2es16.8)') '[OK] reflected acoustic RMS: fixed / characteristic ',reflection
+    ! A fixed exterior state with an upwind Riemann flux is also weakly reflecting here.
+    ! Require small reflection; do not claim superiority over that existing boundary.
+    call require(reflection(2)<1.e-3_dp,'Characteristic acoustic incoming RMS below 1e-4 of pulse amplitude')
+  end subroutine
 end program

@@ -585,3 +585,6 @@ Tables require full species-pair coverage at every temperature; no extrapolation
 
 R4o extends whole-step rollback to selected chemistry failures without loosening tolerances.
 See [CHEMISTRY_RETRY.md](CHEMISTRY_RETRY.md) for recoverable conditions and the 30-attempt limit.
+
+`characteristic` is now available as an outflow-only acoustic boundary with an explicit reference state.
+See [CHARACTERISTIC_OUTLET.md](CHARACTERISTIC_OUTLET.md); this is not full reacting NSCBC.

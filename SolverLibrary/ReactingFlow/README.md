@@ -103,3 +103,6 @@ R4a〜eの[1次元流体・詳細反応・輸送・MUSCL・再試行の仕様と
 
 > R4o: recoverable cell-chemistry failures now reject the complete split step and halve dt.
 > See [retry scope and limits](docs/CHEMISTRY_RETRY.md). RHS/domain errors remain fatal.
+
+> R4 consolidation 1: local acoustic characteristic outlet and acoustic/conservation tests.
+> See [scope, limitations and example](docs/CHARACTERISTIC_OUTLET.md). R4 is not complete.

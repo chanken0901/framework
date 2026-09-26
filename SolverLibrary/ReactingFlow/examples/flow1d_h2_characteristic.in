@@ -1,0 +1,14 @@
+! h2o2 species order; uniform nitrogen flow, not a reacting-wave validation.
+&flow1d
+ nx=32, length=1, end_time=1.e-5, max_dt=1.e-6,
+ left_temperature=1100, right_temperature=1100,
+ left_pressure=101325, right_pressure=101325,
+ left_velocity=100, right_velocity=100,
+ left_bc='dirichlet', right_bc='characteristic', reconstruction='muscl',
+ left_boundary_temperature=1100, left_boundary_pressure=101325,
+ left_boundary_velocity=100, left_boundary_y=0,0,0,0,0,0,0,0,0,1,
+ right_boundary_temperature=1100, right_boundary_pressure=101325,
+ right_boundary_velocity=100, right_boundary_y=0,0,0,0,0,0,0,0,0,1,
+/
+0 0 0 0 0 0 0 0 0 1
+0 0 0 0 0 0 0 0 0 1
