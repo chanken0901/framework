@@ -109,3 +109,6 @@ R4では保存的な圧縮性多成分流、衝撃波捕獲、密度・圧力・
 > Constant input remains the default. Collision-integral transport and physical validation remain outstanding.
 
 > R4n: tabulated binary diffusion is supported in Fortran. Automatic physical-property generation remains outstanding.
+
+> R4o: selected chemistry failures participate in the existing whole-step rollback/retry path.
+> See [limits and tests](CHEMISTRY_RETRY.md); generic RHS/domain recovery remains outstanding.

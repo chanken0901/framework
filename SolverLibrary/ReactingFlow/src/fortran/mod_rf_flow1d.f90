@@ -400,14 +400,17 @@ contains
     ok=.true.
   end subroutine
 
-  subroutine chemistry_cells(m,q,dt,rtol,atoly,atolt,maxsteps)
+  subroutine chemistry_cells(m,q,dt,rtol,atoly,atolt,maxsteps,ok)
     type(rf_mechanism), intent(in), target :: m
     real(dp), intent(inout) :: q(:,:)
     real(dp), intent(in) :: dt,rtol,atoly,atolt
     integer, intent(in) :: maxsteps
+    logical, intent(out) :: ok
+    logical :: valid
     real(dp) :: rho,u,t,p,a,y(size(m%species)),elem0(m%ne),elem1(m%ne),target_e,restored
     integer :: i,j,ns
     ns=size(m%species)
+    ok=.false.
     do i=1,size(q,2)
       call conserved_to_primitive(m,q(:,i),rho,u,t,p,a,y)
       target_e=q(ns+2,i)/rho-u*u/2
@@ -415,17 +418,20 @@ contains
       do j=1,ns
         elem0=elem0+y(j)/m%species(j)%mass*m%species(j)%atoms
       end do
-      call advance_chemistry(m,rho,t,y,dt,rtol,atoly,atolt,maxsteps)
+      call advance_chemistry(m,rho,t,y,dt,rtol,atoly,atolt,maxsteps,valid)
+      if(.not.valid) return
       elem1=0
       do j=1,ns
         elem1=elem1+y(j)/m%species(j)%mass*m%species(j)%atoms
       end do
-      call require(maxval(abs(elem1-elem0)/max(1._dp,abs(elem0)))<=1.e-8_dp,'Cell chemistry element drift')
-      restored=temperature_from_energy(m,target_e,y)
-      call require(abs(restored-t)<=max(1.e-3_dp,100*rtol*t),'Chemistry energy drift too large')
+      if(maxval(abs(elem1-elem0)/max(1._dp,abs(elem0)))>1.e-8_dp) return
+      restored=temperature_from_energy(m,target_e,y,ok=valid)
+      if(.not.valid) return
+      if(abs(restored-t)>max(1.e-3_dp,100*rtol*t)) return
       ! No heat-release source: formation energy is already part of rho*E.
       q(:ns,i)=rho*y
     end do
+    ok=.true.
   end subroutine
 
   subroutine advance_flow(m,q,dx,dt,cfl,left_bc,right_bc,chemistry,rtol,atoly,atolt,maxsteps,boundary_change, &
@@ -452,10 +458,14 @@ contains
     old=q
     do retry=1,30
       stage=old
-      if(chemistry) call chemistry_cells(m,stage,dt/2,rtol,atoly,atolt,maxsteps)
-      call transport_step(m,stage,dx,dt,cfl,left_bc,right_bc,newq,boundary_change,ok,transport,reconstruction,fixed_states)
+      ok=.true.;boundary_change=0
+      if(chemistry) call chemistry_cells(m,stage,dt/2,rtol,atoly,atolt,maxsteps,ok)
+      if(ok) call transport_step(m,stage,dx,dt,cfl,left_bc,right_bc,newq,boundary_change, &
+        ok,transport,reconstruction,fixed_states)
       if(ok) then
-        if(chemistry) call chemistry_cells(m,newq,dt/2,rtol,atoly,atolt,maxsteps)
+        if(chemistry) call chemistry_cells(m,newq,dt/2,rtol,atoly,atolt,maxsteps,ok)
+      end if
+      if(ok) then
         check_dt=flow_timestep(m,newq,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states) ! validate complete step
         call require(check_dt>0,'Invalid final flow state')
         q=newq
@@ -465,6 +475,7 @@ contains
       dt=dt/2
       call require(dt>0.and.ieee_is_finite(dt),'Flow retry timestep underflow')
     end do
-    call require(.false.,'Flow step CFL/admissibility retry limit exceeded (30 attempts)')
+    boundary_change=0
+    call require(.false.,'Flow step transport/chemistry retry limit exceeded (30 attempts)')
   end subroutine
 end module

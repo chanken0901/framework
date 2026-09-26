@@ -51,17 +51,20 @@ contains
     end select
   end subroutine
 
-  subroutine advance_chemistry(m,rho,t,y,dt,rtol,atoly,atolt,maxsteps)
+  subroutine advance_chemistry(m,rho,t,y,dt,rtol,atoly,atolt,maxsteps,ok)
     ! Homogeneous, adiabatic, constant-volume chemistry for one CFD cell.
     ! Caller keeps conserved total energy; t is the ODE estimate, not an extra energy source.
     type(rf_mechanism), intent(in), target :: m
     real(dp), intent(in) :: rho,dt,rtol,atoly,atolt
     real(dp), intent(inout) :: t,y(:)
     integer, intent(in) :: maxsteps
+    logical, intent(out), optional :: ok
     type(reactor_context) :: solver
     real(dp) :: cp,cv,h,e,r,time,state(size(y)),atol(size(y))
     real(dp) :: rw(22+9*size(y)+2*size(y)**2)
+    real(dp) :: candidate(size(y)),previous
     integer :: iw(30+size(y)),n,i,j,istate,steps
+    if(present(ok)) ok=.false.
     call require(rho>0.and.dt>0.and.all(ieee_is_finite([rho,dt])), 'Invalid chemistry density/dt')
     call require(rtol>=1.e-12_dp.and.rtol<=1.e-2_dp,'Invalid chemistry rtol')
     call require(min(atoly,atolt)>0.and.maxsteps>0,'Invalid chemistry tolerances/step limit')
@@ -78,14 +81,31 @@ contains
     time=0; istate=1; steps=0
     call solver%initialize(f=reactor_rhs)
     do while(time<dt)
-      call require(steps<maxsteps,'Cell chemistry exceeded max_steps')
+      if(steps>=maxsteps) then
+        if(present(ok)) return
+        call require(.false.,'Cell chemistry exceeded max_steps')
+      end if
+      previous=time
       call solver%solve(n,state,time,dt,2,[rtol],atol,5,istate,1,rw,size(rw),iw,size(iw),22)
+      if(present(ok)) then
+        ! Retry numerical failures only; invalid DVODE input remains fatal.
+        if(any(istate==[-1,-2,-4,-5])) return
+      end if
       call require(istate>=0,'Cell chemistry DVODE failed')
-      call unpack(state,solver%dependent_species,y)
-      call check_y(m,y)
+      if(.not.all(ieee_is_finite(state)).or..not.ieee_is_finite(time).or.time<=previous) then
+        if(present(ok)) return
+        call require(.false.,'Invalid cell chemistry state/progress')
+      end if
+      call unpack(state,solver%dependent_species,candidate)
+      if(any(candidate<0).or.abs(sum(candidate)-1)>1.e-12_dp) then
+        if(present(ok)) return
+        call require(.false.,'Invalid accepted chemistry composition')
+      end if
       steps=steps+1
     end do
-    t=state(1)
+    ! Commit only on success: unsuccessful solves must leave caller state unchanged.
+    t=state(1);y=candidate
+    if(present(ok)) ok=.true.
   end subroutine
 
   subroutine unpack(state,dependent,y)

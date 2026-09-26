@@ -582,3 +582,6 @@ See the diffusion guide; the default remains constant binary coefficients.
 
 R4n adds `binary_diffusion_model='tabulated'` using a named temperature-table file.
 Tables require full species-pair coverage at every temperature; no extrapolation is performed.
+
+R4o extends whole-step rollback to selected chemistry failures without loosening tolerances.
+See [CHEMISTRY_RETRY.md](CHEMISTRY_RETRY.md) for recoverable conditions and the 30-attempt limit.

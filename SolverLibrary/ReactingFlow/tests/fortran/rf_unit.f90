@@ -1,6 +1,7 @@
 program rf_unit
   use mod_rf_reactor
   use mod_rf_units
+  use mod_rf_flow1d, only: primitive_to_conserved,advance_flow
   implicit none
   type(rf_mechanism) :: m
   type(rf_reference_scales) :: scales
@@ -48,6 +49,25 @@ program rf_unit
     call require(.not.success.and.gap_t==0,'NASA polynomial gap rejected without stop or clipping')
   end block
   call rates(m,1000._dp,1._dp,y,qf,qr,net,omega,heat)
+  block
+    real(dp) :: trial_t,trial_y(2),field(4,2),initial(4,2),reference(4,2),boundary(4),delta,reference_dt
+    integer :: rejected
+    trial_t=1000;trial_y=y
+    call advance_chemistry(m,1._dp,trial_t,trial_y,5.e-6_dp,1.e-9_dp,1.e-16_dp,1.e-8_dp,1,success)
+    call require(.not.success,'Chemistry internal step cap must reject')
+    call require(trial_t==1000.and.all(trial_y==y),'Rejected cell chemistry must not mutate T/Y')
+    call primitive_to_conserved(m,1000._dp,101325._dp,0._dp,y,field(:,1))
+    field(:,2)=field(:,1);initial=field;delta=5.e-6_dp
+    call advance_flow(m,field,1._dp,delta,.4_dp,'periodic','periodic',.true., &
+      1.e-9_dp,1.e-16_dp,1.e-8_dp,30,boundary,rejected_steps=rejected)
+    call require(rejected>0.and.delta<5.e-6_dp,'Chemistry failure must halve complete flow timestep')
+    reference=initial;reference_dt=delta
+    call advance_flow(m,reference,1._dp,reference_dt,.4_dp,'periodic','periodic',.true., &
+      1.e-9_dp,1.e-16_dp,1.e-8_dp,100000,boundary)
+    call require(maxval(abs(field-reference))<1.e-12_dp,'Retried step must equal fresh step at accepted dt')
+    call require(maxval(abs(field(3:,:)-initial(3:,:))/max(1._dp,abs(initial(3:,:))))<1.e-14_dp, &
+      'Chemistry retry preserves momentum and total energy to roundoff')
+  end block
   call require(abs(omega(1)/1.e6_dp+1)<1.e-12_dp.and.abs(sum(omega))<1.e-8_dp,'Rate test')
   open(newunit=u,status='scratch',action='readwrite')
   call run_reactor(m,1000._dp,101325._dp,y,5.e-6_dp,.false.,1.e-10_dp,1.e-17_dp,1.e-9_dp,5.e-6_dp, &
