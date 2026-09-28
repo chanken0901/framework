@@ -1,6 +1,7 @@
 program rf_unit
   use mod_rf_reactor
   use mod_rf_units
+  use mod_rf_shock
   use mod_rf_flow1d, only: primitive_to_conserved,advance_flow
   implicit none
   type(rf_mechanism) :: m
@@ -26,6 +27,22 @@ program rf_unit
     a%reactants=[1._dp,0._dp]; a%products=[0._dp,1._dp]; a%orders=a%reactants
   end associate
   y=[1._dp,0._dp]
+  block
+    real(dp) :: mach,t1,p1,rho1,u1,speed,residual(3),compression,pratio,rho0
+    real(dp), parameter :: machs(4)=[1.001_dp,1.1_dp,2._dp,5._dp]
+    rho0=101325._dp/(gas_r/.01_dp*300)
+    do i=1,size(machs)
+      mach=machs(i)
+      call frozen_normal_shock(m,300._dp,101325._dp,y,mach,t1,p1,rho1,u1,speed,residual)
+      compression=2.4_dp*mach**2/(.4_dp*mach**2+2)
+      pratio=1+2*1.4_dp/2.4_dp*(mach**2-1)
+      call require(abs(t1/(300*pratio/compression)-1)<1.e-8_dp,'Shock analytic temperature')
+      call require(abs(p1/(101325*pratio)-1)<1.e-8_dp,'Shock analytic pressure')
+      call require(abs(rho1/(rho0*compression)-1)<1.e-8_dp,'Shock analytic density')
+      call require(abs(u1/speed-(1-1/compression))<1.e-8_dp,'Shock analytic velocity')
+      call require(maxval(abs(residual))<1.e-10_dp,'Shock conservation')
+    end do
+  end block
   call mixture(m,1000._dp,y,101325._dp,cp,cv,h,e,r,s)
   call require(abs(cp-3.5_dp*gas_r/.01_dp)<1.e-10_dp,'NASA cp test')
   call require(abs(temperature_from_energy(m,e,y)-1000)<1.e-7_dp,'Energy inversion test')

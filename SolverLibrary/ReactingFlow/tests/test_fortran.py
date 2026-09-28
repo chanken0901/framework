@@ -28,6 +28,40 @@ class FortranTests(unittest.TestCase):
             raise RuntimeError('Build rf_probe and rf_reactor first')
         cls.hydrogen = Path(ct.__file__).parent/'data/h2o2.yaml'
 
+    def test_frozen_shock_reference(self):
+        from scipy.optimize import brentq
+        gas = self.ct.Solution(str(self.hydrogen))
+        exe = self.probe.with_name('rf_normal_shock'+self.probe.suffix)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            data, inp, out = tmp/'mechanism.rf', tmp/'shock.in', tmp/'shock.csv'
+            export(import_cantera(self.hydrogen), data)
+            for mach in (1.1, 2., 3.):
+                gas.TPX = 300., 101325., 'H2:2,O2:1,N2:3.76'
+                y = gas.Y.copy()
+                rho0, h0, speed = gas.density, gas.enthalpy_mass, mach*gas.sound_speed
+                def balance(ratio):
+                    p = 101325.+rho0*speed**2*(1-1/ratio)
+                    gas.DPY = rho0*ratio, p, y
+                    return gas.enthalpy_mass+.5*(speed/ratio)**2-h0-.5*speed**2
+                ratio = brentq(balance, 1.00001, rho0*speed**2/101325.)
+                balance(ratio)
+                expected = [speed, gas.T, gas.P, gas.density, speed*(1-1/ratio)]
+                inp.write_text(f'&shock temperature=300, pressure=101325, mach={mach} /\n'
+                               +' '.join(map(str,y))+'\n')
+                run = subprocess.run([str(exe),str(data),str(inp),str(out)], capture_output=True,text=True)
+                self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+                rows = [s for s in out.read_text().splitlines() if not s.startswith('#')]
+                self.np.testing.assert_allclose(self.np.fromstring(rows[1],sep=','),expected,rtol=1.e-8)
+                again = subprocess.run([str(exe),str(data),str(inp),str(out)], capture_output=True,text=True)
+                self.assertNotEqual(again.returncode,0)
+                out.unlink()
+            for mach in (.9, 100.):
+                inp.write_text(f'&shock mach={mach} /\n'+' '.join(map(str,y))+'\n')
+                run = subprocess.run([str(exe),str(data),str(inp),str(out)], capture_output=True,text=True)
+                self.assertNotEqual(run.returncode,0)
+                self.assertFalse(out.exists())
+
     def compare(self, ref, imported, path, t, p, y=None):
         y = [1/ref.n_species]*ref.n_species if y is None else y
         ref.TPY = t, p, y

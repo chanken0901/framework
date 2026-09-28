@@ -21,13 +21,16 @@ add_library(rf_dvode STATIC
 target_compile_definitions(rf_dvode PRIVATE REAL64)
 add_library(reactingflow STATIC src/fortran/mod_rf_mechanism.f90
   src/fortran/mod_rf_thermo.f90 src/fortran/mod_rf_kinetics.f90 src/fortran/mod_rf_reactor.f90
-  src/fortran/mod_rf_units.f90 src/fortran/mod_rf_transport.f90 src/fortran/mod_rf_flow1d.f90)
+  src/fortran/mod_rf_units.f90 src/fortran/mod_rf_transport.f90 src/fortran/mod_rf_flow1d.f90
+  src/fortran/mod_rf_shock.f90)
 target_link_libraries(reactingflow PUBLIC rf_dvode)
 target_include_directories(reactingflow PUBLIC "$<BUILD_INTERFACE:${CMAKE_Fortran_MODULE_DIRECTORY}>")
 add_executable(rf_reactor src/fortran/main_rf_reactor.f90)
 target_link_libraries(rf_reactor PRIVATE reactingflow)
 add_executable(rf_flow1d src/fortran/main_rf_flow1d.f90)
 target_link_libraries(rf_flow1d PRIVATE reactingflow)
+add_executable(rf_normal_shock src/fortran/main_rf_shock.f90)
+target_link_libraries(rf_normal_shock PRIVATE reactingflow)
 add_executable(rf_probe tests/fortran/rf_probe.f90)
 target_link_libraries(rf_probe PRIVATE reactingflow)
 if(BUILD_TESTING)

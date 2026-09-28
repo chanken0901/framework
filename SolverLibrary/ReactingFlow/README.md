@@ -1,5 +1,7 @@
 # ReactingFlow：独立反応流ライブラリ
 
+凍結組成の衝撃波基準計算を追加：[入力・実行・制限](docs/SHOCK_REFERENCE.md)。CJ/ZNDではない。
+
 状態：**R1〜R3、R4aの1次元反応Euler、R4bの定係数輸送、R4cのMUSCL、R4dの再試行、R4eの種別定係数拡散をFortranで実装済み。R4全体は進行中。**
 従来NSEのStage 0〜10とは別の移行段階で管理する。
 
