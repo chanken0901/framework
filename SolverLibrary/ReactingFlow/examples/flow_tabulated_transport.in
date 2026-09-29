@@ -1,0 +1,15 @@
+! Copy this file beside the generated transport/ directory.
+! Cantera h2o2.yaml order: H2 H O O2 OH H2O HO2 H2O2 AR N2
+&flow1d
+ nx=8, length=1, interface_x=0.5, end_time=1.e-7, max_dt=1.e-8,
+ left_temperature=1100, right_temperature=1120,
+ left_pressure=101325, right_pressure=101325,
+ left_velocity=1, right_velocity=-1,
+ left_bc='periodic', right_bc='periodic', reconstruction='muscl', chemistry=.true.,
+ transport_model='mixture_averaged',
+ viscosity_model='tabulated_wilke', conductivity_model='tabulated_mix',
+ transport_file='transport/properties.rf',
+ binary_diffusion_model='tabulated', binary_diffusion_file='transport/binary.rf'
+/
+0.0285 0 0 0.2264 0 0 0 0 0 0.7451
+0.0285 0 0 0.2264 0 0 0 0 0 0.7451

@@ -11,6 +11,7 @@ module mod_rf_transport
   public :: read_binary_diffusion_data
   public :: binary_diffusion_scale
   public :: binary_coefficient
+  public :: read_transport_table
   type :: rf_transport
     ! Constant SI coefficients. The common species D is not a detailed mixture-averaged model.
     real(dp) :: viscosity=0,bulk_viscosity=0,conductivity=0,diffusivity=0
@@ -23,8 +24,71 @@ module mod_rf_transport
     logical :: binary_power_law=.false.
     real(dp) :: binary_reference_temperature=1,binary_reference_pressure=1,binary_exponent=0
     real(dp), allocatable :: binary_temperatures(:),binary_table(:,:,:)
+    real(dp), allocatable :: property_temperatures(:),viscosity_table(:,:),conductivity_table(:,:)
   end type
 contains
+  subroutine read_transport_table(path,m,c)
+    character(*), intent(in) :: path
+    type(rf_mechanism), intent(in) :: m
+    type(rf_transport), intent(inout) :: c
+    character(256) :: fields(3)
+    integer :: unit,ios,ns,nt,n,i,j,l
+    logical :: found,seen(size(m%species))
+    real(dp) :: mass
+    call require(.not.allocated(c%viscosity_table),'Transport table already loaded')
+    ns=size(m%species)
+    open(newunit=unit,file=path,status='old',action='read',iostat=ios)
+    call require(ios==0,'Cannot open transport table: '//path)
+    call transport_record(unit,fields(:1),found)
+    call require(found.and.fields(1)=='RF_TRANSPORT_TABLE_V1','Expected RF_TRANSPORT_TABLE_V1')
+    call transport_record(unit,fields(:2),found)
+    call require(found,'Missing transport table counts')
+    call require(verify(trim(fields(1)),'0123456789')==0.and. &
+      verify(trim(fields(2)),'0123456789')==0,'Invalid transport table counts')
+    read(fields(1),*,iostat=ios) n;call require(ios==0.and.n==ns,'Transport table species count mismatch')
+    read(fields(2),*,iostat=ios) nt;call require(ios==0.and.nt>=2,'Transport table needs two temperatures')
+    allocate(c%property_temperatures(nt),c%viscosity_table(ns,nt),c%conductivity_table(ns,nt))
+    seen=.false.
+    do j=1,ns
+      call transport_record(unit,fields(:2),found);call require(found,'Missing table species')
+      i=transport_species_index(m,fields(1))
+      call require(.not.seen(i),'Duplicate table species');seen(i)=.true.
+      mass=transport_number(fields(2))
+      call require(abs(mass-m%species(i)%mass)<=1.e-8_dp*m%species(i)%mass,'Table molar mass mismatch')
+    end do
+    do l=1,nt
+      call transport_record(unit,fields(:1),found);call require(found,'Missing property temperature')
+      c%property_temperatures(l)=transport_number(fields(1));seen=.false.
+      do j=1,ns
+        call transport_record(unit,fields,found);call require(found,'Missing pure transport record')
+        i=transport_species_index(m,fields(1))
+        call require(.not.seen(i),'Duplicate pure transport record');seen(i)=.true.
+        c%viscosity_table(i,l)=transport_number(fields(2))
+        c%conductivity_table(i,l)=transport_number(fields(3))
+      end do
+    end do
+    call transport_record(unit,fields,found);call require(.not.found,'Extra transport table records')
+    close(unit)
+    call validate_transport(c,ns)
+  end subroutine
+
+  function interpolate_property(c,t,values) result(v)
+    type(rf_transport), intent(in) :: c
+    real(dp), intent(in) :: t,values(:,:)
+    real(dp) :: v(size(values,1)),w
+    integer :: l,nt
+    nt=size(c%property_temperatures)
+    call require(ieee_is_finite(t).and.t>=c%property_temperatures(1).and.t<=c%property_temperatures(nt), &
+      'Temperature outside transport table; extrapolation disabled')
+    l=1
+    do while(l<nt-1)
+      if(t<=c%property_temperatures(l+1)) exit
+      l=l+1
+    end do
+    w=log(t/c%property_temperatures(l))/log(c%property_temperatures(l+1)/c%property_temperatures(l))
+    v=exp((1-w)*log(values(:,l))+w*log(values(:,l+1)))
+  end function
+
   subroutine read_binary_diffusion_data(path,m,c,tabulated)
     ! Constant SI binary coefficients; named species and unordered pairs.
     character(*), intent(in) :: path
@@ -215,8 +279,12 @@ contains
   function pure_viscosities(c,t) result(mu)
     type(rf_transport), intent(in) :: c
     real(dp), intent(in) :: t
-    real(dp) :: mu(size(c%species_viscosity))
+    real(dp), allocatable :: mu(:)
     call require(ieee_is_finite(t).and.t>0,'Invalid viscosity temperature')
+    if(allocated(c%viscosity_table)) then
+      mu=interpolate_property(c,t,c%viscosity_table)
+      return
+    end if
     mu=c%species_viscosity*(t/c%viscosity_reference_temperature)**1.5_dp * &
       (c%viscosity_reference_temperature+c%sutherland_temperature)/(t+c%sutherland_temperature)
     call require(all(ieee_is_finite(mu)).and.all(mu>0),'Nonfinite/zero Sutherland viscosity')
@@ -228,7 +296,7 @@ contains
     real(dp), intent(in) :: t,y(:)
     real(dp) :: pure(size(y))
     mu=c%viscosity
-    if(.not.allocated(c%species_viscosity)) return
+    if(.not.allocated(c%species_viscosity).and..not.allocated(c%viscosity_table)) return
     call validate_transport(c,size(m%species)); call check_y(m,y)
     pure=pure_viscosities(c,t)
     mu=wilke_property(m,pure,y,pure)
@@ -258,9 +326,16 @@ contains
     type(rf_mechanism), intent(in) :: m
     type(rf_transport), intent(in) :: c
     real(dp), intent(in) :: t,y(:)
-    real(dp) :: pure(size(y)),ki(size(y)),cp,h,s
+    real(dp) :: pure(size(y)),ki(size(y)),cp,h,s,x(size(y))
     integer :: i
     kappa=c%conductivity
+    if(allocated(c%conductivity_table)) then
+      call validate_transport(c,size(y));call check_y(m,y)
+      ki=interpolate_property(c,t,c%conductivity_table)
+      x=y/m%species%mass;x=x/sum(x)
+      kappa=.5_dp*(sum(x*ki)+1/sum(x/ki))
+      return
+    end if
     if(.not.c%eucken_wms) return
     call validate_transport(c,size(m%species));call check_y(m,y)
     pure=pure_viscosities(c,t)
@@ -279,6 +354,14 @@ contains
     real(dp) :: upper(size(m%species)),cp_upper,piece,lo,hi,mass(size(m%species))
     integer :: i,j,n,power
     kappa=c%conductivity
+    if(allocated(c%conductivity_table)) then
+      call validate_transport(c,size(m%species))
+      call require(tmin>=c%property_temperatures(1).and.tmax>=tmin.and. &
+        tmax<=c%property_temperatures(size(c%property_temperatures)),'Conductivity bound outside table')
+      ! Arithmetic/harmonic means and log interpolation cannot exceed the largest entry.
+      kappa=maxval(c%conductivity_table)
+      return
+    end if
     if(.not.c%eucken_wms) return
     call validate_transport(c,size(m%species))
     call require(tmin>0.and.tmax>=tmin,'Invalid conductivity bound interval')
@@ -310,9 +393,15 @@ contains
     real(dp), intent(in) :: tmax
     real(dp) :: mass(size(m%species))
     mu=c%viscosity
-    if(.not.allocated(c%species_viscosity)) return
+    if(.not.allocated(c%species_viscosity).and..not.allocated(c%viscosity_table)) return
     call validate_transport(c,size(m%species))
     mass=m%species%mass
+    if(allocated(c%viscosity_table)) then
+      call require(ieee_is_finite(tmax).and.tmax>=minval(c%property_temperatures).and. &
+        tmax<=maxval(c%property_temperatures),'Viscosity bound outside table')
+      mu=maxval(maxval(c%viscosity_table,dim=2)*sqrt(8*(1+mass/minval(mass))))
+      return
+    end if
     ! phi_ij >= 1/sqrt(8*(1+Mi/Mj)); sum(x)=1. Bound holds for every composition.
     ! S>=0 makes each pure viscosity monotone in T, so Tmax bounds all diffusion faces.
     mu=maxval(pure_viscosities(c,tmax)*sqrt(8*(1+mass/minval(mass))))
@@ -366,6 +455,22 @@ contains
     real(dp) :: v(4)
     integer :: i,j,n
     v=[c%viscosity,c%bulk_viscosity,c%conductivity,c%diffusivity]
+    call require(allocated(c%viscosity_table).eqv.allocated(c%conductivity_table),'Incomplete property tables')
+    call require(allocated(c%viscosity_table).eqv.allocated(c%property_temperatures),'Missing property temperatures')
+    if(allocated(c%viscosity_table)) then
+      call require(.not.allocated(c%species_viscosity).and..not.c%eucken_wms.and. &
+        c%viscosity==0.and.c%conductivity==0.and.c%temperature_exponent==0,'Conflicting property models')
+      n=size(c%property_temperatures)
+      call require(n>=2,'Property tables need two temperatures')
+      call require(all(ieee_is_finite(c%property_temperatures)).and.all(c%property_temperatures>0), &
+        'Invalid property temperatures')
+      call require(all(c%property_temperatures(2:)>c%property_temperatures(:n-1)),'Nonascending property temperatures')
+      call require(size(c%viscosity_table,2)==n.and.all(shape(c%conductivity_table)==shape(c%viscosity_table)), &
+        'Property table shape mismatch')
+      if(present(ns)) call require(size(c%viscosity_table,1)==ns,'Property table species mismatch')
+      call require(all(ieee_is_finite(c%viscosity_table)).and.all(c%viscosity_table>0).and. &
+        all(ieee_is_finite(c%conductivity_table)).and.all(c%conductivity_table>0),'Invalid property table values')
+    end if
     if(allocated(c%binary_table)) then
       call require(.not.c%binary_power_law.and.c%temperature_exponent==0,'Binary table cannot combine with power laws')
       call require(allocated(c%binary_temperatures).and.allocated(c%binary_diffusivity),'Incomplete binary table')
@@ -532,7 +637,7 @@ contains
     active=max(c%viscosity,c%bulk_viscosity,c%conductivity,c%diffusivity)>0
     if(allocated(c%species_diffusivity)) active=active.or.maxval(c%species_diffusivity)>0
     if(allocated(c%binary_diffusivity)) active=active.or.maxval(c%binary_diffusivity)>0
-    active=active.or.allocated(c%species_viscosity)
+    active=active.or.allocated(c%species_viscosity).or.allocated(c%viscosity_table)
   end function
 
   subroutine diffusive_flux(m,c,rhol,ul,tl,yl,rhor,ur,tr,yr,dx,flux)

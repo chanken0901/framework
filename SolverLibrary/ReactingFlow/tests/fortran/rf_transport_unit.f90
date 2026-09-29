@@ -17,6 +17,20 @@ program rf_transport_unit
     m%species(i)%coeff(1,1)=3.5_dp;m%species(i)%atoms=1
   end do
   m%species(1)%coeff(6,1)=1000 ! unequal formation enthalpies expose a missing species energy flux
+  block
+    type(rf_transport) :: tab
+    tab%property_temperatures=[300._dp,1000._dp,3000._dp]
+    allocate(tab%viscosity_table(2,3),tab%conductivity_table(2,3))
+    tab%viscosity_table(1,:)=[1._dp,10._dp,1._dp]
+    tab%viscosity_table(2,:)=tab%viscosity_table(1,:)
+    tab%conductivity_table=2*tab%viscosity_table
+    call validate_transport(tab,2)
+    call require(abs(mixture_viscosity(m,tab,1000._dp,[.5_dp,.5_dp])-10)<1.e-12_dp,'Table Wilke value')
+    call require(abs(mixture_conductivity(m,tab,1000._dp,[.5_dp,.5_dp])-20)<1.e-12_dp,'Table conductivity')
+    call require(viscosity_bound(m,tab,3000._dp)>=10,'Nonmonotone viscosity bound')
+    call require(conductivity_bound(m,tab,300._dp,3000._dp)>=20,'Nonmonotone conductivity bound')
+    call require(transport_active(tab),'Table enables transport')
+  end block
   coeff=rf_transport(.75_dp,.25_dp,2._dp,.1_dp)
   yl=[.8_dp,.2_dp];yr=[.2_dp,.8_dp]
   call diffusive_flux(m,coeff,1._dp,2._dp,1000._dp,yl,1._dp,4._dp,1100._dp,yr,.5_dp,flux)

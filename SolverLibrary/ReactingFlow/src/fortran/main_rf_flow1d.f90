@@ -65,9 +65,20 @@ program main_rf_flow1d
   call require(ios==0,'Invalid flow1d namelist: '//trim(input_error))
   call validate_reconstruction(reconstruction)
   transport=rf_transport(viscosity,bulk_viscosity,thermal_conductivity,mass_diffusivity)
-  call require(conductivity_model=='constant'.or.conductivity_model=='eucken_wms','Unknown conductivity model')
+  call require(conductivity_model=='constant'.or.conductivity_model=='eucken_wms'.or. &
+    conductivity_model=='tabulated_mix','Unknown conductivity model')
+  call require((viscosity_model=='tabulated_wilke').eqv.(conductivity_model=='tabulated_mix'), &
+    'tabulated_wilke and tabulated_mix must be selected together')
   transport%eucken_wms=conductivity_model=='eucken_wms'
   select case(viscosity_model)
+  case('tabulated_wilke')
+    call require(transport_model/='none'.and.transport_temperature_model=='constant', &
+      'Transport table requires active transport and no common power law')
+    call require(len_trim(transport_file)>0,'Tabulated properties require transport_file')
+    call require(viscosity_reference_temperature==-1.and.all(species_reference_viscosities==-1).and. &
+      all(species_sutherland_temperatures==-1),'Table cannot combine with inline viscosity parameters')
+    resolved_transport_file=resolve_transport_path(trim(input_file),trim(transport_file))
+    call read_transport_table(trim(resolved_transport_file),m,transport)
   case('constant')
     call require(len_trim(transport_file)==0,'transport_file requires sutherland_wilke')
     call require(viscosity_reference_temperature==-1.and.all(species_reference_viscosities==-1).and. &
@@ -186,6 +197,15 @@ program main_rf_flow1d
   if(len_trim(resolved_transport_file)>0) write(out,'(a)') '# transport_file='//trim(resolved_transport_file)
   write(out,'(a)') '# viscosity_model='//trim(viscosity_model)
   write(out,'(a)') '# conductivity_model='//trim(conductivity_model)
+  if(allocated(transport%viscosity_table)) then
+    do l=1,size(transport%property_temperatures)
+      write(out,'(a,es25.16e3)') '# property_table_temperature=',transport%property_temperatures(l)
+      do j=1,ns
+        write(out,'(a,2(es25.16e3,1x))') '# property_mu_k_'//trim(m%species(j)%name)//'=', &
+          transport%viscosity_table(j,l),transport%conductivity_table(j,l)
+      end do
+    end do
+  end if
   if(viscosity_model=='sutherland_wilke') then
     write(out,'(a,es25.16e3)') '# viscosity_reference_temperature=',viscosity_reference_temperature
     do j=1,ns
