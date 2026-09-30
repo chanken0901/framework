@@ -1,5 +1,6 @@
 """Reacting inlet, analytic reaction/advection, and ZND-initialized CFD checks."""
 import os
+import csv
 from pathlib import Path
 import subprocess
 import sys
@@ -102,7 +103,33 @@ class ReactiveBoundaryTests(unittest.TestCase):
                 path.write_text(damaged);self.run_case(tmp,data,controls,y,y,False)
 
     def test_znd_stationary_wave_grid_refinement(self):
-        self.check_znd_wave('muscl')
+        self.check_znd_wave('muscl', sensitivity=True)
+
+    def test_wave_output_and_validation(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp=Path(td);data=tmp/'m.rf'
+            source=Path(ct.__file__).parent/'data/h2o2.yaml';export(import_cantera(source),data)
+            gas=ct.Solution(str(source));gas.TPX=1100,101325,'N2:1';y=gas.Y
+            controls="nx=16,end_time=1.e-7,max_dt=1.e-8,write_every=100,left_pressure=202650"
+            baseline=self.run_case(tmp,data,controls,y,y)
+            measured=self.run_case(tmp,data,controls+",wave_output='wave.csv',wave_xmin=.2,wave_xmax=.8",y,y)
+            np.testing.assert_array_equal(measured,baseline)
+            text=(tmp/'wave.csv').read_text();self.assertTrue(text.rstrip().endswith('# SUCCESS'))
+            records=list(csv.DictReader(s for s in text.splitlines() if not s.startswith('#')))
+            times=[float(s['time']) for s in records]
+            self.assertEqual(times[0],0);self.assertAlmostEqual(times[-1],1.e-7)
+            self.assertTrue(np.all(np.diff(times)>0))
+            self.assertGreater(len(records),len(np.unique(baseline[:,0])))
+            self.assertEqual(records[0]['detected'],'T');self.assertEqual(records[0]['speed_valid'],'F')
+            self.assertAlmostEqual(float(records[0]['position']),.5)
+            self.run_case(tmp,data,controls+",wave_output='wave.csv'",y,y,False)
+            self.assertEqual((tmp/'wave.csv').read_text(),text)
+            for extra in (",wave_xmin=.2",",wave_output='bad.csv',wave_min_pressure_jump=0",
+                          ",wave_output='bad.csv',wave_xmin=.8,wave_xmax=.2"):
+                self.run_case(tmp,data,controls+extra,y,y,False)
+            self.run_case(tmp,data,"nx=8,end_time=1.e-8,wave_output='flat.csv'",y,y)
+            flat=list(csv.DictReader(s for s in (tmp/'flat.csv').read_text().splitlines() if not s.startswith('#')))
+            self.assertTrue(all(s['detected']=='F' and s['speed_valid']=='F' for s in flat))
 
     def test_znd_first_order_grid_time_chemistry(self):
         self.check_znd_wave('first_order', sensitivity=True)
@@ -150,7 +177,9 @@ class ReactiveBoundaryTests(unittest.TestCase):
                 (tmp/'initial.rf').write_text('RF_FLOW_PROFILE_V1\n'+mechanism.canonical_sha256+
                     f'\n{len(y0)} {nx} {domain}\n'+'\n'.join(' '.join(map(str,s)) for s in states)+'\n')
                 right=profile(domain)
+                if (tmp/'wave.csv').exists(): (tmp/'wave.csv').unlink()
                 controls=f"nx={nx},length={domain},initial_profile='initial.rf',end_time=2.e-7,max_dt={max_dt}," \
+                    "wave_output='wave.csv',wave_xmin=.00025,wave_xmax=.0008,wave_min_pressure_jump=10000," \
                     f"chemistry_rtol={rtol},chemistry_atol_species={atoly},chemistry_atol_temperature={atolt}," \
                     f"write_every=100000,chemistry=.true.,reconstruction='{reconstruction}'," \
                     "left_bc='reacting_inlet',left_boundary_temperature=300,left_boundary_pressure=101325," \
@@ -164,6 +193,9 @@ class ReactiveBoundaryTests(unittest.TestCase):
                 self.assertTrue(np.all(last[:,6]>0))
                 front=(last[:-1,2]+last[1:,2])[np.argmax(abs(np.diff(last[:,6])))]/2
                 self.assertLessEqual(abs(front-shock),2*domain/nx)
+                wave=list(csv.DictReader(s for s in (tmp/'wave.csv').read_text().splitlines() if not s.startswith('#')))
+                self.assertEqual(wave[-1]['detected'],'T')
+                self.assertLessEqual(abs(float(wave[-1]['position'])-shock),2*domain/nx)
             self.assertLess(errors[1],errors[0],str(errors))
             self.assertLess(errors[1],.03,str(errors))
             if sensitivity:

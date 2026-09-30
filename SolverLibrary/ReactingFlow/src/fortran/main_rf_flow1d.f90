@@ -3,9 +3,17 @@ program main_rf_flow1d
   use mod_rf_thermo
   use mod_rf_transport
   use mod_rf_profile
+  use mod_rf_wave
   implicit none
   type(rf_mechanism) :: m
   type(rf_transport) :: transport
+  type(wave_history) :: wave_state
+  character(2048) :: wave_output=''
+  real(dp) :: wave_xmin=0,wave_xmax=-1,wave_min_pressure_jump=1
+  real(dp) :: wave_x,wave_speed,wave_jump
+  real(dp), allocatable :: wave_pressure(:)
+  logical :: wave_detected,wave_speed_valid
+  integer :: wave_unit
   character(16) :: transport_model='none'
   character(16) :: binary_diffusion_model='constant'
   real(dp) :: binary_reference_temperature=-1,binary_reference_pressure=-1,binary_temperature_exponent=-1
@@ -48,7 +56,8 @@ program main_rf_flow1d
     transport_temperature_model,transport_reference_temperature,transport_temperature_exponent, &
     viscosity_model,viscosity_reference_temperature,species_reference_viscosities,species_sutherland_temperatures, &
     conductivity_model,transport_file,binary_diffusivities,binary_diffusion_file, &
-    binary_diffusion_model,binary_reference_temperature,binary_reference_pressure,binary_temperature_exponent,initial_profile
+    binary_diffusion_model,binary_reference_temperature,binary_reference_pressure,binary_temperature_exponent,initial_profile, &
+    wave_output,wave_xmin,wave_xmax,wave_min_pressure_jump
   call require(command_argument_count()==3,'Usage: rf_flow1d mechanism.rf flow.in output.csv')
   call get_command_argument(1,mechanism_file)
   call get_command_argument(2,input_file)
@@ -279,6 +288,22 @@ program main_rf_flow1d
     write(out,'(a)',advance='no') ',Y_'//trim(m%species(j)%name)
   end do
   write(out,*)
+  if(len_trim(wave_output)>0) then
+    if(wave_xmax==-1) wave_xmax=length
+    call require(all(ieee_is_finite([wave_xmin,wave_xmax,wave_min_pressure_jump])), 'Nonfinite wave control')
+    call require(wave_xmin>=0.and.wave_xmax>wave_xmin.and.wave_xmax<=length.and.wave_min_pressure_jump>0, &
+                 'Invalid wave diagnostic controls')
+    allocate(wave_pressure(nx))
+    open(newunit=wave_unit,file=resolve_transport_path(trim(input_file),trim(wave_output)), &
+         status='new',action='write',iostat=ios)
+    call require(ios==0,'Cannot create wave diagnostic output; existing files are not overwritten')
+    write(wave_unit,'(a)') '# coordinate_frame=solver; velocity is signed dx/dt in that frame'
+    write(wave_unit,'(a,3es25.16e3)') '# xmin,xmax,min_pressure_jump=', &
+      wave_xmin,wave_xmax,wave_min_pressure_jump
+    write(wave_unit,'(a)') 'step,time,position,speed,pressure_jump,detected,speed_valid'
+  else
+    call require(wave_xmin==0.and.wave_xmax==-1.and.wave_min_pressure_jump==1,'Wave controls require wave_output')
+  end if
   step=0; time=0
   mass_error=0; momentum_error=0; energy_error=0; element_error=0
   do
@@ -293,6 +318,17 @@ program main_rf_flow1d
     element_error=max(element_error,maxval(abs(elements)/max(1._dp,abs(elements0))))
     call require(max(mass_error,momentum_error,energy_error,element_error)<1.e-7_dp, &
                  'Boundary-corrected global conservation failed')
+    if(allocated(wave_pressure)) then
+      do i=1,nx
+        call conserved_to_primitive(m,q(:,i),rho,u,t,p,a,y)
+        wave_pressure(i)=p
+      end do
+      call sample_wave(wave_pressure,dx,time,wave_xmin,wave_xmax,wave_min_pressure_jump, &
+        wave_state,wave_x,wave_speed,wave_jump,wave_detected,wave_speed_valid)
+      write(wave_unit,'(i0,4(",",es25.16e3),2(",",l1))') &
+        step,time,wave_x,wave_speed,wave_jump,wave_detected,wave_speed_valid
+      flush(wave_unit)
+    end if
     if(mod(step,write_every)==0.or.time>=end_time) then
       do i=1,nx
         call conserved_to_primitive(m,q(:,i),rho,u,t,p,a,y)
@@ -318,6 +354,10 @@ program main_rf_flow1d
   write(out,'(a,es25.16e3)') '# element_error=',element_error
   write(out,'(a)') '# SUCCESS'
   close(out)
+  if(allocated(wave_pressure)) then
+    write(wave_unit,'(a)') '# SUCCESS'
+    close(wave_unit)
+  end if
   write(*,'(a)') '[OK] Fortran 1D flow completed: '//trim(output_file)
 contains
   function resolve_transport_path(input_path,data_path) result(path)

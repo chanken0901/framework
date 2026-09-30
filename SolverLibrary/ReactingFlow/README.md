@@ -1,5 +1,7 @@
 # ReactingFlow：独立反応流ライブラリ
 
+長時間反応波検証用の任意出力：[波面位置・速度履歴](docs/WAVE_HISTORY.md)（Fortran、1D）。
+
 反応流入境界・任意初期分布・CFD反応波比較：[入力と検証範囲](docs/REACTIVE_BOUNDARIES.md)。
 CFD反応波の[格子・時間・化学誤差の検証結果](docs/CFD_WAVE_VALIDATION.md)：一次精度・MUSCLとも短時間試験合格。MUSCLの物性下限付近の停止は修正済み。
 

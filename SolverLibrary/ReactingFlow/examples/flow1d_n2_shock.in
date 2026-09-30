@@ -1,6 +1,8 @@
 ! Cantera 3.2.0 h2o2.yaml: H2 H O O2 OH H2O HO2 H2O2 AR N2
 ! Nonreacting nitrogen shock tube. Variable NASA heat capacity (not exact gamma=1.4 Sod).
 &flow1d
+ ! Optional wave history (path relative to this input; use a new name on rerun):
+ ! wave_output='n2_wave.csv', wave_xmin=0.45, wave_xmax=0.95, wave_min_pressure_jump=1000,
  nx=100, length=1.0, interface_x=0.5,
  left_temperature=800, right_temperature=640,
  left_pressure=101325, right_pressure=10132.5,
