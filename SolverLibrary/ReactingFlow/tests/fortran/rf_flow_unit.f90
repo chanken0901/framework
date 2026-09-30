@@ -19,6 +19,22 @@ program rf_flow_unit
     m%species(i)%coeff(1,1)=3.5_dp;m%species(i)%atoms=1
   end do
   y=[.25_dp,.75_dp]
+  block
+    real(dp) :: inside(4),reservoir(4),ghost(4),rhoi,ui,ti,pi,ai,yi(2),sign_in,pressure_expected
+    integer :: side
+    do side=1,2
+      sign_in=real(3-2*side,dp)
+      call primitive_to_conserved(m,1100._dp,110000._dp,100*sign_in,[.25_dp,.75_dp],inside)
+      call primitive_to_conserved(m,900._dp,101325._dp,105*sign_in,[.8_dp,.2_dp],reservoir)
+      call conserved_to_primitive(m,inside,rhoi,ui,ti,pi,ai,yi)
+      pressure_expected=pi+rhoi*ai*5
+      call reacting_inlet(m,inside,reservoir,side,ghost)
+      call conserved_to_primitive(m,ghost,rhoi,ui,ti,pi,ai,yi)
+      call require(abs(pi/pressure_expected-1)<1.e-10_dp,'Inlet outgoing acoustic relation')
+      call require(abs(ti-900)<1.e-7_dp.and.abs(ui-105*sign_in)<1.e-10_dp,'Inlet T and velocity')
+      call require(maxval(abs(yi-[.8_dp,.2_dp]))<1.e-12_dp,'Inlet composition')
+    end do
+  end block
   do i=1,8
     call primitive_to_conserved(m,1000._dp,101325._dp,20._dp,y,q(:,i))
   end do

@@ -65,7 +65,7 @@ contains
     real(dp), intent(in) :: value,y(:)
     logical, optional, intent(in) :: enthalpy
     logical, optional, intent(out) :: ok
-    real(dp) :: t,lo,hi,cp,cv,h,e,r,res,low,high
+    real(dp) :: t,lo,hi,cp,cv,h,e,r,res,low,high,roundoff
     logical :: use_h
     integer :: i
     t=0
@@ -81,6 +81,21 @@ contains
     low=merge(h,e,use_h)
     call mixture(m,hi,y,101325._dp,cp,cv,h,e,r)
     high=merge(h,e,use_h)
+    ! Conservative -> internal energy subtracts kinetic energy. Permit only a
+    ! machine-roundoff-sized endpoint discrepancy; never modify conserved state.
+    roundoff=64*epsilon(value)*max(1._dp,abs(low),abs(high))
+    if(ieee_is_finite(value)) then
+      if(abs(value-low)<=roundoff) then
+        t=lo
+        if(present(ok)) ok=.true.
+        return
+      end if
+      if(abs(value-high)<=roundoff) then
+        t=hi
+        if(present(ok)) ok=.true.
+        return
+      end if
+    end if
     if(.not.(ieee_is_finite(value).and.value>=low.and.value<=high)) then
       if(present(ok)) return
       call require(.false.,'Energy outside NASA range')
@@ -89,7 +104,10 @@ contains
       t=(lo+hi)/2
       call mixture(m,t,y,101325._dp,cp,cv,h,e,r)
       res=merge(h,e,use_h)-value
-      if(abs(res)<=1.e-11_dp*max(1._dp,abs(value))) then
+      ! The inversion must be more accurate than admissibility at NASA endpoints.
+      ! The former 1e-11 relative residual injected energy errors into MUSCL's
+      ! primitive -> conservative face conversion larger than that endpoint band.
+      if(abs(res)<=8*epsilon(value)*max(1._dp,abs(value),abs(h),abs(e),abs(cp*t))) then
         if(present(ok)) ok=.true.
         return
       end if

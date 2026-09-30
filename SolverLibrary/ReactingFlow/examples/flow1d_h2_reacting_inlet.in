@@ -1,0 +1,16 @@
+! Cantera h2o2.yaml order: H2 H O O2 OH H2O HO2 H2O2 AR N2
+! Short reacting-inlet demonstration, not a validated detonation case.
+&flow1d
+ nx=32, length=0.01, interface_x=0.005,
+ left_temperature=1100, right_temperature=1100,
+ left_pressure=101325, right_pressure=101325,
+ left_velocity=100, right_velocity=100,
+ left_bc='reacting_inlet', right_bc='outflow',
+ left_boundary_temperature=1100, left_boundary_pressure=101325,
+ left_boundary_velocity=100,
+ left_boundary_y=0.0285,0,0,0.2264,0,0,0,0,0,0.7451,
+ chemistry=.true., reconstruction='muscl',
+ end_time=1.e-7, max_dt=1.e-8, write_every=10
+/
+0.0285 0 0 0.2264 0 0 0 0 0 0.7451
+0.0285 0 0 0.2264 0 0 0 0 0 0.7451

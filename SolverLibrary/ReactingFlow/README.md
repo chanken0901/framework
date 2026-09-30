@@ -1,5 +1,8 @@
 # ReactingFlow：独立反応流ライブラリ
 
+反応流入境界・任意初期分布・CFD反応波比較：[入力と検証範囲](docs/REACTIVE_BOUNDARIES.md)。
+CFD反応波の[格子・時間・化学誤差の検証結果](docs/CFD_WAVE_VALIDATION.md)：一次精度・MUSCLとも短時間試験合格。MUSCLの物性下限付近の停止は修正済み。
+
 実在機構の輸送データ生成・Fortran評価：[テーブル輸送の手順](docs/TABULATED_TRANSPORT.md)。
 
 化学平衡・CJ速度探索とCJ連動ZND：[入力・検証範囲](docs/CJ_REFERENCE.md)。

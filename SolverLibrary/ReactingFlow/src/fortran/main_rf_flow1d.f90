@@ -2,6 +2,7 @@ program main_rf_flow1d
   use mod_rf_flow1d
   use mod_rf_thermo
   use mod_rf_transport
+  use mod_rf_profile
   implicit none
   type(rf_mechanism) :: m
   type(rf_transport) :: transport
@@ -22,6 +23,7 @@ program main_rf_flow1d
   real(dp) :: right_boundary_temperature=-1,right_boundary_pressure=-1,right_boundary_velocity=0
   real(dp), allocatable :: left_boundary_y(:),right_boundary_y(:),fixed_states(:,:)
   character(2048) :: mechanism_file,input_file,output_file
+  character(2048) :: initial_profile='',resolved_initial_profile=''
   character(512) :: input_error=''
   character(2048) :: transport_file='',resolved_transport_file=''
   character(2048) :: binary_diffusion_file='',resolved_binary_diffusion_file=''
@@ -46,7 +48,7 @@ program main_rf_flow1d
     transport_temperature_model,transport_reference_temperature,transport_temperature_exponent, &
     viscosity_model,viscosity_reference_temperature,species_reference_viscosities,species_sutherland_temperatures, &
     conductivity_model,transport_file,binary_diffusivities,binary_diffusion_file, &
-    binary_diffusion_model,binary_reference_temperature,binary_reference_pressure,binary_temperature_exponent
+    binary_diffusion_model,binary_reference_temperature,binary_reference_pressure,binary_temperature_exponent,initial_profile
   call require(command_argument_count()==3,'Usage: rf_flow1d mechanism.rf flow.in output.csv')
   call get_command_argument(1,mechanism_file)
   call get_command_argument(2,input_file)
@@ -160,7 +162,7 @@ program main_rf_flow1d
   call require(nx>=2.and.max_steps>0.and.write_every>0,'Invalid grid/step/output count')
   call require(all(ieee_is_finite([length,interface_x,end_time,cfl,max_dt])), 'Nonfinite flow control')
   call require(min(length,end_time,max_dt,cfl)>0.and.cfl<=.5_dp,'Require positive controls, CFL<=0.5')
-  call require(interface_x>=0.and.interface_x<=length,'Interface outside domain')
+  if(len_trim(initial_profile)==0) call require(interface_x>=0.and.interface_x<=length,'Interface outside domain')
   call require(left_bc=='periodic'.or.left_bc=='outflow'.or.left_bc=='reflecting'.or. &
     needs_reference(left_bc),'Invalid left boundary')
   call require(right_bc=='periodic'.or.right_bc=='outflow'.or.right_bc=='reflecting'.or. &
@@ -178,6 +180,10 @@ program main_rf_flow1d
   call initialize_boundary(right_bc,right_boundary_temperature,right_boundary_pressure,right_boundary_velocity, &
     right_boundary_y,fixed_states(:,2))
   dx=length/nx
+  if(len_trim(initial_profile)>0) then
+    resolved_initial_profile=resolve_transport_path(trim(input_file),trim(initial_profile))
+    call read_flow_profile(trim(resolved_initial_profile),m,length,q)
+  else
   do i=1,nx
     x=(i-.5_dp)*dx
     if(x<interface_x) then
@@ -186,6 +192,7 @@ program main_rf_flow1d
       call primitive_to_conserved(m,right_temperature,right_pressure,right_velocity,yr,q(:,i))
     end if
   end do
+  end if
   initial=sum(q,dim=2)*dx; boundary=0; elements0=0
   do j=1,ns
     elements0=elements0+initial(j)/m%species(j)%mass*m%species(j)%atoms
@@ -194,6 +201,7 @@ program main_rf_flow1d
   call require(ios==0,'Cannot create output; existing files are never overwritten')
   write(out,'(a)') '# 1D conservative flow + optional transport + Strang/DVODE chemistry, SI units'
   write(out,'(a)') '# transport_model='//trim(transport_model)
+  if(len_trim(initial_profile)>0) write(out,'(a)') '# initial_profile='//trim(resolved_initial_profile)
   if(len_trim(resolved_transport_file)>0) write(out,'(a)') '# transport_file='//trim(resolved_transport_file)
   write(out,'(a)') '# viscosity_model='//trim(viscosity_model)
   write(out,'(a)') '# conductivity_model='//trim(conductivity_model)

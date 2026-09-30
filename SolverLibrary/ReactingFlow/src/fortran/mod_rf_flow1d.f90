@@ -8,12 +8,35 @@ module mod_rf_flow1d
   public :: flow_timestep,advance_flow,transport_step,diffusion_rhs
   public :: reconstruct_faces,validate_reconstruction
   public :: admissible_flow,validate_fixed_states
-  public :: characteristic_outlet,needs_reference
+  public :: characteristic_outlet,reacting_inlet,needs_reference
 contains
   logical function needs_reference(kind)
     character(*), intent(in) :: kind
-    needs_reference=kind=='dirichlet'.or.kind=='characteristic'
+    needs_reference=kind=='dirichlet'.or.kind=='characteristic'.or.kind=='reacting_inlet'
   end function
+
+  subroutine reacting_inlet(m,q,reference,side,ghost)
+    ! Reservoir T,Y,u prescribed. Subsonic pressure follows outgoing frozen acoustic wave.
+    type(rf_mechanism), intent(in) :: m
+    real(dp), intent(in) :: q(:),reference(:)
+    integer, intent(in) :: side
+    real(dp), intent(out) :: ghost(:)
+    real(dp) :: rho,u,t,p,a,y(size(m%species)),rr,ur,tr,pr,ar,yr(size(m%species)),normal,pb
+    call require(side==1.or.side==2,'Invalid inlet side')
+    normal=real(2*side-3,dp)
+    call conserved_to_primitive(m,q,rho,u,t,p,a,y)
+    call conserved_to_primitive(m,reference,rr,ur,tr,pr,ar,yr)
+    call require(normal*u<0.and.normal*ur<0,'Reacting inlet requires inward interior and reference velocities')
+    if(-normal*u>=a) then
+      call require(-normal*ur>=ar,'Supersonic inlet requires supersonic reference')
+      ghost=reference
+    else
+      call require(-normal*ur<ar,'Subsonic inlet requires subsonic reference')
+      pb=p+rho*a*normal*(u-ur)
+      call require(pb>0.and.ieee_is_finite(pb),'Reacting inlet acoustic pressure is nonphysical')
+      call primitive_to_conserved(m,tr,pb,ur,yr,ghost)
+    end if
+  end subroutine
 
   subroutine characteristic_outlet(m,q,reference,side,ghost)
     ! Frozen local acoustic projection. Outflow only; not full reacting NSCBC.
@@ -108,6 +131,9 @@ contains
         end if
       end do
       s(4:)=s(4:)*theta*(1-16*epsilon(theta))
+      ! Zero slope means the original conservative state, not an EOS round trip.
+      ! In particular, preserve cold uniform upstream states at the NASA bound.
+      if(all(s==0)) cycle
       call primitive_to_conserved(m,v(1,i)-s(1)/2,v(2,i)-s(2)/2,v(3,i)-s(3)/2,v(4:,i)-s(4:)/2,qminus(:,i))
       call primitive_to_conserved(m,v(1,i)+s(1)/2,v(2,i)+s(2)/2,v(3,i)+s(3)/2,v(4:,i)+s(4:)/2,qplus(:,i))
     end do
@@ -165,17 +191,36 @@ contains
     end if
   end subroutine
 
-  logical function admissible_flow(m,q) result(valid)
+  logical function admissible_flow(m,q,diagnose) result(valid)
     ! No modification, clipping, or renormalization of the candidate conserved field.
     type(rf_mechanism), intent(in) :: m
     real(dp), intent(in) :: q(:,:)
-    real(dp) :: rho,u,t,p,a,y(size(m%species))
-    integer :: i
+    logical, optional, intent(in) :: diagnose
+    real(dp) :: rho,u,t,p,a,y(size(m%species)),lo,cp,cv,h,e,r,energy
+    integer :: i,j,ns
     valid=.false.
     call require(size(q,1)==size(m%species)+2.and.size(q,2)>=2,'Invalid admissibility field shape')
     do i=1,size(q,2)
       call conserved_to_primitive(m,q(:,i),rho,u,t,p,a,y,ok=valid)
-      if(.not.valid) return
+      if(.not.valid) then
+        if(present(diagnose)) then
+          if(diagnose) then
+            ns=size(m%species)
+            write(*,*) 'Invalid flow cell, min(rhoY), rho:',i,minval(q(:ns,i)),sum(q(:ns,i))
+            if(all(q(:ns,i)>=0).and.sum(q(:ns,i))>0) then
+              rho=sum(q(:ns,i));y=q(:ns,i)/rho
+              energy=q(ns+2,i)/rho-(q(ns+1,i)/rho)**2/2
+              lo=0
+              do j=1,ns
+                lo=max(lo,m%species(j)%bounds(1))
+              end do
+              call mixture(m,lo,y,101325._dp,cp,cv,h,e,r)
+              write(*,*) 'Internal energy, NASA lower energy, difference [J/kg]:',energy,e,energy-e
+            end if
+          end if
+        end if
+        return
+      end if
     end do
   end function
 
@@ -221,7 +266,7 @@ contains
     if(present(right_bc)) rb=right_bc
     call validate_fixed_states(m,lb,rb,fixed_states)
     diffusion_factor=2
-    if(lb=='dirichlet'.or.rb=='dirichlet') diffusion_factor=4
+    if(lb=='dirichlet'.or.rb=='dirichlet'.or.lb=='reacting_inlet'.or.rb=='reacting_inlet') diffusion_factor=4
     maxspeed=0
     do i=1,size(q,2)
       call physical_flux(m,q(:,i),f,speed)
@@ -246,12 +291,12 @@ contains
       if(i==2.and..not.needs_reference(rb)) cycle
       call physical_flux(m,fixed_states(:,i),f,speed)
       maxspeed=max(maxspeed,speed)
-      if(i==1.and.lb=='characteristic') then
-        call characteristic_outlet(m,q(:,1),fixed_states(:,1),1,ghost)
+      if(i==1.and.(lb=='characteristic'.or.lb=='reacting_inlet')) then
+        call boundary_state(m,q(:,1),lb,ghost,fixed_states,1)
         call physical_flux(m,ghost,f,speed);maxspeed=max(maxspeed,speed)
       end if
-      if(i==2.and.rb=='characteristic') then
-        call characteristic_outlet(m,q(:,size(q,2)),fixed_states(:,2),2,ghost)
+      if(i==2.and.(rb=='characteristic'.or.rb=='reacting_inlet')) then
+        call boundary_state(m,q(:,size(q,2)),rb,ghost,fixed_states,2)
         call physical_flux(m,ghost,f,speed);maxspeed=max(maxspeed,speed)
       end if
     end do
@@ -267,9 +312,11 @@ contains
           tmax=max(tmax,t);tmin=min(tmin,t)
         end do
         do i=1,2
-          if(i==1.and.lb/='dirichlet') cycle
-          if(i==2.and.rb/='dirichlet') cycle
-          call conserved_to_primitive(m,fixed_states(:,i),rho,u,t,p,a,y)
+          if(i==1.and.lb/='dirichlet'.and.lb/='reacting_inlet') cycle
+          if(i==2.and.rb/='dirichlet'.and.rb/='reacting_inlet') cycle
+          if(i==1) call boundary_state(m,q(:,1),lb,ghost,fixed_states,1)
+          if(i==2) call boundary_state(m,q(:,size(q,2)),rb,ghost,fixed_states,2)
+          call conserved_to_primitive(m,ghost,rho,u,t,p,a,y)
           call mixture(m,t,y,p,cp,cv,h,e,r)
           rhomin=min(rhomin,rho); rhomax=max(rhomax,rho); rhocvmin=min(rhocvmin,rho*cv)
           tmax=max(tmax,t);tmin=min(tmin,t)
@@ -294,6 +341,9 @@ contains
     integer, intent(in) :: side
     ghost=q
     select case(kind)
+    case('reacting_inlet')
+      call require(present(fixed_states),'Missing reacting inlet reference')
+      call reacting_inlet(m,q,fixed_states(:,side),side,ghost)
     case('characteristic')
       call require(present(fixed_states),'Missing characteristic reference state')
       call characteristic_outlet(m,q,fixed_states(:,side),side,ghost)
@@ -317,7 +367,7 @@ contains
     real(dp), intent(out) :: dq(:,:),net_boundary(:)
     real(dp) :: face(size(q,1),0:size(q,2)),rho(size(q,2)),u(size(q,2)),t(size(q,2))
     real(dp) :: y(size(m%species),size(q,2)),p,a
-    real(dp) :: rb,ub,tb,yb(size(m%species))
+    real(dp) :: rb,ub,tb,yb(size(m%species)),ghost(size(q,1))
     integer :: i,nx
     nx=size(q,2)
     call validate_transport(transport,size(m%species))
@@ -342,6 +392,10 @@ contains
       ! Reflecting: u_wall=0, zero temperature/species normal gradients.
       ! Outflow: zero primitive gradients, hence zero diffusive flux.
       select case(left_bc)
+      case('reacting_inlet')
+        call boundary_state(m,q(:,1),left_bc,ghost,fixed_states,1)
+        call conserved_to_primitive(m,ghost,rb,ub,tb,p,a,yb)
+        call fixed_diffusive_flux(m,transport,rb,ub,tb,yb,u(1),t(1),y(:,1),dx,-1,face(:,0))
       case('dirichlet')
         call conserved_to_primitive(m,fixed_states(:,1),rb,ub,tb,p,a,yb)
         call fixed_diffusive_flux(m,transport,rb,ub,tb,yb,u(1),t(1),y(:,1),dx,-1,face(:,0))
@@ -352,6 +406,10 @@ contains
         call require(.false.,'Unknown diffusion left boundary')
       end select
       select case(right_bc)
+      case('reacting_inlet')
+        call boundary_state(m,q(:,nx),right_bc,ghost,fixed_states,2)
+        call conserved_to_primitive(m,ghost,rb,ub,tb,p,a,yb)
+        call fixed_diffusive_flux(m,transport,rb,ub,tb,yb,u(nx),t(nx),y(:,nx),dx,1,face(:,nx))
       case('dirichlet')
         call conserved_to_primitive(m,fixed_states(:,2),rb,ub,tb,p,a,yb)
         call fixed_diffusive_flux(m,transport,rb,ub,tb,yb,u(nx),t(nx),y(:,nx),dx,1,face(:,nx))
@@ -406,32 +464,35 @@ contains
     end if
   end subroutine
 
-  subroutine transport_step(m,q,dx,dt,cfl,left_bc,right_bc,result,boundary_change,ok,transport,reconstruction,fixed_states)
+  subroutine transport_step(m,q,dx,dt,cfl,left_bc,right_bc,result,boundary_change,ok,transport, &
+                            reconstruction,fixed_states,diagnose)
     type(rf_mechanism), intent(in) :: m
     real(dp), intent(in), optional :: fixed_states(:,:)
     real(dp), intent(in) :: q(:,:),dx,dt,cfl
     character(*), intent(in) :: left_bc,right_bc
     real(dp), intent(out) :: result(:,:),boundary_change(:)
     logical, intent(out) :: ok
+    logical, optional, intent(in) :: diagnose
     character(*), intent(in), optional :: reconstruction
     type(rf_transport), intent(in), optional :: transport
     real(dp) :: a(size(q,1),size(q,2)),b(size(q,1),size(q,2)),dq(size(q,1),size(q,2))
     real(dp) :: f1(size(q,1)),f2(size(q,1)),f3(size(q,1))
     ok=.false.; boundary_change=0
     result=q
-    if(.not.admissible_flow(m,q)) return
+    if(.not.admissible_flow(m,q,diagnose)) return
     if(dt>flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states)*(1+1.e-12_dp)) return
     call rhs(m,q,dx,left_bc,right_bc,dq,f1,transport,reconstruction,fixed_states)
     a=q+dt*dq
-    if(.not.admissible_flow(m,a)) return
+    if(.not.admissible_flow(m,a,diagnose)) return
     if(dt>flow_timestep(m,a,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states)*(1+1.e-12_dp)) return
     call rhs(m,a,dx,left_bc,right_bc,dq,f2,transport,reconstruction,fixed_states)
-    b=.75_dp*q+.25_dp*(a+dt*dq)
-    if(.not.admissible_flow(m,b)) return
+    ! Increment form preserves a zero RHS exactly (including very small retries).
+    b=q+.25_dp*((a-q)+dt*dq)
+    if(.not.admissible_flow(m,b,diagnose)) return
     if(dt>flow_timestep(m,b,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states)*(1+1.e-12_dp)) return
     call rhs(m,b,dx,left_bc,right_bc,dq,f3,transport,reconstruction,fixed_states)
-    result=q/3+2._dp/3*(b+dt*dq)
-    if(.not.admissible_flow(m,result)) then
+    result=q+2._dp/3*((b-q)+dt*dq)
+    if(.not.admissible_flow(m,result,diagnose)) then
       result=q
       return
     end if
@@ -439,12 +500,13 @@ contains
     ok=.true.
   end subroutine
 
-  subroutine chemistry_cells(m,q,dt,rtol,atoly,atolt,maxsteps,ok)
+  subroutine chemistry_cells(m,q,dt,rtol,atoly,atolt,maxsteps,ok,diagnose)
     type(rf_mechanism), intent(in), target :: m
     real(dp), intent(inout) :: q(:,:)
     real(dp), intent(in) :: dt,rtol,atoly,atolt
     integer, intent(in) :: maxsteps
     logical, intent(out) :: ok
+    logical, optional, intent(in) :: diagnose
     logical :: valid
     real(dp) :: rho,u,t,p,a,y(size(m%species)),elem0(m%ne),elem1(m%ne),target_e,restored
     integer :: i,j,ns
@@ -458,14 +520,24 @@ contains
         elem0=elem0+y(j)/m%species(j)%mass*m%species(j)%atoms
       end do
       call advance_chemistry(m,rho,t,y,dt,rtol,atoly,atolt,maxsteps,valid)
-      if(.not.valid) return
+      if(.not.valid) then
+        if(present(diagnose)) then
+          if(diagnose) write(*,*) 'Chemistry ODE rejected cell, T, dt:',i,t,dt
+        end if
+        return
+      end if
       elem1=0
       do j=1,ns
         elem1=elem1+y(j)/m%species(j)%mass*m%species(j)%atoms
       end do
       if(maxval(abs(elem1-elem0)/max(1._dp,abs(elem0)))>1.e-8_dp) return
       restored=temperature_from_energy(m,target_e,y,ok=valid)
-      if(.not.valid) return
+      if(.not.valid) then
+        if(present(diagnose)) then
+          if(diagnose) write(*,*) 'Chemistry energy recovery rejected cell, T, e, dt:',i,t,target_e,dt
+        end if
+        return
+      end if
       if(abs(restored-t)>max(1.e-3_dp,100*rtol*t)) return
       ! No heat-release source: formation energy is already part of rho*E.
       q(:ns,i)=rho*y
@@ -498,11 +570,15 @@ contains
     do retry=1,30
       stage=old
       ok=.true.;boundary_change=0
-      if(chemistry) call chemistry_cells(m,stage,dt/2,rtol,atoly,atolt,maxsteps,ok)
+      if(chemistry) call chemistry_cells(m,stage,dt/2,rtol,atoly,atolt,maxsteps,ok,retry==30)
+      if(retry==30.and..not.ok) write(*,*) 'Rejected first chemistry half-step'
       if(ok) call transport_step(m,stage,dx,dt,cfl,left_bc,right_bc,newq,boundary_change, &
-        ok,transport,reconstruction,fixed_states)
+        ok,transport,reconstruction,fixed_states,retry==30)
       if(ok) then
-        if(chemistry) call chemistry_cells(m,newq,dt/2,rtol,atoly,atolt,maxsteps,ok)
+        if(chemistry) call chemistry_cells(m,newq,dt/2,rtol,atoly,atolt,maxsteps,ok,retry==30)
+        if(retry==30.and..not.ok) write(*,*) 'Rejected second chemistry half-step'
+      else
+        if(retry==30) write(*,*) 'Rejected before second chemistry half-step; dt:',dt
       end if
       if(ok) then
         check_dt=flow_timestep(m,newq,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states) ! validate complete step

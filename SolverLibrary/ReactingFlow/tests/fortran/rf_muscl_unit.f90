@@ -13,6 +13,21 @@ program rf_muscl_unit
     m%species(i)%bounds=[200._dp,4000._dp]; m%species(i)%coeff=0
     m%species(i)%coeff(1,1)=3.5_dp; m%species(i)%atoms=1
   end do
+  ! At the NASA lower bound a uniform moving state must not drift through
+  ! primitive/conservative conversion or SSPRK convex-combination roundoff.
+  y=[.25_dp,.75_dp,0._dp]
+  do i=1,8
+    call primitive_to_conserved(m,200._dp,101325._dp,2044._dp,y,q(:,i))
+  end do
+  old=q
+  call reconstruct_faces(m,q,'periodic','periodic',qm,qp,'muscl')
+  call require(all(qm==q).and.all(qp==q),'Zero-slope MUSCL conservative identity')
+  do k=1,100
+    dt=1.e-8_dp
+    call advance_flow(m,q,.1_dp,dt,.3_dp,'periodic','periodic',.false.,1.e-9_dp,1.e-16_dp, &
+      1.e-8_dp,10000,change,reconstruction='muscl')
+  end do
+  call require(all(q==old),'Uniform cold moving state preserved exactly')
   do i=1,8
     y=[real(i-1,dp)/7,real(8-i,dp)/7,0._dp]
     call primitive_to_conserved(m,800._dp+50*i,101325._dp+100*i,20._dp,y,q(:,i))

@@ -28,6 +28,16 @@ program rf_unit
   end associate
   y=[1._dp,0._dp]
   block
+    real(dp) :: cp0,cv0,h0,e0,r0,tcheck
+    call mixture(m,200._dp,y,101325._dp,cp0,cv0,h0,e0,r0)
+    tcheck=temperature_from_energy(m,e0,y,ok=success)
+    call require(success.and.tcheck==200._dp,'Exact NASA endpoint roundtrip')
+    tcheck=temperature_from_energy(m,nearest(e0,-1._dp),y,ok=success)
+    call require(success.and.abs(tcheck-200)<1.e-10_dp,'NASA endpoint roundoff accepted')
+    tcheck=temperature_from_energy(m,e0-1._dp,y,ok=success)
+    call require(.not.success,'Physical NASA undershoot still rejected')
+  end block
+  block
     real(dp) :: mach,t1,p1,rho1,u1,speed,residual(3),compression,pratio,rho0
     real(dp), parameter :: machs(4)=[1.001_dp,1.1_dp,2._dp,5._dp]
     rho0=101325._dp/(gas_r/.01_dp*300)
