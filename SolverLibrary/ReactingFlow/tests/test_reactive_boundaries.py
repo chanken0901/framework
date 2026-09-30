@@ -1,6 +1,7 @@
 """Reacting inlet, analytic reaction/advection, and ZND-initialized CFD checks."""
 import os
 import csv
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -22,11 +23,17 @@ class ReactiveBoundaryTests(unittest.TestCase):
         if not os.environ.get('RF_FORTRAN_BUILD'): raise unittest.SkipTest('Set RF_FORTRAN_BUILD')
         cls.exe=Path(os.environ['RF_FORTRAN_BUILD'])/('rf_flow1d.exe' if os.name=='nt' else 'rf_flow1d')
 
-    def run_case(self,tmp,data,controls,yl,yr,ok=True):
+    def run_case(self,tmp,data,controls,yl,yr,ok=True,artifact_label=None):
         inp=tmp/'case.in';out=tmp/'flow.csv'
         if out.exists(): out.unlink()
         inp.write_text('&flow1d '+controls+' /\n'+' '.join(map(str,yl))+'\n'+' '.join(map(str,yr))+'\n')
         run=subprocess.run([str(self.exe),str(data),str(inp),str(out)],capture_output=True,text=True,timeout=600)
+        if artifact_label and os.environ.get('RF_WAVE_ARTIFACTS'):
+            destination=Path(os.environ['RF_WAVE_ARTIFACTS'])/artifact_label
+            destination.mkdir(parents=True,exist_ok=False)
+            for path in (data,inp,out,tmp/'initial.rf',tmp/'wave.csv'):
+                if path.exists(): shutil.copy2(path,destination/path.name)
+            (destination/'solver.log').write_text(run.stdout+run.stderr)
         if not ok:
             self.assertNotEqual(run.returncode,0)
             if out.exists(): self.assertNotIn('# SUCCESS',out.read_text())
@@ -134,7 +141,11 @@ class ReactiveBoundaryTests(unittest.TestCase):
     def test_znd_first_order_grid_time_chemistry(self):
         self.check_znd_wave('first_order', sensitivity=True)
 
-    def check_znd_wave(self, reconstruction, sensitivity=False):
+    @unittest.skipUnless(os.environ.get('RF_LONG_WAVE_TESTS')=='1','Set RF_LONG_WAVE_TESTS=1 for extended ZND CFD checks')
+    def test_znd_extended_duration(self):
+        self.check_znd_wave('muscl', extended=True)
+
+    def check_znd_wave(self, reconstruction, sensitivity=False, extended=False):
         # Independent Cantera/Radau steady ZND reference in shock-fixed downstream coordinate.
         source=Path(ct.__file__).parent/'data/h2o2.yaml'
         gas=ct.Solution(str(source));gas.TPX=300,101325,'H2:2,O2:1,N2:3.76'
@@ -161,6 +172,7 @@ class ReactiveBoundaryTests(unittest.TestCase):
                       dense_output=True,jac=jac)
         self.assertTrue(ref.success,ref.message)
         domain=.002;shock=.0005
+        end_time=1.e-6 if extended else 2.e-7
         def profile(x):
             if x<shock: return np.r_[300.,101325.,speed,y0]
             tau=brentq(lambda t: ref.sol(t)[2]-(x-shock),0,ref.t[-1],xtol=1.e-16)
@@ -168,8 +180,10 @@ class ReactiveBoundaryTests(unittest.TestCase):
             return np.r_[gas.T,gas.P,flux/state[1],gas.Y]
         with tempfile.TemporaryDirectory() as td:
             tmp=Path(td);data=tmp/'m.rf';mechanism=import_cantera(source);export(mechanism,data)
-            errors=[];solutions=[]
+            errors=[];solutions=[];extended_metrics=[]
             cases=[(128,2.e-9,1.e-9,1.e-16,1.e-8),(256,2.e-9,1.e-9,1.e-16,1.e-8)]
+            if extended:
+                cases.append((512,2.e-9,1.e-9,1.e-16,1.e-8))
             if sensitivity:
                 cases.extend([(128,1.e-9,1.e-9,1.e-16,1.e-8),(128,2.e-9,1.e-10,1.e-17,1.e-9)])
             for nx,max_dt,rtol,atoly,atolt in cases:
@@ -178,7 +192,7 @@ class ReactiveBoundaryTests(unittest.TestCase):
                     f'\n{len(y0)} {nx} {domain}\n'+'\n'.join(' '.join(map(str,s)) for s in states)+'\n')
                 right=profile(domain)
                 if (tmp/'wave.csv').exists(): (tmp/'wave.csv').unlink()
-                controls=f"nx={nx},length={domain},initial_profile='initial.rf',end_time=2.e-7,max_dt={max_dt}," \
+                controls=f"nx={nx},length={domain},initial_profile='initial.rf',end_time={end_time},max_dt={max_dt}," \
                     "wave_output='wave.csv',wave_xmin=.00025,wave_xmax=.0008,wave_min_pressure_jump=10000," \
                     f"chemistry_rtol={rtol},chemistry_atol_species={atoly},chemistry_atol_temperature={atolt}," \
                     f"write_every=100000,chemistry=.true.,reconstruction='{reconstruction}'," \
@@ -186,18 +200,45 @@ class ReactiveBoundaryTests(unittest.TestCase):
                     f"left_boundary_velocity={speed},left_boundary_y="+','.join(map(str,y0))+','+ \
                     "right_bc='characteristic',"+f"right_boundary_temperature={right[0]},right_boundary_pressure={right[1]}," \
                     f"right_boundary_velocity={right[2]},right_boundary_y="+','.join(map(str,right[3:]))
-                rows=self.run_case(tmp,data,controls,y0,y0);last=rows[rows[:,0]==rows[-1,0]]
+                label=f'{reconstruction}_t{end_time}_n{nx}_dt{max_dt}_rtol{rtol}'
+                rows=self.run_case(tmp,data,controls,y0,y0,artifact_label=label);last=rows[rows[:,0]==rows[-1,0]]
                 errors.append(np.mean(abs(last[:,6]-states[:,1]))/max(states[:,1]))
                 solutions.append(last[:,6].copy())
                 print(f'ZND {reconstruction}: nx={nx}, max_dt={max_dt}, rtol={rtol}, pressure error={errors[-1]}',flush=True)
                 self.assertTrue(np.all(last[:,6]>0))
                 front=(last[:-1,2]+last[1:,2])[np.argmax(abs(np.diff(last[:,6])))]/2
-                self.assertLessEqual(abs(front-shock),2*domain/nx)
+                position_limit=.05*domain if extended else 2*domain/nx
+                if not extended: self.assertLessEqual(abs(front-shock),position_limit)
                 wave=list(csv.DictReader(s for s in (tmp/'wave.csv').read_text().splitlines() if not s.startswith('#')))
-                self.assertEqual(wave[-1]['detected'],'T')
-                self.assertLessEqual(abs(float(wave[-1]['position'])-shock),2*domain/nx)
-            self.assertLess(errors[1],errors[0],str(errors))
-            self.assertLess(errors[1],.03,str(errors))
+                if not extended:
+                    self.assertEqual(wave[-1]['detected'],'T')
+                    self.assertLessEqual(abs(float(wave[-1]['position'])-shock),position_limit)
+                if extended:
+                    late=[record for record in wave if float(record['time'])>=end_time/2]
+                    times=np.array([float(record['time']) for record in late])
+                    positions=np.array([float(record['position']) for record in late])
+                    # Fit in physical time, not step number, to avoid quantized instantaneous speeds.
+                    centered=times-times.mean()
+                    drift_speed=np.dot(centered,positions-positions.mean())/np.dot(centered,centered)
+                    temperature_error=np.mean(abs(last[:,5]-states[:,0]))/max(states[:,0])
+                    water=gas.species_index('H2O')
+                    water_error=np.mean(abs(last[:,7+water]-states[:,3+water]))
+                    print(f'Extended nx={nx}: drift_speed={drift_speed}, T_error={temperature_error}, H2O_L1={water_error}',flush=True)
+                    extended_metrics.append((abs(front-shock),abs(drift_speed)/speed,temperature_error,water_error,
+                        all(record['detected']=='T' for record in wave),abs(float(wave[-1]['position'])-shock)))
+            if extended:
+                # Coarse grids diagnose resolution; accuracy targets apply to the finest grid.
+                for a,b in zip(errors,errors[1:]): self.assertLess(b,a,str(errors))
+                self.assertLess(errors[-1],.05,str(errors))
+                drift,velocity,temp,water,found,window_drift=extended_metrics[-1]
+                self.assertTrue(found,'Lost shock candidate on finest grid')
+                self.assertLessEqual(max(drift,window_drift),.05*domain)
+                self.assertLess(velocity,.05)
+                self.assertLess(temp,.05)
+                self.assertLess(water,.02)
+            else:
+                self.assertLess(errors[1],errors[0],str(errors))
+                self.assertLess(errors[1],.03,str(errors))
             if sensitivity:
                 for label,index in [('time',2),('chemistry',3)]:
                     difference=np.mean(abs(solutions[index]-solutions[0]))/max(solutions[0])

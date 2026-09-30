@@ -1,5 +1,7 @@
 # ReactingFlow：独立反応流ライブラリ
 
+追加検証：[1.0 µsの過駆動反応波・格子比較と成果物保存](docs/EXTENDED_WAVE_VALIDATION.md)。
+
 長時間反応波検証用の任意出力：[波面位置・速度履歴](docs/WAVE_HISTORY.md)（Fortran、1D）。
 
 反応流入境界・任意初期分布・CFD反応波比較：[入力と検証範囲](docs/REACTIVE_BOUNDARIES.md)。
