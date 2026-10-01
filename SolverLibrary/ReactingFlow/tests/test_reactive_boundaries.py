@@ -174,7 +174,11 @@ class ReactiveBoundaryTests(unittest.TestCase):
     def test_znd_extended_duration(self):
         self.check_znd_wave('muscl', extended=True)
 
-    def check_znd_wave(self, reconstruction, sensitivity=False, extended=False):
+    @unittest.skipUnless(os.environ.get('RF_BOUNDARY_WAVE_TESTS')=='1','Set RF_BOUNDARY_WAVE_TESTS=1 for boundary distance checks')
+    def test_znd_boundary_distance(self):
+        self.check_znd_wave('muscl', extended=True, boundary_distance=True)
+
+    def check_znd_wave(self, reconstruction, sensitivity=False, extended=False, boundary_distance=False):
         # Independent Cantera/Radau steady ZND reference in shock-fixed downstream coordinate.
         source=Path(ct.__file__).parent/'data/h2o2.yaml'
         gas=ct.Solution(str(source));gas.TPX=300,101325,'H2:2,O2:1,N2:3.76'
@@ -209,13 +213,17 @@ class ReactiveBoundaryTests(unittest.TestCase):
             return np.r_[gas.T,gas.P,flux/state[1],gas.Y]
         with tempfile.TemporaryDirectory() as td:
             tmp=Path(td);data=tmp/'m.rf';mechanism=import_cantera(source);export(mechanism,data)
-            errors=[];solutions=[];extended_metrics=[]
+            errors=[];solutions=[];extended_metrics=[];final_states=[];initial_states=[]
             cases=[(128,2.e-9,1.e-9,1.e-16,1.e-8),(256,2.e-9,1.e-9,1.e-16,1.e-8)]
             if extended:
                 cases.append((512,2.e-9,1.e-9,1.e-16,1.e-8))
             if sensitivity:
                 cases.extend([(128,1.e-9,1.e-9,1.e-16,1.e-8),(128,2.e-9,1.e-10,1.e-17,1.e-9)])
+            if boundary_distance:
+                # Same dx, shock position, end time and chemistry; extend downstream only.
+                cases=[(512,2.e-9,1.e-9,1.e-16,1.e-8),(768,2.e-9,1.e-9,1.e-16,1.e-8)]
             for nx,max_dt,rtol,atoly,atolt in cases:
+                if boundary_distance: domain=nx*(.002/512)
                 states=np.array([profile((i+.5)*domain/nx) for i in range(nx)])
                 (tmp/'initial.rf').write_text('RF_FLOW_PROFILE_V1\n'+mechanism.canonical_sha256+
                     f'\n{len(y0)} {nx} {domain}\n'+'\n'.join(' '.join(map(str,s)) for s in states)+'\n')
@@ -230,7 +238,9 @@ class ReactiveBoundaryTests(unittest.TestCase):
                     "right_bc='characteristic',"+f"right_boundary_temperature={right[0]},right_boundary_pressure={right[1]}," \
                     f"right_boundary_velocity={right[2]},right_boundary_y="+','.join(map(str,right[3:]))
                 label=f'{reconstruction}_t{end_time}_n{nx}_dt{max_dt}_rtol{rtol}'
+                if boundary_distance: label+=f'_L{domain}'
                 rows=self.run_case(tmp,data,controls,y0,y0,artifact_label=label);last=rows[rows[:,0]==rows[-1,0]]
+                final_states.append(last.copy());initial_states.append(states.copy())
                 errors.append(np.mean(abs(last[:,6]-states[:,1]))/max(states[:,1]))
                 solutions.append(last[:,6].copy())
                 print(f'ZND {reconstruction}: nx={nx}, max_dt={max_dt}, rtol={rtol}, pressure error={errors[-1]}',flush=True)
@@ -255,7 +265,28 @@ class ReactiveBoundaryTests(unittest.TestCase):
                     print(f'Extended nx={nx}: drift_speed={drift_speed}, T_error={temperature_error}, H2O_L1={water_error}',flush=True)
                     extended_metrics.append((abs(front-shock),abs(drift_speed)/speed,temperature_error,water_error,
                         all(record['detected']=='T' for record in wave),abs(float(wave[-1]['position'])-shock)))
-            if extended:
+            if boundary_distance:
+                # Judge both solutions over the SAME original 2 mm region; a longer
+                # near-equilibrium tail must not dilute the accuracy errors.
+                n=512;reference=initial_states[0]
+                base=final_states[0];far=final_states[1][:n]
+                np.testing.assert_allclose(base[:,2],far[:,2],rtol=0,atol=1.e-15)
+                np.testing.assert_allclose(initial_states[1][:n],reference,rtol=1.e-12,atol=1.e-12)
+                water=gas.species_index('H2O')
+                for result,metric in zip((base,far),extended_metrics):
+                    self.assertLess(np.mean(abs(result[:,6]-reference[:,1]))/max(reference[:,1]),.05)
+                    self.assertLess(np.mean(abs(result[:,5]-reference[:,0]))/max(reference[:,0]),.05)
+                    self.assertLess(np.mean(abs(result[:,7+water]-reference[:,3+water])),.02)
+                    drift,velocity,temp,h2o,found,window_drift=metric
+                    self.assertTrue(found)
+                    self.assertLessEqual(max(drift,window_drift),.05*.002)
+                    self.assertLess(velocity,.05)
+                dp=np.mean(abs(far[:,6]-base[:,6]))/max(reference[:,1])
+                dt=np.mean(abs(far[:,5]-base[:,5]))/max(reference[:,0])
+                dy=np.mean(abs(far[:,7+water]-base[:,7+water]))
+                print(f'Boundary distance common-region differences: pressure={dp}, temperature={dt}, H2O={dy}',flush=True)
+                self.assertLess(dp,.01);self.assertLess(dt,.01);self.assertLess(dy,.005)
+            elif extended:
                 # Coarse grids diagnose resolution; accuracy targets apply to the finest grid.
                 for a,b in zip(errors,errors[1:]): self.assertLess(b,a,str(errors))
                 self.assertLess(errors[-1],.05,str(errors))

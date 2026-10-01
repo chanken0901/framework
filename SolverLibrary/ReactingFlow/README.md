@@ -4,6 +4,7 @@
 化学種MUSCLを修正し、1.0 µsの過駆動波試験は512セルで合格。
 
 追加検証：[1.0 µsの過駆動反応波・格子比較と成果物保存](docs/EXTENDED_WAVE_VALIDATION.md)。
+同一格子幅での[下流境界距離比較](docs/BOUNDARY_DISTANCE_VALIDATION.md)も明示的に実行できる。
 
 長時間反応波検証用の任意出力：[波面位置・速度履歴](docs/WAVE_HISTORY.md)（Fortran、1D）。
 
