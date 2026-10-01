@@ -13,6 +13,26 @@ program rf_muscl_unit
     m%species(i)%bounds=[200._dp,4000._dp]; m%species(i)%coeff=0
     m%species(i)%coeff(1,1)=3.5_dp; m%species(i)%atoms=1
   end do
+  block
+    type(rf_mechanism) :: mix
+    real(dp) :: field(6,3),minus(6,3),plus(6,3),yy(4),rr,uu,tt,pp,aa
+    integer :: cell
+    mix%ne=1;allocate(mix%species(4),mix%reactions(0))
+    do cell=1,4
+      mix%species(cell)=m%species(1)
+    end do
+    yy=[.02_dp,.04_dp,.14_dp,.8_dp]
+    call primitive_to_conserved(mix,1000._dp,101325._dp,20._dp,yy,field(:,1))
+    yy=[.04_dp,.05_dp,.11_dp,.8_dp]
+    call primitive_to_conserved(mix,1000._dp,101325._dp,20._dp,yy,field(:,2))
+    yy=[.045_dp,.075_dp,.08_dp,.8_dp]
+    call primitive_to_conserved(mix,1000._dp,101325._dp,20._dp,yy,field(:,3))
+    call reconstruct_faces(mix,field,'outflow','outflow',minus,plus,'muscl')
+    call conserved_to_primitive(mix,plus(:,2),rr,uu,tt,pp,aa,yy)
+    call require(abs(yy(1)-.045_dp)<1.e-13_dp,'Constant majority must not flatten varying species slopes')
+    call require(abs(yy(4)-.8_dp)<1.e-14_dp,'Constant inert mass fraction preserved')
+    call require(abs(sum(yy)-1)<1.e-14_dp.and.minval(yy)>=0,'Closed bounded species slopes')
+  end block
   ! At the NASA lower bound a uniform moving state must not drift through
   ! primitive/conservative conversion or SSPRK convex-combination roundoff.
   y=[.25_dp,.75_dp,0._dp]

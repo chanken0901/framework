@@ -1,5 +1,6 @@
 module mod_rf_flow1d
   use mod_rf_reactor, only: advance_chemistry
+  use mod_rf_kinetics, only: rates
   use mod_rf_thermo
   use mod_rf_transport
   implicit none
@@ -9,7 +10,33 @@ module mod_rf_flow1d
   public :: reconstruct_faces,validate_reconstruction
   public :: admissible_flow,validate_fixed_states
   public :: characteristic_outlet,reacting_inlet,needs_reference
+  public :: inviscid_balance
 contains
+  subroutine inviscid_balance(m,q,dx,left_bc,right_bc,advection,chemistry,boundary,reconstruction,fixed_states)
+    ! Read-only semidiscrete residual: dq/dt = advection + chemistry.
+    ! Formation energy is in q, so chemistry adds species only, not a heat source.
+    type(rf_mechanism), intent(in) :: m
+    real(dp), intent(in) :: q(:,:),dx
+    character(*), intent(in) :: left_bc,right_bc
+    character(*), optional, intent(in) :: reconstruction
+    real(dp), optional, intent(in) :: fixed_states(:,:)
+    real(dp), intent(out) :: advection(:,:),chemistry(:,:),boundary(:)
+    real(dp) :: rho,u,t,p,a,y(size(m%species)),heat
+    real(dp) :: qf(size(m%reactions)),qr(size(m%reactions)),net(size(m%reactions)),omega(size(m%species))
+    integer :: i,ns
+    ns=size(m%species)
+    call require(ieee_is_finite(dx).and.dx>0,'Invalid balance diagnostic spacing')
+    call require(all(shape(advection)==shape(q)).and.all(shape(chemistry)==shape(q)), &
+                 'Invalid balance diagnostic output shapes')
+    call require(size(boundary)==size(q,1),'Invalid balance boundary shape')
+    call rhs(m,q,dx,left_bc,right_bc,advection,boundary,reconstruction=reconstruction,fixed_states=fixed_states)
+    chemistry=0
+    do i=1,size(q,2)
+      call conserved_to_primitive(m,q(:,i),rho,u,t,p,a,y)
+      call rates(m,t,rho,y,qf,qr,net,omega,heat)
+      chemistry(:ns,i)=omega
+    end do
+  end subroutine
   logical function needs_reference(kind)
     character(*), intent(in) :: kind
     needs_reference=kind=='dirichlet'.or.kind=='characteristic'.or.kind=='reacting_inlet'
@@ -118,11 +145,13 @@ contains
     end if
     do i=1,nx
       s=mc_slope(v(:,i)-v(:,i-1),v(:,i+1)-v(:,i))
-      ! Close the largest species slope so sum(dY)=0. Do not perturb constant/absent species.
-      j=maxloc(v(4:,i),dim=1)+3
-      s(j)=0; s(j)=-sum(s(4:))
       lo=min(v(4:,i-1),v(4:,i),v(4:,i+1))
       hi=max(v(4:,i-1),v(4:,i),v(4:,i+1))
+      ! Close a varying species, not necessarily the most abundant one.
+      ! Choosing constant inert N2 forces theta=0 whenever independent MC slopes
+      ! do not sum to zero, reducing ALL species faces to first order.
+      j=maxloc(hi-lo,dim=1)+3
+      s(j)=0; s(j)=-sum(s(4:))
       theta=1
       do j=1,ns
         if(abs(s(j+3))>0) then

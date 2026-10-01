@@ -1,5 +1,8 @@
 # ReactingFlow：独立反応流ライブラリ
 
+定常分布の移流・反応釣合いを調べる[Fortran離散残差診断](docs/FLOW_BALANCE.md)を追加。
+化学種MUSCLを修正し、1.0 µsの過駆動波試験は512セルで合格。
+
 追加検証：[1.0 µsの過駆動反応波・格子比較と成果物保存](docs/EXTENDED_WAVE_VALIDATION.md)。
 
 長時間反応波検証用の任意出力：[波面位置・速度履歴](docs/WAVE_HISTORY.md)（Fortran、1D）。

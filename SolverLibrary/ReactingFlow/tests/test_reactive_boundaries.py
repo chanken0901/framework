@@ -112,6 +112,35 @@ class ReactiveBoundaryTests(unittest.TestCase):
     def test_znd_stationary_wave_grid_refinement(self):
         self.check_znd_wave('muscl', sensitivity=True)
 
+    def test_fortran_flow_balance(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp=Path(td);source=Path(ct.__file__).parent/'data/h2o2.yaml'
+            mechanism=import_cantera(source);data=tmp/'m.rf';export(mechanism,data)
+            gas=ct.Solution(str(source));gas.TPX=1500,101325,'H2:2,O2:1,N2:3.76'
+            profile=tmp/'initial.rf'
+            profile.write_text('RF_FLOW_PROFILE_V1\n'+mechanism.canonical_sha256+'\n10 8 1\n'+
+                               ('1500 101325 100 '+' '.join(map(str,gas.Y))+'\n')*8)
+            before=profile.read_bytes()
+            exe=self.exe.with_name('rf_flow_balance.exe' if os.name=='nt' else 'rf_flow_balance')
+            out=tmp/'balance.csv'
+            command=[str(exe),str(data),str(profile),'muscl',str(out)]
+            run=subprocess.run(command,capture_output=True,text=True,timeout=30)
+            self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+            text=out.read_text();self.assertTrue(text.rstrip().endswith('# SUCCESS'))
+            rows=np.genfromtxt([s for s in text.splitlines() if not s.startswith('#')],delimiter=',',names=True)
+            expected=gas.net_production_rates*gas.molecular_weights
+            for name,omega in zip(gas.species_names,expected):
+                np.testing.assert_array_equal(rows['advection_'+name],0)
+                np.testing.assert_allclose(rows['chemistry_'+name],omega,rtol=1.e-7,atol=1.e-9)
+                np.testing.assert_array_equal(rows['residual_'+name],rows['chemistry_'+name])
+            np.testing.assert_array_equal(rows['chemistry_energy'],0)
+            np.testing.assert_array_equal(rows['chemistry_momentum'],0)
+            self.assertEqual(profile.read_bytes(),before)
+            self.assertNotEqual(subprocess.run(command,capture_output=True).returncode,0)
+            self.assertEqual(out.read_text(),text)
+            command[3]='unknown';command[4]=str(tmp/'invalid.csv')
+            self.assertNotEqual(subprocess.run(command,capture_output=True).returncode,0)
+
     def test_wave_output_and_validation(self):
         with tempfile.TemporaryDirectory() as td:
             tmp=Path(td);data=tmp/'m.rf'
