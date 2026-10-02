@@ -1,5 +1,7 @@
 # 2次元構造格子・ノズル格子生成
 
+追記：[2D流体・反応の実行入口](FLOW2D.md)へ接続した。格子専用 `rf_mesh2d` は引き続き時間発展を行わない。
+
 2026-10-02。多次元有限体積基盤へ渡す幾何情報をFortranで生成する。
 今回の確認はRelease/Debugビルドのみ。テスト実行と反応流の実用検証は保留中。
 
@@ -65,7 +67,7 @@ cmake --build build/reactingflow-fortran-release --target rf_mesh2d
 `grid%boundary` は0=内部、1=i最小、2=i最大、3=j最小、4=j最大。
 公開定数 `rf_imin/rf_imax/rf_jmin/rf_jmax` を使う。
 これは幾何学上の区分であり、流入／流出／鏡像等の物理境界条件はまだ割り当てない。
-次の時間積分実装がこの区分からghostを生成し、`finite_volume_rhs` に渡す。
+追加した `mod_rf_flow2d` がこの区分からghostを生成し、`finite_volume_rhs` に渡す。
 
 セルは反時計回りの厳密な凸四角形であることを要求する。
 逆転・凹形・退化、非有限座標、ゼロ高さ、面積ベクトル非閉鎖は拒否する。

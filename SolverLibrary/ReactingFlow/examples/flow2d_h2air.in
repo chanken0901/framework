@@ -1,0 +1,12 @@
+! Experimental uniform H2/air in the planar nozzle. Not a validated combustion case.
+! Exact species order: H2 H O O2 OH H2O HO2 H2O2 AR N2 (Cantera h2o2).
+&flow2d
+ mesh_profile='nozzle_profile.rf', ny=8,
+ temperature=1100, pressure=101325, velocity=0,0,
+ mass_fractions=0.028522387527567396,0,0,0.22635400697100733,0,0,0,0,0,0.7451236055014252,
+ boundary_kind='outflow','outflow','reflecting','reflecting',
+ end_time=1e-8, max_dt=1e-9, cfl=0.3,
+ max_steps=10000, write_every=1,
+ chemistry=.true., chemistry_rtol=1e-9,
+ chemistry_atol_species=1e-16, chemistry_atol_temperature=1e-8, chemistry_max_steps=100000
+/

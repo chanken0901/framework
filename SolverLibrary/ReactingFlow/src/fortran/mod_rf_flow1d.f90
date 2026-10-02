@@ -12,6 +12,7 @@ module mod_rf_flow1d
   public :: characteristic_outlet,reacting_inlet,needs_reference
   public :: inviscid_balance
   public :: admissible_operator
+  public :: chemistry_cells
 contains
   subroutine inviscid_balance(m,q,dx,left_bc,right_bc,advection,chemistry,boundary,reconstruction,fixed_states)
     ! Read-only semidiscrete residual: dq/dt = advection + chemistry.

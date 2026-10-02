@@ -25,7 +25,8 @@ add_library(reactingflow STATIC src/fortran/mod_rf_mechanism.f90
   src/fortran/mod_rf_units.f90 src/fortran/mod_rf_transport.f90 src/fortran/mod_rf_flow1d.f90
   src/fortran/mod_rf_shock.f90 src/fortran/mod_rf_znd.f90
   src/fortran/mod_rf_equilibrium.f90 src/fortran/mod_rf_cj.f90 src/fortran/mod_rf_profile.f90
-  src/fortran/mod_rf_wave.f90 src/fortran/mod_rf_finite_volume.f90 src/fortran/mod_rf_grid2d.f90)
+  src/fortran/mod_rf_wave.f90 src/fortran/mod_rf_finite_volume.f90 src/fortran/mod_rf_grid2d.f90
+  src/fortran/mod_rf_flow2d.f90)
 target_link_libraries(reactingflow PUBLIC rf_dvode)
 target_include_directories(reactingflow PUBLIC "$<BUILD_INTERFACE:${CMAKE_Fortran_MODULE_DIRECTORY}>")
 add_executable(rf_reactor src/fortran/main_rf_reactor.f90)
@@ -34,6 +35,8 @@ add_executable(rf_flow1d src/fortran/main_rf_flow1d.f90)
 target_link_libraries(rf_flow1d PRIVATE reactingflow)
 add_executable(rf_mesh2d src/fortran/main_rf_mesh2d.f90)
 target_link_libraries(rf_mesh2d PRIVATE reactingflow)
+add_executable(rf_flow2d src/fortran/main_rf_flow2d.f90)
+target_link_libraries(rf_flow2d PRIVATE reactingflow)
 add_executable(rf_flow_balance src/fortran/main_rf_flow_balance.f90)
 target_link_libraries(rf_flow_balance PRIVATE reactingflow)
 add_executable(rf_normal_shock src/fortran/main_rf_shock.f90)
@@ -49,6 +52,9 @@ target_link_libraries(rf_equilibrium_probe PRIVATE reactingflow)
 add_executable(rf_transport_probe tests/fortran/rf_transport_probe.f90)
 target_link_libraries(rf_transport_probe PRIVATE reactingflow)
 if(BUILD_TESTING)
+  add_executable(rf_flow2d_unit tests/fortran/rf_flow2d_unit.f90)
+  target_link_libraries(rf_flow2d_unit PRIVATE reactingflow)
+  add_test(NAME rf_flow2d_unit COMMAND rf_flow2d_unit)
   add_executable(rf_grid2d_unit tests/fortran/rf_grid2d_unit.f90)
   target_link_libraries(rf_grid2d_unit PRIVATE reactingflow)
   add_test(NAME rf_grid2d_unit COMMAND rf_grid2d_unit)
