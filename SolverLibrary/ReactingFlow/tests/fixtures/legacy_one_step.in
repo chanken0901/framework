@@ -1,0 +1,16 @@
+! Analytical A -> B, equal molar masses, exothermic formation energy.
+! Legacy uses kg/kmol; ReactingFlow uses kg/mol.
+&thermally_perfect
+ thermo_species_names='A','B',
+ temperature_min=200,temperature_max=4000,temperature_tolerance=1.e-12,
+ molecular_weights=10,10,temperature_midpoints=1000,1000,
+ nasa_low_coefficients(:,1)=3.5,0,0,0,0,0,0,
+ nasa_high_coefficients(:,1)=3.5,0,0,0,0,0,0,
+ nasa_low_coefficients(:,2)=3.5,0,0,0,0,-100,0,
+ nasa_high_coefficients(:,2)=3.5,0,0,0,0,-100,0
+/
+&one_step_arrhenius
+ chemistry_species_names='A','B',
+ reactant_stoich=1,0,product_stoich=0,1,reaction_orders=1,0,
+ pre_exponential_factor=1000,temperature_exponent=0,activation_temperature=0
+/

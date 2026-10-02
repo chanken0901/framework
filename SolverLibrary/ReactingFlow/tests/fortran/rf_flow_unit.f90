@@ -6,7 +6,7 @@ program rf_flow_unit
   type(rf_mechanism) :: m
   real(dp) :: q(4,8),old(4,8),flux(4),expected(4),change(4),rho,u,t,p,a,y(2),dt,speed
   integer :: i
-  integer :: rejected,k
+  integer :: rejected,k,diagnostic_rejected
   logical :: ok
   real(dp) :: result(4,8),ref(4,8),original_dt,reference_change(4),reference_dt
   character(16) :: method
@@ -96,13 +96,58 @@ program rf_flow_unit
     call advance_flow(m,ref,.1_dp,reference_dt,.4_dp,'outflow','outflow',.false.,1.e-9_dp,1.e-16_dp, &
       1.e-8_dp,10000,reference_change,reconstruction=method)
     call require(all(ref==q).and.all(change==reference_change),'Retry starts from original state')
+    ref=old; reference_dt=original_dt
+    call advance_flow(m,ref,.1_dp,reference_dt,.4_dp,'outflow','outflow',.false.,1.e-9_dp,1.e-16_dp, &
+      1.e-8_dp,10000,reference_change,reconstruction=method,rejected_steps=diagnostic_rejected, &
+      diagnose_retries=.true.)
+    call require(all(ref==q).and.all(change==reference_change).and.reference_dt==dt.and. &
+      diagnostic_rejected==rejected,'Retry diagnostics do not alter accepted state, flux, dt or count')
     call require(maxval(abs(sum(q-old,dim=2)*.1_dp-change)/max(1._dp,abs(sum(old,dim=2)*.1_dp))) &
       <1.e-12_dp,'Rejected boundary fluxes excluded from conservation')
   end do
   write(*,'(a)') '[OK] invalid states rejected, reduced-step recovery and rollback for first-order/MUSCL'
   write(*,'(a)') '[OK] 1D flux, uniform state, periodic/wall conservation, inert chemistry'
   call check_characteristic()
+  call check_operator_recovery()
 contains
+  subroutine check_operator_recovery()
+    use mod_rf_transport, only: rf_transport
+    type(rf_transport) :: transport
+    real(dp) :: field(4,8),start(4,8),fresh(4,8),candidate(4,8),bc(4),fresh_bc(4),reservoir(4),ghost(4)
+    real(dp) :: step_dt,start_dt,fresh_dt,yy(2)
+    logical :: valid
+    integer :: j,retries
+    yy=[.25_dp,.75_dp]
+    transport%property_temperatures=[1000._dp,2000._dp]
+    allocate(transport%viscosity_table(2,2),transport%conductivity_table(2,2))
+    transport%viscosity_table=1.e-5_dp;transport%conductivity_table=.03_dp
+    do j=1,8
+      call primitive_to_conserved(m,1000.001_dp,101325._dp,10._dp*(j-4.5_dp),yy,field(:,j))
+    end do
+    start=field
+    step_dt=flow_timestep(m,field,.1_dp,.4_dp,transport,'muscl','outflow','outflow')
+    start_dt=step_dt
+    call transport_step(m,field,.1_dp,step_dt,.4_dp,'outflow','outflow',candidate,bc,valid,transport,'muscl')
+    call require(.not.valid,'Trial outside transport table rejects without fatal error')
+    call require(all(field==start).and.all(candidate==start).and.all(bc==0),'Table rejection has no state/flux update')
+    call advance_flow(m,field,.1_dp,step_dt,.4_dp,'outflow','outflow',.false., &
+      1.e-9_dp,1.e-16_dp,1.e-8_dp,10000,bc,transport,'muscl',retries)
+    call require(retries>0.and.step_dt<start_dt,'Transport table stage rejection halves dt')
+    fresh=start;fresh_dt=step_dt
+    call advance_flow(m,fresh,.1_dp,fresh_dt,.4_dp,'outflow','outflow',.false., &
+      1.e-9_dp,1.e-16_dp,1.e-8_dp,10000,fresh_bc,transport,'muscl')
+    call require(all(field==fresh).and.all(bc==fresh_bc),'Table retry agrees with fresh accepted step')
+    call primitive_to_conserved(m,900._dp,101325._dp,100._dp,yy,field(:,1))
+    call require(.not.admissible_operator(m,field,'outflow','outflow',transport), &
+      'Initial temperature outside table cannot be silently accepted')
+    call primitive_to_conserved(m,1100._dp,1.e8_dp,100._dp,yy,reservoir)
+    call characteristic_outlet(m,field(:,1),reservoir,2,ghost,valid)
+    call require(.not.valid.and.all(ghost==field(:,1)),'Invalid characteristic trial is recoverable and unchanged')
+    call reacting_inlet(m,field(:,1),reservoir,2,ghost,valid)
+    call require(.not.valid.and.all(ghost==field(:,1)),'Invalid inlet trial is recoverable and unchanged')
+    write(*,'(a)') '[OK] transport-table and boundary-domain trial recovery, rollback and retry'
+  end subroutine
+
   subroutine check_characteristic()
     integer, parameter :: cells=64
     real(dp) :: base(4),refstates(4,2),field(4,cells),start(4),net(4),bc(4),ghost(4)

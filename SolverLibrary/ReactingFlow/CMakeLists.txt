@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(ReactingFlow LANGUAGES Fortran)
 include(CTest)
+set(RF_LEGACY_NSE_SOURCE_DIR "" CACHE PATH "Optional NSE source root for migration comparison tests only")
 set(RF_DVODE_SOURCE_DIR "" CACHE PATH "Offline DVODE source checkout (fixed revision documented in REACTORS.md)")
 if(NOT RF_DVODE_SOURCE_DIR)
   include(FetchContent)
@@ -52,6 +53,10 @@ if(BUILD_TESTING)
   add_executable(rf_unit tests/fortran/rf_unit.f90)
   target_link_libraries(rf_unit PRIVATE reactingflow)
   add_test(NAME rf_unit COMMAND rf_unit)
+  # Keep scratch I/O inside this build tree, independent of system temp ACLs.
+  file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Testing/tmp")
+  set_tests_properties(rf_unit PROPERTIES ENVIRONMENT
+    "TMPDIR=${CMAKE_CURRENT_BINARY_DIR}/Testing/tmp;TMP=${CMAKE_CURRENT_BINARY_DIR}/Testing/tmp;TEMP=${CMAKE_CURRENT_BINARY_DIR}/Testing/tmp")
   add_executable(rf_flow_unit tests/fortran/rf_flow_unit.f90)
   target_link_libraries(rf_flow_unit PRIVATE reactingflow)
   add_test(NAME rf_flow_unit COMMAND rf_flow_unit)
@@ -61,6 +66,30 @@ if(BUILD_TESTING)
   add_executable(rf_muscl_unit tests/fortran/rf_muscl_unit.f90)
   target_link_libraries(rf_muscl_unit PRIVATE reactingflow)
   add_test(NAME rf_muscl_unit COMMAND rf_muscl_unit)
+  if(RF_LEGACY_NSE_SOURCE_DIR)
+    set(legacy_mc "${RF_LEGACY_NSE_SOURCE_DIR}/src/extensions/multicomponent")
+    add_library(rf_legacy_reference STATIC
+      ${RF_LEGACY_NSE_SOURCE_DIR}/src/common/mod_precision.f90
+      ${legacy_mc}/mod_mc_config.f90
+      ${legacy_mc}/mod_mc_state_layout.f90
+      ${legacy_mc}/mod_mc_euler_config.f90
+      ${legacy_mc}/mod_mc_geometry.f90
+      ${legacy_mc}/providers/mod_mc_thermodynamics_thermally_perfect.f90
+      ${legacy_mc}/providers/mod_mc_chemistry_one_step_arrhenius.f90
+      ${legacy_mc}/mod_mc_chemistry_integrator.f90
+      ${legacy_mc}/mod_mc_euler_field.f90
+      ${legacy_mc}/mod_mc_boundary.f90
+      ${legacy_mc}/providers/mod_mc_mapped_transport_none.f90
+      ${legacy_mc}/mod_mc_mapped_flux.f90
+      ${legacy_mc}/mod_mc_euler_flux.f90)
+    target_include_directories(rf_legacy_reference PUBLIC "${CMAKE_Fortran_MODULE_DIRECTORY}")
+    if(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
+      target_compile_options(rf_legacy_reference PRIVATE -ffree-line-length-none $<$<CONFIG:Debug>:-fcheck=all>)
+    endif()
+    add_executable(rf_legacy_unit tests/fortran/rf_legacy_unit.f90)
+    target_link_libraries(rf_legacy_unit PRIVATE reactingflow rf_legacy_reference)
+    add_test(NAME rf_legacy_unit COMMAND rf_legacy_unit "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/legacy_one_step.in")
+  endif()
 endif()
 if(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
   target_compile_options(reactingflow PRIVATE -Wall -Wextra -ffree-line-length-none

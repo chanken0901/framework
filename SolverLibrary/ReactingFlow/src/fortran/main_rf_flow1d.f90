@@ -42,6 +42,7 @@ program main_rf_flow1d
   real(dp) :: right_temperature=1100,right_pressure=101325,right_velocity=0
   real(dp) :: chemistry_rtol=1.e-9_dp,chemistry_atol_species=1.e-16_dp,chemistry_atol_temperature=1.e-8_dp
   logical :: chemistry=.false.
+  logical :: diagnose_retries=.false.
   real(dp), allocatable :: q(:,:),yl(:),yr(:),initial(:),boundary(:),change(:)
   real(dp) :: time,dt,dx,rho,u,t,p,a,mass_error,momentum_error,energy_error,element_error,x
   real(dp), allocatable :: y(:),delta(:),elements0(:),elements(:)
@@ -57,7 +58,7 @@ program main_rf_flow1d
     viscosity_model,viscosity_reference_temperature,species_reference_viscosities,species_sutherland_temperatures, &
     conductivity_model,transport_file,binary_diffusivities,binary_diffusion_file, &
     binary_diffusion_model,binary_reference_temperature,binary_reference_pressure,binary_temperature_exponent,initial_profile, &
-    wave_output,wave_xmin,wave_xmax,wave_min_pressure_jump
+    wave_output,wave_xmin,wave_xmax,wave_min_pressure_jump,diagnose_retries
   call require(command_argument_count()==3,'Usage: rf_flow1d mechanism.rf flow.in output.csv')
   call get_command_argument(1,mechanism_file)
   call get_command_argument(2,input_file)
@@ -341,7 +342,8 @@ program main_rf_flow1d
     dt=min(max_dt,end_time-time,flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states))
     call require(time+dt>time,'Flow timestep underflow')
     call advance_flow(m,q,dx,dt,cfl,left_bc,right_bc,chemistry,chemistry_rtol,chemistry_atol_species, &
-                      chemistry_atol_temperature,chemistry_max_steps,change,transport,reconstruction,rejected_steps,fixed_states)
+                      chemistry_atol_temperature,chemistry_max_steps,change,transport,reconstruction,rejected_steps,fixed_states, &
+                      diagnose_retries)
     call require(time+dt>time,'Accepted flow timestep cannot advance time')
     total_rejected=total_rejected+rejected_steps
     boundary=boundary+change

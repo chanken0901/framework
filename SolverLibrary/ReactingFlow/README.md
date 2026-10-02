@@ -1,5 +1,10 @@
 # ReactingFlow：独立反応流ライブラリ
 
+2026-10-01：CFDの[試行段の範囲違反回復](docs/OPERATOR_RECOVERY.md)と
+[旧NSE実コードとの非反応／一段反応比較](docs/LEGACY_COMPARISON.md)を追加。
+[6 µs反応波検証](docs/ACOUSTIC_RETURN_VALIDATION.md)は定常波保持の基準に未達。
+短時間合格とは区別し、R4全体は未完了としている。
+
 定常分布の移流・反応釣合いを調べる[Fortran離散残差診断](docs/FLOW_BALANCE.md)を追加。
 化学種MUSCLを修正し、1.0 µsの過駆動波試験は512セルで合格。
 
@@ -86,7 +91,8 @@ NASA-7/9物性、混合気体EOS、温度復元、基準量変換はFortran実�
 R2の反応速度評価は[速度仕様](docs/KINETICS.md)を参照。
 R3の定容・定圧断熱反応器、保存検査、着火比較は[反応器仕様と実行手順](docs/REACTORS.md)を参照。
 R4a〜eの[1次元流体・詳細反応・輸送・MUSCL・再試行の仕様と手順](docs/FLOW1D.md)を追加した。
-温度・組成依存の分子輸送、多次元・ノズル、デトネーション検証、MPI・GPUはまだ新ライブラリに未実装。
+温度・組成依存のテーブル輸送は実装済み（上記手順参照）。多次元・ノズル、
+長時間デトネーション検証、MPI・GPUは独立ライブラリでは未完了。
 > R4f update: fixed-state (Dirichlet) boundaries are implemented in the Fortran 1D solver,
 > including conservative convective and transport boundary fluxes. See [FLOW1D](docs/FLOW1D.md).
 > R4 remains in progress; nonreflecting boundaries, molecular transport and detonation validation remain.

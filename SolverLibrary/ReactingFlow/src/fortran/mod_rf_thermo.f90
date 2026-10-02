@@ -2,6 +2,18 @@ module mod_rf_thermo
   use mod_rf_mechanism
   implicit none
 contains
+  logical function temperature_supported(m,t) result(valid)
+    type(rf_mechanism), intent(in) :: m
+    real(dp), intent(in) :: t
+    integer :: i
+    valid=.false.
+    if(.not.ieee_is_finite(t)) return
+    do i=1,size(m%species)
+      if(t<m%species(i)%bounds(1).or.t>m%species(i)%bounds(size(m%species(i)%bounds))) return
+    end do
+    valid=.true.
+  end function
+
   subroutine species_thermo(s,t,cp,h,entropy)
     type(rf_species), intent(in) :: s
     real(dp), intent(in) :: t
@@ -65,7 +77,7 @@ contains
     real(dp), intent(in) :: value,y(:)
     logical, optional, intent(in) :: enthalpy
     logical, optional, intent(out) :: ok
-    real(dp) :: t,lo,hi,cp,cv,h,e,r,res,low,high,roundoff
+    real(dp) :: t,lo,hi,cp,cv,h,e,r,res,low,high,roundoff,trial,derivative
     logical :: use_h
     integer :: i
     t=0
@@ -100,8 +112,10 @@ contains
       if(present(ok)) return
       call require(.false.,'Energy outside NASA range')
     end if
+    ! Safeguarded Newton: keep the NASA interval bracket. This avoids dozens
+    ! of property evaluations per CFD state while retaining bisection fallback.
+    t=lo+(hi-lo)*(value-low)/(high-low)
     do i=1,100
-      t=(lo+hi)/2
       call mixture(m,t,y,101325._dp,cp,cv,h,e,r)
       res=merge(h,e,use_h)-value
       ! The inversion must be more accurate than admissibility at NASA endpoints.
@@ -116,6 +130,10 @@ contains
       else
         lo=t
       end if
+      derivative=merge(cp,cv,use_h)
+      trial=t-res/derivative
+      if(.not.ieee_is_finite(trial).or.trial<=lo.or.trial>=hi.or.trial==t) trial=(lo+hi)/2
+      t=trial
     end do
     t=0
     if(present(ok)) return

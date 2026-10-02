@@ -8,6 +8,7 @@ module mod_rf_reactor
     logical :: constant_pressure
     integer :: negative_trials=0
     integer :: dependent_species=1
+    logical :: recover_trial_domain=.false.,trial_domain_failed=.false.
   end type
 contains
   subroutine reactor_rhs(me,neq,time,state,derivative)
@@ -21,6 +22,17 @@ contains
       associate(m=>me%mechanism)
         block
           real(dp) :: qf(size(m%reactions)),qr(size(m%reactions)),net(size(m%reactions)),omega(neq)
+          if(me%recover_trial_domain) then
+            ! DVODE has no RHS status argument. Latch domain failure, return a
+            ! finite placeholder until solve returns, then discard the WHOLE solve.
+            ! These derivatives must never be accepted as a physical solution.
+            if(.not.all(ieee_is_finite(state))) me%trial_domain_failed=.true.
+            if(.not.temperature_supported(m,state(1))) me%trial_domain_failed=.true.
+            if(me%trial_domain_failed) then
+              derivative=0
+              return
+            end if
+          end if
           call require(all(ieee_is_finite(state)),'Nonfinite Newton trial')
           call unpack(state,me%dependent_species,y)
           if(any(y<0)) me%negative_trials=me%negative_trials+1
@@ -70,6 +82,7 @@ contains
     call require(min(atoly,atolt)>0.and.maxsteps>0,'Invalid chemistry tolerances/step limit')
     call mixture(m,t,y,101325._dp,cp,cv,h,e,r)
     solver%mechanism=>m; solver%rho0=rho; solver%p0=rho*r*t; solver%constant_pressure=.false.
+    solver%recover_trial_domain=present(ok)
     solver%dependent_species=maxloc(y,dim=1)
     n=size(y); state(1)=t; j=1
     do i=1,n
@@ -87,6 +100,10 @@ contains
       end if
       previous=time
       call solver%solve(n,state,time,dt,2,[rtol],atol,5,istate,1,rw,size(rw),iw,size(iw),22)
+      if(solver%trial_domain_failed) then
+        if(present(ok)) return
+        call require(.false.,'Cell chemistry RHS outside thermodynamic domain')
+      end if
       if(present(ok)) then
         ! Retry numerical failures only; invalid DVODE input remains fatal.
         if(any(istate==[-1,-2,-4,-5])) return
@@ -95,6 +112,10 @@ contains
       if(.not.all(ieee_is_finite(state)).or..not.ieee_is_finite(time).or.time<=previous) then
         if(present(ok)) return
         call require(.false.,'Invalid cell chemistry state/progress')
+      end if
+      if(.not.temperature_supported(m,state(1))) then
+        if(present(ok)) return
+        call require(.false.,'Accepted cell chemistry temperature outside NASA range')
       end if
       call unpack(state,solver%dependent_species,candidate)
       if(any(candidate<0).or.abs(sum(candidate)-1)>1.e-12_dp) then

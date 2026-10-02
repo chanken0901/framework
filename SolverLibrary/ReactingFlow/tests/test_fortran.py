@@ -287,14 +287,16 @@ class FortranTests(unittest.TestCase):
                 for t in (500.,1000.,2500.):
                     for p in pressures: self.compare(ref,own,data,t,p)
 
-    def run_reactor(self, mode, tol, initial_temperature=1000.):
+    def run_reactor(self, mode, tol, initial_temperature=1000., pressure=101325.,
+                    end_time=.001, ignition_rise=400.):
         ct=self.ct
-        ref=ct.Solution(str(self.hydrogen)); ref.TPX=initial_temperature,101325.,'H2:2,O2:1,N2:3.76'
+        ref=ct.Solution(str(self.hydrogen)); ref.TPX=initial_temperature,pressure,'H2:2,O2:1,N2:3.76'
         with tempfile.TemporaryDirectory() as tmp:
             tmp=Path(tmp); data=tmp/'mechanism.rf'; inp=tmp/'reactor.in'; out=tmp/'history.csv'
             export(import_cantera(self.hydrogen),data)
             inp.write_text(f"&reactor mode='{mode}', temperature={initial_temperature}, rtol={tol}, "
-                           f"atol_species={tol*1e-7}, atol_temperature={tol*10}, end_time=0.001 /\n"+
+                           f"atol_species={tol*1e-7}, atol_temperature={tol*10}, end_time={end_time}, "
+                           f"pressure={pressure}, ignition_rise={ignition_rise} /\n"+
                            ' '.join(map(str,ref.Y))+'\n',encoding='ascii')
             run=subprocess.run([str(self.reactor),str(data),str(inp),str(out)],capture_output=True,text=True)
             self.assertEqual(run.returncode,0,run.stdout+run.stderr)
@@ -324,6 +326,29 @@ class FortranTests(unittest.TestCase):
             self.assertLess(float(diagnostics['element_relative_error']),1e-12)
             self.assertLess(float(diagnostics['mass_sum_error']),1e-12)
             self.assertGreater(float(diagnostics['ignition_delay_s']),0)
+
+    def test_postshock_ignition_histories(self):
+        # Isolate high-pressure kinetics from the CFD coupling. The cold state is
+        # representative of the weakened Mach-5 shock, not a steady ZND solution.
+        delays=[]
+        for temperature,pressure,end_time in ((1620.9502,3002967.01,4.e-7),
+                                              (1279.79952,2171654.72,2.4e-5),
+                                              (2154.55077,4358041.49,7.e-8)):
+            values,ref,diag=self.run_reactor('constant_volume',1.e-10,temperature,pressure,end_time,200.)
+            self.np.testing.assert_allclose(values[:,1:4],ref[:,:3],rtol=3.e-6)
+            self.np.testing.assert_allclose(values[:,4:],ref[:,3:],rtol=5.e-4,atol=3.e-7)
+            delay=float(diag['ignition_delay_s'])
+            self.assertGreater(delay,0);self.assertLess(delay,end_time)
+            gas=self.ct.Solution(str(self.hydrogen));gas.TPX=temperature,pressure,'H2:2,O2:1,N2:3.76'
+            reactor=self.ct.IdealGasReactor(gas,clone=True);network=self.ct.ReactorNet([reactor])
+            network.rtol=1.e-12;network.atol=1.e-18
+            network.advance(delay)
+            self.assertAlmostEqual(reactor.T,temperature+200.,delta=.02)
+            self.assertLess(float(diag['energy_relative_error']),2.e-7)
+            self.assertLess(float(diag['element_relative_error']),1.e-12)
+            delays.append(delay)
+        print('Postshock CV 200 K ignition delays [s]:',delays,flush=True)
+        self.assertGreater(delays[1]/delays[0],50.)
 
     def test_tolerance_convergence(self):
         for mode in ('constant_volume','constant_pressure'):

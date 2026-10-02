@@ -4,7 +4,7 @@ program rf_unit
   use mod_rf_shock
   use mod_rf_flow1d, only: primitive_to_conserved,advance_flow
   implicit none
-  type(rf_mechanism) :: m
+  type(rf_mechanism), target :: m
   type(rf_reference_scales) :: scales
   real(dp) :: cp,cv,h,e,r,s,heat,qf(1),qr(1),net(1),omega(2),y(2),row(6)
   integer :: i,u,ios
@@ -27,6 +27,21 @@ program rf_unit
     a%reactants=[1._dp,0._dp]; a%products=[0._dp,1._dp]; a%orders=a%reactants
   end associate
   y=[1._dp,0._dp]
+  block
+    type(reactor_context) :: context
+    real(dp) :: trial(2),derivative(2)
+    integer :: neq
+    real(dp) :: time
+    context%mechanism=>m; context%recover_trial_domain=.true.
+    context%rho0=1;context%p0=101325;context%constant_pressure=.false.
+    neq=2;time=0;trial=[5000._dp,.1_dp]
+    call reactor_rhs(context,neq,time,trial,derivative)
+    call require(context%trial_domain_failed.and.all(derivative==0),'Newton domain failure is latched')
+    call require(all(trial==[5000._dp,.1_dp]),'Invalid Newton trial is not clipped')
+    trial=[1000._dp,.1_dp]
+    call reactor_rhs(context,neq,time,trial,derivative)
+    call require(context%trial_domain_failed.and.all(derivative==0),'Later valid trial cannot erase rejected solve')
+  end block
   block
     real(dp) :: cp0,cv0,h0,e0,r0,tcheck
     call mixture(m,200._dp,y,101325._dp,cp0,cv0,h0,e0,r0)
@@ -76,6 +91,26 @@ program rf_unit
     call require(.not.success.and.gap_t==0,'NASA polynomial gap rejected without stop or clipping')
   end block
   call rates(m,1000._dp,1._dp,y,qf,qr,net,omega,heat)
+  block
+    type(rf_mechanism), target :: hot
+    real(dp) :: trial_t,trial_y(2),field(4,2),initial(4,2),reference(4,2),boundary(4),delta,reference_dt
+    integer :: rejected
+    hot=m;hot%species(2)%coeff(6,1)=-1000
+    trial_t=3999.9_dp;trial_y=y
+    call advance_chemistry(hot,1._dp,trial_t,trial_y,1.e-8_dp,1.e-9_dp,1.e-16_dp,1.e-8_dp,10000,success)
+    call require(.not.success,'Exothermic chemistry outside NASA range must reject')
+    call require(trial_t==3999.9_dp.and.all(trial_y==y),'Domain rejection preserves input chemistry state')
+    call primitive_to_conserved(hot,3999.9_dp,101325._dp,0._dp,y,field(:,1))
+    field(:,2)=field(:,1);initial=field;delta=1.e-8_dp
+    call advance_flow(hot,field,1._dp,delta,.4_dp,'periodic','periodic',.true., &
+      1.e-9_dp,1.e-16_dp,1.e-8_dp,10000,boundary,rejected_steps=rejected)
+    call require(rejected>0.and.delta<1.e-8_dp,'RHS domain rejection halves complete split step')
+    reference=initial;reference_dt=delta
+    call advance_flow(hot,reference,1._dp,reference_dt,.4_dp,'periodic','periodic',.true., &
+      1.e-9_dp,1.e-16_dp,1.e-8_dp,10000,boundary)
+    call require(all(field==reference),'Domain retry equals fresh solve at accepted dt')
+    call require(all(field(3:,:)==initial(3:,:)),'Domain retry preserves momentum and total energy')
+  end block
   block
     real(dp) :: trial_t,trial_y(2),field(4,2),initial(4,2),reference(4,2),boundary(4),delta,reference_dt
     integer :: rejected

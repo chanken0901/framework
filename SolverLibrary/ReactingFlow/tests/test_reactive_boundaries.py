@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import numpy as np
 import cantera as ct
 from scipy.optimize import brentq
@@ -17,23 +18,96 @@ sys.path.insert(0,str(ROOT/'tools'))
 from export_mechanism import export,import_cantera
 
 
+def run_wave_command(command, tmp, data, artifact_label, timeout):
+    """Run saved wave cases in their durable directory, including partial output."""
+    destination=None
+    if artifact_label and os.environ.get('RF_WAVE_ARTIFACTS'):
+        destination=(Path(os.environ['RF_WAVE_ARTIFACTS'])/artifact_label).resolve()
+        # Reserve BEFORE an expensive solve; never overwrite an earlier run.
+        # A normal inherited directory also avoids depending on the lifetime or
+        # private Windows ACL of Python's TemporaryDirectory during long runs.
+        destination.mkdir(parents=True,exist_ok=False)
+        for path in (data,tmp/'case.in',tmp/'initial.rf'):
+            if path.exists(): shutil.copy2(path,destination/path.name)
+        command=[command[0],str(destination/data.name),str(destination/'case.in'),str(destination/'flow.csv')]
+    log=''
+    try:
+        run=subprocess.run(command,capture_output=True,text=True,timeout=timeout)
+        log=run.stdout+run.stderr
+        return run
+    except subprocess.TimeoutExpired as error:
+        def decoded(value):
+            return value.decode(errors='replace') if isinstance(value,bytes) else (value or '')
+        log=decoded(error.stdout)+decoded(error.stderr)+f'\n[TIMEOUT] limit={timeout} s\n'
+        raise
+    finally:
+        if destination is not None:
+            (destination/'solver.log').write_text(log,encoding='utf-8')
+            # The assertions below retain the same scratch-path interface.
+            for name in ('flow.csv','wave.csv'):
+                path=destination/name
+                if path.exists(): shutil.copy2(path,tmp/name)
+
+
+def wave_drift(records, start_time):
+    """Fit a complete detected interval only; missing positions are NOT zeros."""
+    late=[r for r in records if float(r['time'])>=start_time]
+    if len(late)<2 or any(r['detected']!='T' for r in late): return float('nan')
+    times=np.array([float(r['time']) for r in late])
+    positions=np.array([float(r['position']) for r in late])
+    if not np.all(np.isfinite(times)) or not np.all(np.isfinite(positions)): return float('nan')
+    if not np.all(np.diff(times)>0): return float('nan')
+    centered=times-times.mean()
+    return float(np.dot(centered,positions-positions.mean())/np.dot(centered,centered))
+
+
+class WaveDiagnosticTests(unittest.TestCase):
+    def test_timeout_preserves_partial_evidence(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp=Path(td);data=tmp/'m.rf'
+            for name in ('m.rf','case.in','flow.csv','initial.rf','wave.csv'):
+                (tmp/name).write_text('partial '+name)
+            root=tmp/'artifacts'
+            failure=subprocess.TimeoutExpired(['solver'],1,output=b'partial stdout',stderr=b'partial stderr')
+            def interrupted(command,**kwargs):
+                Path(command[-1]).write_text('partial flow.csv')
+                Path(command[-1]).with_name('wave.csv').write_text('partial wave.csv')
+                raise failure
+            with patch.dict(os.environ,RF_WAVE_ARTIFACTS=str(root)), \
+                 patch('subprocess.run',side_effect=interrupted):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    run_wave_command(['solver'],tmp,data,'timeout_case',1)
+            saved=root/'timeout_case'
+            self.assertEqual((saved/'flow.csv').read_text(),'partial flow.csv')
+            self.assertEqual((saved/'initial.rf').read_text(),'partial initial.rf')
+            self.assertIn('[TIMEOUT]',(saved/'solver.log').read_text())
+            self.assertIn('partial stdout',(saved/'solver.log').read_text())
+            self.assertEqual((tmp/'wave.csv').read_text(),'partial wave.csv')
+            with patch.dict(os.environ,RF_WAVE_ARTIFACTS=str(root)),patch('subprocess.run') as launch:
+                with self.assertRaises(FileExistsError):
+                    run_wave_command(['solver'],tmp,data,'timeout_case',1)
+                launch.assert_not_called()
+
+    def test_drift_requires_complete_detection(self):
+        records=[dict(time=str(t),position=str(.5+2*t),detected='T') for t in (0.,.1,.4,1.)]
+        self.assertAlmostEqual(wave_drift(records,.1),2.)
+        records[2]=dict(time='.4',position='0',detected='F')
+        self.assertTrue(np.isnan(wave_drift(records,.1)))
+        self.assertTrue(np.isnan(wave_drift(records,1.)))
+        self.assertTrue(np.isnan(wave_drift([],0.)))
+
+
 class ReactiveBoundaryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if not os.environ.get('RF_FORTRAN_BUILD'): raise unittest.SkipTest('Set RF_FORTRAN_BUILD')
         cls.exe=Path(os.environ['RF_FORTRAN_BUILD'])/('rf_flow1d.exe' if os.name=='nt' else 'rf_flow1d')
 
-    def run_case(self,tmp,data,controls,yl,yr,ok=True,artifact_label=None):
+    def run_case(self,tmp,data,controls,yl,yr,ok=True,artifact_label=None,timeout=600):
         inp=tmp/'case.in';out=tmp/'flow.csv'
         if out.exists(): out.unlink()
         inp.write_text('&flow1d '+controls+' /\n'+' '.join(map(str,yl))+'\n'+' '.join(map(str,yr))+'\n')
-        run=subprocess.run([str(self.exe),str(data),str(inp),str(out)],capture_output=True,text=True,timeout=600)
-        if artifact_label and os.environ.get('RF_WAVE_ARTIFACTS'):
-            destination=Path(os.environ['RF_WAVE_ARTIFACTS'])/artifact_label
-            destination.mkdir(parents=True,exist_ok=False)
-            for path in (data,inp,out,tmp/'initial.rf',tmp/'wave.csv'):
-                if path.exists(): shutil.copy2(path,destination/path.name)
-            (destination/'solver.log').write_text(run.stdout+run.stderr)
+        run=run_wave_command([str(self.exe),str(data),str(inp),str(out)],tmp,data,artifact_label,timeout)
         if not ok:
             self.assertNotEqual(run.returncode,0)
             if out.exists(): self.assertNotIn('# SUCCESS',out.read_text())
@@ -112,6 +186,38 @@ class ReactiveBoundaryTests(unittest.TestCase):
     def test_znd_stationary_wave_grid_refinement(self):
         self.check_znd_wave('muscl', sensitivity=True)
 
+    def test_frozen_stationary_shock(self):
+        # Same upstream mixture/Mach as ZND, but no chemistry and a uniform
+        # frozen postshock state: isolate fluid/BC shock drift from heat release.
+        source=Path(ct.__file__).parent/'data/h2o2.yaml'
+        gas=ct.Solution(str(source));gas.TPX=300,101325,'H2:2,O2:1,N2:3.76'
+        y=gas.Y.copy();rho=gas.density;h=gas.enthalpy_mass;speed=5*gas.sound_speed
+        def jump(ratio):
+            gas.DPY=rho*ratio,101325+rho*speed**2*(1-1/ratio),y
+            return gas.enthalpy_mass+.5*(speed/ratio)**2-h-.5*speed**2
+        ratio=brentq(jump,1.00001,rho*speed**2/101325);jump(ratio)
+        post=np.r_[gas.T,gas.P,speed/ratio,y]
+        upstream=np.r_[300,101325,speed,y]
+        nx=128;domain=.002;shock=.0005
+        states=np.array([upstream if (i+.5)*domain/nx<shock else post for i in range(nx)])
+        with tempfile.TemporaryDirectory() as td:
+            tmp=Path(td);data=tmp/'m.rf';mechanism=import_cantera(source);export(mechanism,data)
+            (tmp/'initial.rf').write_text('RF_FLOW_PROFILE_V1\n'+mechanism.canonical_sha256+
+                f'\n{len(y)} {nx} {domain}\n'+'\n'.join(' '.join(map(str,s)) for s in states)+'\n')
+            controls=f"nx={nx},length={domain},initial_profile='initial.rf',end_time=6.e-6,max_dt=2.e-9," \
+                "write_every=100000,chemistry=.false.,reconstruction='muscl'," \
+                "left_bc='reacting_inlet',left_boundary_temperature=300,left_boundary_pressure=101325," \
+                f"left_boundary_velocity={speed},left_boundary_y="+','.join(map(str,y))+','+ \
+                "right_bc='characteristic',"+f"right_boundary_temperature={post[0]},right_boundary_pressure={post[1]}," \
+                f"right_boundary_velocity={post[2]},right_boundary_y="+','.join(map(str,y))
+            rows=self.run_case(tmp,data,controls,y,y,artifact_label='frozen_M5_n128_t6e-6')
+            last=rows[rows[:,0]==rows[-1,0]]
+            front=(last[:-1,2]+last[1:,2])[np.argmax(abs(np.diff(last[:,6])))]/2
+            error=np.mean(abs(last[:,6]-states[:,1]))/max(states[:,1])
+            print(f'Frozen 6 us shock: pressure error={error}, front={front}',flush=True)
+            self.assertLess(error,.03)
+            self.assertLessEqual(abs(front-shock),2*domain/nx)
+
     def test_fortran_flow_balance(self):
         with tempfile.TemporaryDirectory() as td:
             tmp=Path(td);source=Path(ct.__file__).parent/'data/h2o2.yaml'
@@ -178,11 +284,31 @@ class ReactiveBoundaryTests(unittest.TestCase):
     def test_znd_boundary_distance(self):
         self.check_znd_wave('muscl', extended=True, boundary_distance=True)
 
-    def check_znd_wave(self, reconstruction, sensitivity=False, extended=False, boundary_distance=False):
+    @unittest.skipUnless(os.environ.get('RF_ACOUSTIC_WAVE_TESTS')=='1','Set RF_ACOUSTIC_WAVE_TESTS=1 for 6 us wave checks')
+    def test_znd_acoustic_return(self):
+        self.check_znd_wave('muscl', extended=True, boundary_distance=True, duration=6.e-6)
+
+    @unittest.skipUnless(os.environ.get('RF_WAVE_CAUSE_TESTS')=='1','Set RF_WAVE_CAUSE_TESTS=1 for long diagnostic controls')
+    def test_znd_fine_acoustic_return(self):
+        # Keep the original Mach-5 stationary criteria: do not hide coarse failure.
+        self.check_znd_wave('muscl',extended=True,duration=6.e-6,grids=[1024])
+
+    @unittest.skipUnless(os.environ.get('RF_WAVE_CAUSE_TESTS')=='1','Set RF_WAVE_CAUSE_TESTS=1 for long diagnostic controls')
+    def test_znd_overdrive_acoustic_return(self):
+        # Separate control, NOT a replacement for the original Mach-5 regression.
+        self.check_znd_wave('muscl',extended=True,boundary_distance=True,duration=6.e-6,mach=6.)
+
+    @unittest.skipUnless(os.environ.get('RF_WAVE_CAUSE_TESTS')=='1','Set RF_WAVE_CAUSE_TESTS=1 for long diagnostic controls')
+    def test_znd_small_step_acoustic_return(self):
+        # Change dt alone, not dx: the original 2 ns cap is above the CFL limit.
+        self.check_znd_wave('muscl',extended=True,duration=6.e-6,grids=[512],time_step=3.e-10)
+
+    def check_znd_wave(self, reconstruction, sensitivity=False, extended=False, boundary_distance=False, duration=None,
+                       grids=None, mach=5., domain_length=.002, time_step=None):
         # Independent Cantera/Radau steady ZND reference in shock-fixed downstream coordinate.
         source=Path(ct.__file__).parent/'data/h2o2.yaml'
         gas=ct.Solution(str(source));gas.TPX=300,101325,'H2:2,O2:1,N2:3.76'
-        y0=gas.Y.copy();rho0=gas.density;h0=gas.enthalpy_mass;speed=5*gas.sound_speed;flux=rho0*speed
+        y0=gas.Y.copy();rho0=gas.density;h0=gas.enthalpy_mass;speed=mach*gas.sound_speed;flux=rho0*speed
         def jump(ratio):
             gas.DPY=rho0*ratio,101325+rho0*speed**2*(1-1/ratio),y0
             return gas.enthalpy_mass+.5*(speed/ratio)**2-h0-.5*speed**2
@@ -204,8 +330,9 @@ class ReactiveBoundaryTests(unittest.TestCase):
         ref=solve_ivp(rhs,[0,1.e-5],initial,method='Radau',rtol=1.e-10,atol=1.e-15,max_step=1.e-8,
                       dense_output=True,jac=jac)
         self.assertTrue(ref.success,ref.message)
-        domain=.002;shock=.0005
+        domain=domain_length;shock=.0005
         end_time=1.e-6 if extended else 2.e-7
+        if duration is not None: end_time=duration
         def profile(x):
             if x<shock: return np.r_[300.,101325.,speed,y0]
             tau=brentq(lambda t: ref.sol(t)[2]-(x-shock),0,ref.t[-1],xtol=1.e-16)
@@ -222,6 +349,13 @@ class ReactiveBoundaryTests(unittest.TestCase):
             if boundary_distance:
                 # Same dx, shock position, end time and chemistry; extend downstream only.
                 cases=[(512,2.e-9,1.e-9,1.e-16,1.e-8),(768,2.e-9,1.e-9,1.e-16,1.e-8)]
+            if grids is not None:
+                self.assertTrue(extended and not boundary_distance and not sensitivity)
+                cases=[(n,2.e-9,1.e-9,1.e-16,1.e-8) for n in grids]
+            if time_step is not None:
+                self.assertFalse(sensitivity)
+                self.assertTrue(np.isfinite(time_step) and time_step>0)
+                cases=[(n,time_step,rtol,atoly,atolt) for n,_,rtol,atoly,atolt in cases]
             for nx,max_dt,rtol,atoly,atolt in cases:
                 if boundary_distance: domain=nx*(.002/512)
                 states=np.array([profile((i+.5)*domain/nx) for i in range(nx)])
@@ -232,14 +366,16 @@ class ReactiveBoundaryTests(unittest.TestCase):
                 controls=f"nx={nx},length={domain},initial_profile='initial.rf',end_time={end_time},max_dt={max_dt}," \
                     "wave_output='wave.csv',wave_xmin=.00025,wave_xmax=.0008,wave_min_pressure_jump=10000," \
                     f"chemistry_rtol={rtol},chemistry_atol_species={atoly},chemistry_atol_temperature={atolt}," \
-                    f"write_every=100000,chemistry=.true.,reconstruction='{reconstruction}'," \
+                    f"write_every={1000 if duration else 100000},chemistry=.true.,reconstruction='{reconstruction}'," \
                     "left_bc='reacting_inlet',left_boundary_temperature=300,left_boundary_pressure=101325," \
                     f"left_boundary_velocity={speed},left_boundary_y="+','.join(map(str,y0))+','+ \
                     "right_bc='characteristic',"+f"right_boundary_temperature={right[0]},right_boundary_pressure={right[1]}," \
                     f"right_boundary_velocity={right[2]},right_boundary_y="+','.join(map(str,right[3:]))
                 label=f'{reconstruction}_t{end_time}_n{nx}_dt{max_dt}_rtol{rtol}'
                 if boundary_distance: label+=f'_L{domain}'
-                rows=self.run_case(tmp,data,controls,y0,y0,artifact_label=label);last=rows[rows[:,0]==rows[-1,0]]
+                if mach!=5.: label+=f'_M{mach}'
+                rows=self.run_case(tmp,data,controls,y0,y0,artifact_label=label,timeout=14400 if duration else 600)
+                last=rows[rows[:,0]==rows[-1,0]]
                 final_states.append(last.copy());initial_states.append(states.copy())
                 errors.append(np.mean(abs(last[:,6]-states[:,1]))/max(states[:,1]))
                 solutions.append(last[:,6].copy())
@@ -253,16 +389,16 @@ class ReactiveBoundaryTests(unittest.TestCase):
                     self.assertEqual(wave[-1]['detected'],'T')
                     self.assertLessEqual(abs(float(wave[-1]['position'])-shock),position_limit)
                 if extended:
-                    late=[record for record in wave if float(record['time'])>=end_time/2]
-                    times=np.array([float(record['time']) for record in late])
-                    positions=np.array([float(record['position']) for record in late])
                     # Fit in physical time, not step number, to avoid quantized instantaneous speeds.
-                    centered=times-times.mean()
-                    drift_speed=np.dot(centered,positions-positions.mean())/np.dot(centered,centered)
+                    # A missed record uses position=0 as a sentinel, not a measurement.
+                    drift_speed=wave_drift(wave,end_time/2)
                     temperature_error=np.mean(abs(last[:,5]-states[:,0]))/max(states[:,0])
                     water=gas.species_index('H2O')
                     water_error=np.mean(abs(last[:,7+water]-states[:,3+water]))
                     print(f'Extended nx={nx}: drift_speed={drift_speed}, T_error={temperature_error}, H2O_L1={water_error}',flush=True)
+                    missed=[r for r in wave if r['detected']!='T']
+                    print(f'Wave nx={nx}: global_final_front={front}, first_missed_time='
+                          f'{missed[0]["time"].strip() if missed else "none"}',flush=True)
                     extended_metrics.append((abs(front-shock),abs(drift_speed)/speed,temperature_error,water_error,
                         all(record['detected']=='T' for record in wave),abs(float(wave[-1]['position'])-shock)))
             if boundary_distance:

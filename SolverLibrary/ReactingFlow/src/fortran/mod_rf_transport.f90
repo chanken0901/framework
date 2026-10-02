@@ -12,6 +12,7 @@ module mod_rf_transport
   public :: binary_diffusion_scale
   public :: binary_coefficient
   public :: read_transport_table
+  public :: transport_temperature_supported
   type :: rf_transport
     ! Constant SI coefficients. The common species D is not a detailed mixture-averaged model.
     real(dp) :: viscosity=0,bulk_viscosity=0,conductivity=0,diffusivity=0
@@ -27,6 +28,20 @@ module mod_rf_transport
     real(dp), allocatable :: property_temperatures(:),viscosity_table(:,:),conductivity_table(:,:)
   end type
 contains
+  logical function transport_temperature_supported(c,t) result(valid)
+    type(rf_transport), intent(in) :: c
+    real(dp), intent(in) :: t
+    valid=.false.
+    if(.not.ieee_is_finite(t).or.t<=0) return
+    if(allocated(c%property_temperatures)) then
+      if(t<c%property_temperatures(1).or.t>c%property_temperatures(size(c%property_temperatures))) return
+    end if
+    if(allocated(c%binary_temperatures)) then
+      if(t<c%binary_temperatures(1).or.t>c%binary_temperatures(size(c%binary_temperatures))) return
+    end if
+    valid=.true.
+  end function
+
   subroutine read_transport_table(path,m,c)
     character(*), intent(in) :: path
     type(rf_mechanism), intent(in) :: m

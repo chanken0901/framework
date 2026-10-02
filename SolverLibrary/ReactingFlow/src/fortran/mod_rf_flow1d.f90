@@ -11,6 +11,7 @@ module mod_rf_flow1d
   public :: admissible_flow,validate_fixed_states
   public :: characteristic_outlet,reacting_inlet,needs_reference
   public :: inviscid_balance
+  public :: admissible_operator
 contains
   subroutine inviscid_balance(m,q,dx,left_bc,right_bc,advection,chemistry,boundary,reconstruction,fixed_states)
     ! Read-only semidiscrete residual: dq/dt = advection + chemistry.
@@ -42,48 +43,84 @@ contains
     needs_reference=kind=='dirichlet'.or.kind=='characteristic'.or.kind=='reacting_inlet'
   end function
 
-  subroutine reacting_inlet(m,q,reference,side,ghost)
+  subroutine reacting_inlet(m,q,reference,side,ghost,ok)
     ! Reservoir T,Y,u prescribed. Subsonic pressure follows outgoing frozen acoustic wave.
     type(rf_mechanism), intent(in) :: m
     real(dp), intent(in) :: q(:),reference(:)
     integer, intent(in) :: side
     real(dp), intent(out) :: ghost(:)
+    logical, optional, intent(out) :: ok
     real(dp) :: rho,u,t,p,a,y(size(m%species)),rr,ur,tr,pr,ar,yr(size(m%species)),normal,pb
     call require(side==1.or.side==2,'Invalid inlet side')
+    if(present(ok)) ok=.false.
+    ghost=q
     normal=real(2*side-3,dp)
     call conserved_to_primitive(m,q,rho,u,t,p,a,y)
     call conserved_to_primitive(m,reference,rr,ur,tr,pr,ar,yr)
-    call require(normal*u<0.and.normal*ur<0,'Reacting inlet requires inward interior and reference velocities')
+    if(.not.(normal*u<0.and.normal*ur<0)) then
+      if(present(ok)) return
+      call require(.false.,'Reacting inlet requires inward interior and reference velocities')
+    end if
     if(-normal*u>=a) then
-      call require(-normal*ur>=ar,'Supersonic inlet requires supersonic reference')
+      if(-normal*ur<ar) then
+        if(present(ok)) return
+        call require(.false.,'Supersonic inlet requires supersonic reference')
+      end if
       ghost=reference
     else
-      call require(-normal*ur<ar,'Subsonic inlet requires subsonic reference')
+      if(-normal*ur>=ar) then
+        if(present(ok)) return
+        call require(.false.,'Subsonic inlet requires subsonic reference')
+      end if
       pb=p+rho*a*normal*(u-ur)
-      call require(pb>0.and.ieee_is_finite(pb),'Reacting inlet acoustic pressure is nonphysical')
+      if(.not.(pb>0.and.ieee_is_finite(pb))) then
+        if(present(ok)) return
+        call require(.false.,'Reacting inlet acoustic pressure is nonphysical')
+      end if
       call primitive_to_conserved(m,tr,pb,ur,yr,ghost)
     end if
+    if(present(ok)) ok=.true.
   end subroutine
 
-  subroutine characteristic_outlet(m,q,reference,side,ghost)
+  subroutine characteristic_outlet(m,q,reference,side,ghost,ok)
     ! Frozen local acoustic projection. Outflow only; not full reacting NSCBC.
     type(rf_mechanism), intent(in) :: m
     real(dp), intent(in) :: q(:),reference(:)
     integer, intent(in) :: side
     real(dp), intent(out) :: ghost(:)
+    logical, optional, intent(out) :: ok
     real(dp) :: rho,u,t,p,a,y(size(m%species)),rr,ur,tr,pr,ar,yr(size(m%species)),normal,wave,rhob,pb,ub
     call require(side==1.or.side==2,'Invalid characteristic boundary side')
+    if(present(ok)) ok=.false.
+    ghost=q
     normal=real(2*side-3,dp)
     call conserved_to_primitive(m,q,rho,u,t,p,a,y)
-    call require(normal*u>=0,'Characteristic outlet reverse flow: use an inflow boundary')
-    ghost=q
-    if(normal*u>=a) return
+    if(normal*u<0) then
+      if(present(ok)) return
+      call require(.false.,'Characteristic outlet reverse flow: use an inflow boundary')
+    end if
+    if(normal*u>=a) then
+      if(present(ok)) ok=.true.
+      return
+    end if
     call conserved_to_primitive(m,reference,rr,ur,tr,pr,ar,yr)
     wave=((pr-p)-rho*a*normal*(ur-u))/2
     rhob=rho+wave/a**2;pb=p+wave;ub=u-normal*wave/(rho*a)
-    call require(min(rhob,pb)>0,'Characteristic boundary state is nonphysical')
-    call require(normal*ub>=0,'Characteristic reference produces reverse flow')
-    call primitive_to_conserved(m,t*(pb/p)*(rho/rhob),pb,ub,y,ghost)
+    if(min(rhob,pb)<=0.or..not.all(ieee_is_finite([rhob,pb,ub]))) then
+      if(present(ok)) return
+      call require(.false.,'Characteristic boundary state is nonphysical')
+    end if
+    if(normal*ub<0) then
+      if(present(ok)) return
+      call require(.false.,'Characteristic reference produces reverse flow')
+    end if
+    tr=t*(pb/p)*(rho/rhob)
+    if(.not.temperature_supported(m,tr)) then
+      if(present(ok)) return
+      call require(.false.,'Characteristic boundary temperature outside NASA range')
+    end if
+    call primitive_to_conserved(m,tr,pb,ub,y,ghost)
+    if(present(ok)) ok=.true.
   end subroutine
 
   subroutine validate_fixed_states(m,left_bc,right_bc,fixed_states)
@@ -276,12 +313,67 @@ contains
     f=(fl+fr-max(sl,sr)*(right-left))/2
   end subroutine
 
-  real(dp) function flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states) result(dt)
+  logical function admissible_operator(m,q,left_bc,right_bc,transport,reconstruction,fixed_states) result(valid)
+    ! State-dependent failures are recoverable. Malformed models/BC names stay fatal.
+    type(rf_mechanism), intent(in) :: m
+    real(dp), intent(in) :: q(:,:)
+    character(*), intent(in) :: left_bc,right_bc
+    type(rf_transport), optional, intent(in) :: transport
+    character(*), optional, intent(in) :: reconstruction
+    real(dp), optional, intent(in) :: fixed_states(:,:)
+    real(dp) :: qm(size(q,1),size(q,2)),qp(size(q,1),size(q,2)),ghost(size(q,1))
+    real(dp) :: rho,u,t,p,a,y(size(m%species))
+    integer :: i,side,nx
+    logical :: boundary_ok
+    character(16) :: kind
+    valid=.false.;nx=size(q,2)
+    call validate_fixed_states(m,left_bc,right_bc,fixed_states)
+    if(present(transport)) call validate_transport(transport,size(m%species))
+    if(.not.admissible_flow(m,q)) return
+    if(present(transport)) then
+      do i=1,nx
+        call conserved_to_primitive(m,q(:,i),rho,u,t,p,a,y)
+        if(.not.transport_temperature_supported(transport,t)) return
+      end do
+    end if
+    call reconstruct_faces(m,q,left_bc,right_bc,qm,qp,reconstruction)
+    do side=1,2
+      kind=left_bc
+      if(side==2) kind=right_bc
+      if(kind=='periodic') cycle
+      ! Check both cell and reconstructed endpoint, used by diffusion/CFL and RHS.
+      do i=1,2
+        if(side==1) then
+          ghost=q(:,1)
+          if(i==2) ghost=qm(:,1)
+        else
+          ghost=q(:,nx)
+          if(i==2) ghost=qp(:,nx)
+        end if
+        block
+          real(dp) :: input(size(q,1))
+          input=ghost
+          call boundary_state(m,input,kind,ghost,fixed_states,side,boundary_ok)
+        end block
+        if(.not.boundary_ok) return
+        if(present(transport)) then
+          if(kind=='dirichlet'.or.kind=='reacting_inlet') then
+            call conserved_to_primitive(m,ghost,rho,u,t,p,a,y)
+            if(.not.transport_temperature_supported(transport,t)) return
+          end if
+        end if
+      end do
+    end do
+    valid=.true.
+  end function
+
+  real(dp) function flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states,ok) result(dt)
     type(rf_mechanism), intent(in) :: m
     real(dp), intent(in), optional :: fixed_states(:,:)
     real(dp), intent(in) :: q(:,:),dx,cfl
     type(rf_transport), intent(in), optional :: transport
     character(*), intent(in), optional :: reconstruction,left_bc,right_bc
+    logical, optional, intent(out) :: ok
     character(16) :: lb,rb
     real(dp) :: qm(size(q,1),size(q,2)),qp(size(q,1),size(q,2))
     real(dp) :: f(size(q,1)),speed,maxspeed,ghost(size(q,1))
@@ -294,6 +386,10 @@ contains
     if(present(left_bc)) lb=left_bc
     if(present(right_bc)) rb=right_bc
     call validate_fixed_states(m,lb,rb,fixed_states)
+    if(present(ok)) then
+      ok=.false.;dt=0
+      if(.not.admissible_operator(m,q,lb,rb,transport,reconstruction,fixed_states)) return
+    end if
     diffusion_factor=2
     if(lb=='dirichlet'.or.rb=='dirichlet'.or.lb=='reacting_inlet'.or.rb=='reacting_inlet') diffusion_factor=4
     maxspeed=0
@@ -359,23 +455,26 @@ contains
         dt=cfl/(maxspeed/dx+diffusion_factor*diff/dx**2)
       end if
     end if
+    if(present(ok)) ok=ieee_is_finite(dt).and.dt>0
   end function
 
-  subroutine boundary_state(m,q,kind,ghost,fixed_states,side)
+  subroutine boundary_state(m,q,kind,ghost,fixed_states,side,ok)
     type(rf_mechanism), intent(in) :: m
     real(dp), intent(in) :: q(:)
     character(*), intent(in) :: kind
     real(dp), intent(out) :: ghost(:)
     real(dp), intent(in), optional :: fixed_states(:,:)
     integer, intent(in) :: side
+    logical, optional, intent(out) :: ok
+    if(present(ok)) ok=.true.
     ghost=q
     select case(kind)
     case('reacting_inlet')
       call require(present(fixed_states),'Missing reacting inlet reference')
-      call reacting_inlet(m,q,fixed_states(:,side),side,ghost)
+      call reacting_inlet(m,q,fixed_states(:,side),side,ghost,ok)
     case('characteristic')
       call require(present(fixed_states),'Missing characteristic reference state')
-      call characteristic_outlet(m,q,fixed_states(:,side),side,ghost)
+      call characteristic_outlet(m,q,fixed_states(:,side),side,ghost,ok)
     case('dirichlet')
       call require(present(fixed_states),'Missing Dirichlet state')
       ghost=fixed_states(:,side)
@@ -506,22 +605,27 @@ contains
     type(rf_transport), intent(in), optional :: transport
     real(dp) :: a(size(q,1),size(q,2)),b(size(q,1),size(q,2)),dq(size(q,1),size(q,2))
     real(dp) :: f1(size(q,1)),f2(size(q,1)),f3(size(q,1))
+    real(dp) :: allowed_dt
+    logical :: domain_ok
     ok=.false.; boundary_change=0
     result=q
     if(.not.admissible_flow(m,q,diagnose)) return
-    if(dt>flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states)*(1+1.e-12_dp)) return
+    allowed_dt=flow_timestep(m,q,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states,domain_ok)
+    if(.not.domain_ok.or.dt>allowed_dt*(1+1.e-12_dp)) return
     call rhs(m,q,dx,left_bc,right_bc,dq,f1,transport,reconstruction,fixed_states)
     a=q+dt*dq
     if(.not.admissible_flow(m,a,diagnose)) return
-    if(dt>flow_timestep(m,a,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states)*(1+1.e-12_dp)) return
+    allowed_dt=flow_timestep(m,a,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states,domain_ok)
+    if(.not.domain_ok.or.dt>allowed_dt*(1+1.e-12_dp)) return
     call rhs(m,a,dx,left_bc,right_bc,dq,f2,transport,reconstruction,fixed_states)
     ! Increment form preserves a zero RHS exactly (including very small retries).
     b=q+.25_dp*((a-q)+dt*dq)
     if(.not.admissible_flow(m,b,diagnose)) return
-    if(dt>flow_timestep(m,b,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states)*(1+1.e-12_dp)) return
+    allowed_dt=flow_timestep(m,b,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states,domain_ok)
+    if(.not.domain_ok.or.dt>allowed_dt*(1+1.e-12_dp)) return
     call rhs(m,b,dx,left_bc,right_bc,dq,f3,transport,reconstruction,fixed_states)
     result=q+2._dp/3*((b-q)+dt*dq)
-    if(.not.admissible_flow(m,result,diagnose)) then
+    if(.not.admissible_operator(m,result,left_bc,right_bc,transport,reconstruction,fixed_states)) then
       result=q
       return
     end if
@@ -575,7 +679,7 @@ contains
   end subroutine
 
   subroutine advance_flow(m,q,dx,dt,cfl,left_bc,right_bc,chemistry,rtol,atoly,atolt,maxsteps,boundary_change, &
-                          transport,reconstruction,rejected_steps,fixed_states)
+                          transport,reconstruction,rejected_steps,fixed_states,diagnose_retries)
     type(rf_mechanism), intent(in), target :: m
     real(dp), intent(in), optional :: fixed_states(:,:)
     real(dp), intent(inout) :: q(:,:),dt
@@ -587,36 +691,47 @@ contains
     character(*), intent(in), optional :: reconstruction
     type(rf_transport), intent(in), optional :: transport
     integer, intent(out), optional :: rejected_steps
+    logical, intent(in), optional :: diagnose_retries
     real(dp) :: old(size(q,1),size(q,2)),stage(size(q,1),size(q,2)),newq(size(q,1),size(q,2)),check_dt
-    logical :: ok
+    logical :: ok,report
     integer :: retry
     call require(ieee_is_finite(dt).and.dt>0,'Require positive finite flow dt')
     call require(size(q,1)==size(m%species)+2.and.size(q,2)>=2,'Invalid 1D field shape')
     call require(admissible_flow(m,q),'Invalid input flow state; cannot recover by reducing dt')
     call validate_fixed_states(m,left_bc,right_bc,fixed_states)
+    call require(admissible_operator(m,q,left_bc,right_bc,transport,reconstruction,fixed_states), &
+                 'Input flow outside boundary/transport domain; cannot recover by reducing dt')
     if(present(rejected_steps)) rejected_steps=0
     old=q
     do retry=1,30
+      report=retry==30
+      if(present(diagnose_retries)) report=report.or.diagnose_retries
       stage=old
       ok=.true.;boundary_change=0
-      if(chemistry) call chemistry_cells(m,stage,dt/2,rtol,atoly,atolt,maxsteps,ok,retry==30)
-      if(retry==30.and..not.ok) write(*,*) 'Rejected first chemistry half-step'
+      if(chemistry) call chemistry_cells(m,stage,dt/2,rtol,atoly,atolt,maxsteps,ok,report)
+      if(report.and..not.ok) write(*,*) 'Rejected first chemistry half-step'
       if(ok) call transport_step(m,stage,dx,dt,cfl,left_bc,right_bc,newq,boundary_change, &
-        ok,transport,reconstruction,fixed_states,retry==30)
+        ok,transport,reconstruction,fixed_states,report)
       if(ok) then
-        if(chemistry) call chemistry_cells(m,newq,dt/2,rtol,atoly,atolt,maxsteps,ok,retry==30)
-        if(retry==30.and..not.ok) write(*,*) 'Rejected second chemistry half-step'
+        if(chemistry) call chemistry_cells(m,newq,dt/2,rtol,atoly,atolt,maxsteps,ok,report)
+        if(report.and..not.ok) write(*,*) 'Rejected second chemistry half-step'
       else
-        if(retry==30) write(*,*) 'Rejected before second chemistry half-step; dt:',dt
+        if(report) write(*,*) 'Rejected before second chemistry half-step; dt:',dt
       end if
-      if(ok) then
-        check_dt=flow_timestep(m,newq,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states) ! validate complete step
-        call require(check_dt>0,'Invalid final flow state')
-        q=newq
-        if(present(rejected_steps)) rejected_steps=retry-1
-        return
-      end if
-      dt=dt/2
+        if(ok) then
+        check_dt=flow_timestep(m,newq,dx,cfl,transport,reconstruction,left_bc,right_bc,fixed_states,ok)
+        if(ok.and.check_dt>0) then
+          q=newq
+          if(present(rejected_steps)) rejected_steps=retry-1
+          return
+        end if
+        if(report) then
+          write(*,*) 'Rejected final operator domain check'
+          ok=admissible_flow(m,newq,diagnose=.true.)
+        end if
+        end if
+        if(report) write(*,*) 'Retry rejected attempt, dt:',retry,dt
+        dt=dt/2
       call require(dt>0.and.ieee_is_finite(dt),'Flow retry timestep underflow')
     end do
     boundary_change=0
