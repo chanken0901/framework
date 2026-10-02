@@ -1,5 +1,9 @@
 # ReactingFlow：独立反応流ライブラリ
 
+2026-10-02：[多次元有限体積基盤](docs/FINITE_VOLUME.md)の先行実装を追加。
+任意方向面流束・すべり壁・静止メッシュ残差を提供する。実行検証は保留中で、
+多次元反応流・ノズルの実行ソルバーはまだ未完成。既存1Dは変更しない。
+
 2026-10-01：CFDの[試行段の範囲違反回復](docs/OPERATOR_RECOVERY.md)と
 [旧NSE実コードとの非反応／一段反応比較](docs/LEGACY_COMPARISON.md)を追加。
 [6 µs反応波検証](docs/ACOUSTIC_RETURN_VALIDATION.md)は定常波保持の基準に未達。
