@@ -2,6 +2,7 @@ program main_rf_flow2d
   use mod_rf_flow2d
   use mod_rf_grid2d
   use mod_rf_finite_volume
+  use mod_rf_initial2d
   use mod_rf_thermo
   implicit none
   type(rf_mechanism), target :: m
@@ -9,6 +10,12 @@ program main_rf_flow2d
   type(rf_boundary2d) :: bc
   character(2048) :: mechanism,input,output,mesh_profile='',mesh_path
   character(512) :: message
+  character(16) :: initial_mode='uniform'
+  character(2048) :: initial_profile='',initial_export='',initial_path
+  integer :: split_axis=1
+  real(dp) :: split_position=0,region_box(4)=0
+  real(dp) :: region_temperature=-1,region_pressure=-1,region_velocity(2)=0
+  real(dp), allocatable :: region_y(:),background(:),region(:)
   character(16) :: boundary_kind(4)=[character(16)::'outflow','outflow','reflecting','reflecting']
   integer :: ny=16,max_steps=100000,write_every=50,chemistry_max_steps=100000
   real(dp) :: temperature=300,pressure=101325,velocity(2)=0
@@ -21,12 +28,15 @@ program main_rf_flow2d
   integer :: unit,out,ios,ns,nv,nc,c,b,step,rejected,total_rejected,i,slash
   namelist /flow2d/ mesh_profile,ny,temperature,pressure,velocity,mass_fractions,boundary_kind, &
     boundary_temperature,boundary_pressure,boundary_velocity,boundary_y,end_time,max_dt,cfl,max_steps, &
-    write_every,chemistry,chemistry_rtol,chemistry_atol_species,chemistry_atol_temperature,chemistry_max_steps
+    write_every,chemistry,chemistry_rtol,chemistry_atol_species,chemistry_atol_temperature,chemistry_max_steps, &
+    initial_mode,initial_profile,initial_export,split_axis,split_position,region_box, &
+    region_temperature,region_pressure,region_velocity,region_y
   call require(command_argument_count()==3,'Usage: rf_flow2d mechanism.rf flow2d.in new_output.csv')
   call get_command_argument(1,mechanism);call get_command_argument(2,input);call get_command_argument(3,output)
   call read_mechanism(trim(mechanism),m)
   ns=size(m%species);nv=ns+3
   allocate(mass_fractions(ns),boundary_y(ns,4),y(ns));mass_fractions=-1;boundary_y=-1
+  allocate(region_y(ns),background(nv),region(nv));region_y=-1
   open(newunit=unit,file=trim(input),status='old',action='read',iostat=ios)
   call require(ios==0,'Cannot open flow2d input')
   read(unit,nml=flow2d,iostat=ios,iomsg=message);close(unit)
@@ -36,7 +46,10 @@ program main_rf_flow2d
   call require(max_steps>0.and.write_every>0.and.chemistry_max_steps>0,'Invalid step limits')
   call require(all(ieee_is_finite([chemistry_rtol,chemistry_atol_species,chemistry_atol_temperature])).and. &
     min(chemistry_rtol,chemistry_atol_species,chemistry_atol_temperature)>0,'Invalid chemistry tolerances')
-  call validate_input_y(mass_fractions)
+  call require(initial_mode=='uniform'.or.initial_mode=='split'.or.initial_mode=='box'.or. &
+    initial_mode=='profile','Unknown initial_mode')
+  call require((initial_mode=='profile').eqv.(len_trim(initial_profile)>0), &
+    'initial_profile must be specified exactly when initial_mode=profile')
   ! Mesh path is relative to the input file, not the shell working directory.
   mesh_path=trim(mesh_profile)
   if(mesh_profile(1:1)/='/'.and.mesh_profile(1:1)/=achar(92).and.index(mesh_profile,':')==0) then
@@ -55,15 +68,33 @@ program main_rf_flow2d
     call validate_input_y(boundary_y(:,b))
     call primitive_nd(m,boundary_temperature(b),boundary_pressure(b),boundary_velocity(:,b),boundary_y(:,b),bc%fixed(:,b))
   end do
-  do c=1,nc
-    call primitive_nd(m,temperature,pressure,velocity,mass_fractions,q(:,c))
-  end do
+  if(initial_mode=='profile') then
+    initial_path=resolve_initial_path(initial_profile)
+    call read_initial2d(trim(initial_path),m,grid,q)
+  else
+    call validate_input_y(mass_fractions)
+    call primitive_nd(m,temperature,pressure,velocity,mass_fractions,background)
+    if(initial_mode=='uniform') then
+      do c=1,nc
+        q(:,c)=background
+      end do
+    else
+      call validate_input_y(region_y)
+      call primitive_nd(m,region_temperature,region_pressure,region_velocity,region_y,region)
+      call initialize_region2d(grid,background,region,initial_mode,split_axis,split_position,region_box,q)
+    end if
+  end if
   call flow2d_rhs(m,grid,bc,q,cfl,dq,rate,allowed,ok)
   call require(ok,'Invalid initial 2D flow')
+  if(len_trim(initial_export)>0) then
+    initial_path=resolve_initial_path(initial_export)
+    call write_initial2d(trim(initial_path),m,grid,q)
+  end if
   open(newunit=out,file=trim(output),status='new',action='write',iostat=ios)
   call require(ios==0,'Cannot create new flow2d output (existing path?)')
   write(out,'(a)') '# Experimental CPU serial planar reactive Euler; first-order Rusanov / SSPRK3 / Strang'
   write(out,'(a)') '# mechanism_hash='//trim(m%canonical_hash)
+  write(out,'(a)') '# initial_mode='//trim(initial_mode)
   write(out,'(a)',advance='no') 'step,time,cell,x,y,area,density,u,v,temperature,pressure'
   do i=1,ns
     write(out,'(a)',advance='no') ',Y_'//trim(m%species(i)%name)
@@ -97,6 +128,20 @@ program main_rf_flow2d
   close(out,iostat=ios);call require(ios==0,'Failed closing flow2d output')
   write(*,'(a)') '[OK] Final flow2d snapshot written; calculation finished normally.'
 contains
+  function resolve_initial_path(path) result(resolved)
+    character(*), intent(in) :: path
+    character(:), allocatable :: resolved
+    integer :: k,last
+    resolved=trim(path)
+    if(len_trim(path)==0) return
+    if(path(1:1)=='/'.or.path(1:1)==achar(92).or.index(path,':')>0) return
+    last=0
+    do k=1,len_trim(input)
+      if(input(k:k)=='/'.or.input(k:k)==achar(92)) last=k
+    end do
+    call require(last+len_trim(path)<=len(initial_path),'Initial profile path too long')
+    resolved=input(:last)//trim(path)
+  end function
   subroutine validate_input_y(values)
     real(dp), intent(in) :: values(:)
     call require(all(ieee_is_finite(values)).and.all(values>=0),'Missing/invalid mass fractions')

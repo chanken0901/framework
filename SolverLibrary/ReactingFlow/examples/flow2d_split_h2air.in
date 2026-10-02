@@ -1,0 +1,12 @@
+! Coarse illustrative pressure discontinuity, NOT a validated detonation setup.
+! Species: H2 H O O2 OH H2O HO2 H2O2 AR N2 (Cantera h2o2).
+&flow2d
+ mesh_profile='nozzle_profile.rf', ny=8,
+ initial_mode='split', split_axis=1, split_position=0.02,
+ temperature=300, pressure=101325, velocity=0,0,
+ mass_fractions=0.028522387527567396,0,0,0.22635400697100733,0,0,0,0,0,0.7451236055014252,
+ region_temperature=1100, region_pressure=506625, region_velocity=0,0,
+ region_y=0.028522387527567396,0,0,0.22635400697100733,0,0,0,0,0,0.7451236055014252,
+ boundary_kind='reflecting','outflow','reflecting','reflecting',
+ chemistry=.false., end_time=1e-8, max_dt=1e-9, cfl=0.3, write_every=1
+/

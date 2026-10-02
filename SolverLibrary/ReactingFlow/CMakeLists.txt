@@ -26,7 +26,7 @@ add_library(reactingflow STATIC src/fortran/mod_rf_mechanism.f90
   src/fortran/mod_rf_shock.f90 src/fortran/mod_rf_znd.f90
   src/fortran/mod_rf_equilibrium.f90 src/fortran/mod_rf_cj.f90 src/fortran/mod_rf_profile.f90
   src/fortran/mod_rf_wave.f90 src/fortran/mod_rf_finite_volume.f90 src/fortran/mod_rf_grid2d.f90
-  src/fortran/mod_rf_flow2d.f90)
+  src/fortran/mod_rf_flow2d.f90 src/fortran/mod_rf_initial2d.f90)
 target_link_libraries(reactingflow PUBLIC rf_dvode)
 target_include_directories(reactingflow PUBLIC "$<BUILD_INTERFACE:${CMAKE_Fortran_MODULE_DIRECTORY}>")
 add_executable(rf_reactor src/fortran/main_rf_reactor.f90)

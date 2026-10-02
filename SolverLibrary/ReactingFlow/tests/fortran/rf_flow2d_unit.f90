@@ -2,6 +2,7 @@ program rf_flow2d_unit
   use mod_rf_flow2d
   use mod_rf_grid2d
   use mod_rf_finite_volume
+  use mod_rf_initial2d
   use mod_rf_thermo
   implicit none
   type(rf_mechanism), target :: m
@@ -19,6 +20,17 @@ program rf_flow2d_unit
   end do
   call build_nozzle2d([0._dp,1._dp,2._dp],[0._dp,0._dp,0._dp],[1._dp,1._dp,1._dp],2,grid)
   y=[.25_dp,.75_dp]
+  block
+    real(dp) :: bg(5),hot(5)
+    call primitive_nd(m,1000._dp,101325._dp,[0._dp,0._dp],y,bg)
+    call primitive_nd(m,1200._dp,202650._dp,[0._dp,0._dp],y,hot)
+    call initialize_region2d(grid,bg,hot,'split',1,1._dp,[0._dp,0._dp,0._dp,0._dp],q)
+    call require(all(q(:,1)==hot).and.all(q(:,3)==hot),'Split lower-x region')
+    call require(all(q(:,2)==bg).and.all(q(:,4)==bg),'Split background region')
+    call initialize_region2d(grid,bg,hot,'box',1,0._dp,[0._dp,1._dp,0._dp,.5_dp],q)
+    call require(all(q(:,1)==hot).and.all(q(:,2)==bg).and.all(q(:,3)==bg).and.all(q(:,4)==bg), &
+      'Box selects only cell centers inside half-open interval')
+  end block
   do i=1,4
     call primitive_nd(m,1000._dp,101325._dp,[0._dp,0._dp],y,q(:,i))
   end do
