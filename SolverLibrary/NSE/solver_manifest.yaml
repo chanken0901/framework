@@ -35,6 +35,7 @@ components:
       - src/grid/mod_grid_fvm.f90
       - src/grid/mod_grid_axis.f90
       - src/numerics/reconstruction/mod_reconstruction_nonuniform.f90
+      - src/numerics/viscous/mod_viscous_fv2.f90
       - src/field/mod_field_nse.f90
       - src/io/mod_input_reader.f90
       - src/io/mod_slf_output.f90
@@ -178,6 +179,7 @@ components:
       - src/gpu/nse_cuda_bridge.cu
       - src/gpu/nse_cuda_fluctuating.cuh
       - src/gpu/nse_cuda_weno5z_roe.cuh
+      - src/gpu/nse_cuda_fv2.cuh
       - src/gpu/nse_cuda_hybrid.cuh
 
   cuda_mpi_halo:

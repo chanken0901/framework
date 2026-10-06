@@ -7,6 +7,7 @@ module mod_grid_axis
   private
   public :: grid_axis,build_axis,build_sinh_axis,axis_derivative_weights
   public :: prepare_axis_weno
+  public :: pack_axis_geometry
   type :: grid_axis
     integer :: n=0,ng=0
     logical :: periodic=.false.
@@ -17,6 +18,23 @@ module mod_grid_axis
     type(weno_face_geometry), allocatable :: weno_left(:),weno_right(:)
   end type
 contains
+  subroutine pack_axis_geometry(axis,start,n,centers,widths,coefficients)
+    type(grid_axis), intent(in) :: axis
+    integer, intent(in) :: start,n
+    real(dp), allocatable, intent(out) :: centers(:),widths(:),coefficients(:,:,:)
+    integer :: f
+    call check(start>=0.and.n>0.and.start+n<=axis%n,'Invalid local axis range')
+    call check(allocated(axis%weno_left),'WENO geometry must be prepared before GPU packing')
+    centers=axis%center(start+1-axis%ng:start+n+axis%ng)
+    widths=axis%width(start+1-axis%ng:start+n+axis%ng)
+    allocate(coefficients(30,2,0:n))
+    do f=0,n
+      coefficients(1:27,1,f)=reshape(axis%weno_left(start+f)%polynomial,[27])
+      coefficients(28:30,1,f)=axis%weno_left(start+f)%optimal
+      coefficients(1:27,2,f)=reshape(axis%weno_right(start+f)%polynomial,[27])
+      coefficients(28:30,2,f)=axis%weno_right(start+f)%optimal
+    end do
+  end subroutine
   subroutine prepare_axis_weno(axis)
     type(grid_axis), intent(inout) :: axis
     integer :: f
