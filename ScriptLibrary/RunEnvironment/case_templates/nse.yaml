@@ -136,6 +136,11 @@ forcing:
     report_interval: 100
 
 grid:
+  # Experimental geometry preview only; nonuniform solver operators are not connected yet.
+  # Omit mapping for the existing uniform calculation.
+  # mapping:
+  #   type: sinh
+  #   strength: [0.0, 2.0, 2.0]  # x,y,z; positive values refine the domain center
   nx: 64
   ny: 64
   nz: 64

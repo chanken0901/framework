@@ -1,6 +1,7 @@
 module mod_grid_fvm
   use mod_precision,     only : dp
   use mod_common_config, only : simulation_config
+  use mod_grid_axis, only: grid_axis,build_sinh_axis
   implicit none
 
   private
@@ -11,6 +12,8 @@ module mod_grid_fvm
   public :: z_edge, z_cell
   public :: vol, area_x, area_y, area_z
   public :: dx_min, dy_min, dz_min
+  public :: axis_x,axis_y,axis_z,build_stretched_grid
+  type(grid_axis) :: axis_x,axis_y,axis_z
 
   real(dp), allocatable :: x_edge(:,:,:)
   real(dp), allocatable :: x_cell(:,:,:)
@@ -34,6 +37,12 @@ contains
 
     integer :: i, j, k
     real(dp) :: dx, dy, dz
+
+    if(trim(sim%grid_mapping)=='sinh') then
+      call build_stretched_grid(sim,js,je,ks,ke)
+      return
+    end if
+    if(trim(sim%grid_mapping)/='uniform') error stop 'Unsupported grid mapping'
 
     allocate(x_edge(-1:sim%nx, js-2:je, ks-2:ke))
     allocate(y_edge(-1:sim%nx, js-2:je, ks-2:ke))
@@ -91,5 +100,55 @@ contains
     sim%dz = dz_min
 
   end subroutine build_uniform_grid
+
+  subroutine build_stretched_grid(sim,js,je,ks,ke)
+    type(simulation_config), intent(inout) :: sim
+    integer, intent(in) :: js,je,ks,ke
+    integer :: i,j,k,g
+    real(dp) :: dx,dy,dz
+    g=sim%nghost
+    if(js<1.or.je>sim%ny.or.ks<1.or.ke>sim%nz.or.js>je.or.ks>ke) error stop 'Invalid grid partition'
+    if(allocated(vol)) error stop 'Grid already allocated'
+    ! Global geometry is generated deterministically before selecting local indices.
+    ! Physical-boundary ghost widths are mirrored; periodic mapping is not connected yet.
+    call build_sinh_axis(sim%nx,g,sim%x_min,sim%x_max,sim%grid_stretch(1),.false.,axis_x)
+    call build_sinh_axis(sim%ny,g,sim%y_min,sim%y_max,sim%grid_stretch(2),.false.,axis_y)
+    call build_sinh_axis(sim%nz,g,sim%z_min,sim%z_max,sim%grid_stretch(3),.false.,axis_z)
+    allocate(x_edge(-g:sim%nx+g,js-g-1:je+g,ks-g-1:ke+g))
+    allocate(y_edge,mold=x_edge);allocate(z_edge,mold=x_edge)
+    allocate(x_cell(1-g:sim%nx+g,js-g:je+g,ks-g:ke+g))
+    allocate(y_cell,mold=x_cell);allocate(z_cell,mold=x_cell)
+    allocate(vol(0:sim%nx,js-1:je,ks-1:ke))
+    allocate(area_x,mold=vol);allocate(area_y,mold=vol);allocate(area_z,mold=vol)
+    do k=ks-g-1,ke+g
+      do j=js-g-1,je+g
+        do i=-g,sim%nx+g
+          x_edge(i,j,k)=axis_x%edge(i)
+          y_edge(i,j,k)=axis_y%edge(j)
+          z_edge(i,j,k)=axis_z%edge(k)
+        end do
+      end do
+    end do
+    do k=ks-g,ke+g
+      do j=js-g,je+g
+        do i=1-g,sim%nx+g
+          x_cell(i,j,k)=axis_x%center(i)
+          y_cell(i,j,k)=axis_y%center(j)
+          z_cell(i,j,k)=axis_z%center(k)
+        end do
+      end do
+    end do
+    do k=ks-1,ke
+      do j=js-1,je
+        do i=0,sim%nx
+          dx=axis_x%width(i);dy=axis_y%width(j);dz=axis_z%width(k)
+          vol(i,j,k)=dx*dy*dz
+          area_x(i,j,k)=dy*dz;area_y(i,j,k)=dx*dz;area_z(i,j,k)=dx*dy
+        end do
+      end do
+    end do
+    dx_min=axis_x%minimum_width;dy_min=axis_y%minimum_width;dz_min=axis_z%minimum_width
+    sim%dx=dx_min;sim%dy=dy_min;sim%dz=dz_min
+  end subroutine
 
 end module mod_grid_fvm

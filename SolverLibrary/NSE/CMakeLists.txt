@@ -534,6 +534,12 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>"
 )
 
+if("${NSE_CORE_SOURCES}" MATCHES "mod_input_reader[.]f90")
+  add_executable(nse_grid_preview src/main/main_grid_preview.f90)
+  target_link_libraries(nse_grid_preview PRIVATE NSE::core)
+  set_target_properties(nse_grid_preview PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+endif()
+
 target_link_libraries(
   nse_core
   PUBLIC
@@ -658,6 +664,9 @@ function(nse_apply_fortran_options target_name)
 endfunction()
 
 nse_apply_fortran_options(nse_core)
+if(TARGET nse_grid_preview)
+  nse_apply_fortran_options(nse_grid_preview)
+endif()
 nse_apply_fortran_options(nse_solver)
 
 install(

@@ -12,6 +12,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from case_input import (  # noqa: E402
     CaseInputError,
     _resolve_nse_forcing,
+    _grid_mapping_values,
     NSE_BOUNDARY_FACES,
     _validate_solver_selection,
     derive_nse_hit_transport,
@@ -25,6 +26,24 @@ MANIFEST = (
     FRAMEWORK_ROOT / "SolverLibrary" / "GPE" / "gp3d" / "solver_manifest.yaml"
 )
 NSE_MANIFEST = FRAMEWORK_ROOT / "SolverLibrary" / "NSE" / "solver_manifest.yaml"
+
+
+class GridMappingTests(unittest.TestCase):
+    def test_defaults_preserved(self):
+        self.assertEqual(_grid_mapping_values({}, "NSE"), [])
+
+    def test_strength_and_backend_independence(self):
+        for backend in ("cpu", "cpu_mpi", "cuda_single", "cuda_mpi"):
+            case = {"solver": {"profile": backend}, "grid": {"nx": 8, "ny": 8, "nz": 8,
+                    "mapping": {"type": "sinh", "strength": [0, 2, 2]}}}
+            self.assertEqual(dict(_grid_mapping_values(case, "NSE"))["grid_stretch"], [0, 2, 2])
+
+    def test_rejections(self):
+        for mapping in ({"type": "bad"}, {"type": "uniform", "strength": [1, 0, 0]},
+                        {"strength": [True, 0, 0]}, {"strength": [0, float("nan"), 0]},
+                        {"strength": [0, 21, 0]}, {"strength": [0]}, {"typo": 0}):
+            with self.assertRaises(CaseInputError):
+                _grid_mapping_values({"grid": {"mapping": mapping}}, "NSE")
 
 
 class ForcingTargetTests(unittest.TestCase):

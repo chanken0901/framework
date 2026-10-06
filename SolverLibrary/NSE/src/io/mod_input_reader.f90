@@ -1,4 +1,5 @@
 module mod_input_reader
+  use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config, update_derived_config
   use mod_model_config, only : gpe_config, nse_config
@@ -12,9 +13,13 @@ module mod_input_reader
 
 contains
 
-  subroutine read_common_input(filename, cfg)
+  subroutine read_common_input(filename, cfg, allow_grid_preview)
     character(len=*), intent(in) :: filename
     type(simulation_config), intent(inout) :: cfg
+    logical, optional, intent(in) :: allow_grid_preview
+    logical :: preview
+    character(len=16) :: grid_mapping
+    real(dp) :: grid_stretch(3)
 
     character(len=32)  :: equation, output_format, backend, precision_name
     character(len=256) :: case_name, input_file, output_dir
@@ -28,7 +33,7 @@ contains
     logical :: exists
 
     namelist /simulation/ equation, case_name, input_file, initial_condition, &
-      nx, ny, nz, nghost, &
+      nx, ny, nz, nghost, grid_mapping, grid_stretch, &
       x_min, x_max, y_min, y_max, z_min, z_max, &
       dt, t_max, nsteps, cfl, use_fixed_dt, &
       output_frequency, output_dir, output_format, precision_name, &
@@ -42,6 +47,7 @@ contains
     initial_condition = cfg%initial_condition
     nx = cfg%nx; ny = cfg%ny; nz = cfg%nz
     nghost = cfg%nghost
+    grid_mapping=cfg%grid_mapping;grid_stretch=cfg%grid_stretch
     x_min = cfg%x_min; x_max = cfg%x_max
     y_min = cfg%y_min; y_max = cfg%y_max
     z_min = cfg%z_min; z_max = cfg%z_max
@@ -83,6 +89,16 @@ contains
     cfg%initial_condition = initial_condition
     cfg%nx = nx; cfg%ny = ny; cfg%nz = nz
     cfg%nghost = nghost
+    if(grid_mapping/='uniform'.and.grid_mapping/='sinh') error stop 'Unknown grid_mapping'
+    if(.not.all(ieee_is_finite(grid_stretch))) error stop 'Nonfinite grid_stretch'
+    if(any(grid_stretch<0).or.any(grid_stretch>20)) error stop 'grid_stretch must be in [0,20]'
+    if(grid_mapping=='uniform'.and.any(grid_stretch/=0)) error stop 'uniform requires zero grid_stretch'
+    preview=.false.
+    if(present(allow_grid_preview)) preview=allow_grid_preview
+    if(grid_mapping/='uniform'.and..not.preview) then
+      error stop 'Nonuniform NSE operators are not connected yet; use nse_grid_preview for geometry only'
+    end if
+    cfg%grid_mapping=grid_mapping;cfg%grid_stretch=grid_stretch
     cfg%x_min = x_min; cfg%x_max = x_max
     cfg%y_min = y_min; cfg%y_max = y_max
     cfg%z_min = z_min; cfg%z_max = z_max

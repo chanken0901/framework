@@ -21,6 +21,8 @@ module mod_common_config
     integer :: ny = 64
     integer :: nz = 64
     integer :: nghost = 3
+    character(len=16) :: grid_mapping = 'uniform'
+    real(dp) :: grid_stretch(3) = 0.0_dp
 
     real(dp) :: x_min = 0.0_dp
     real(dp) :: x_max = 1.0_dp

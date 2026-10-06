@@ -19,6 +19,7 @@ distribution:
   required_files:
     - CMakeLists.txt
     - cmake/NSEMPI.cmake
+    - src/main/main_grid_preview.f90
 
 components:
   core:

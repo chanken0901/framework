@@ -1,9 +1,55 @@
 # 単成分NSEの不等間隔格子：実装状況と接続方針
 
 2026-10-06。対象は単成分NSE。CPU、MPI、OpenMP、CUDA、MPI+CUDAの既存選択機能を
-維持して直交不等間隔格子に対応させる作業。**現在は共通格子基盤のみ。本計算は未対応。**
-既存の `case.yaml` やinput.datへ未対応の設定を追加する手順はまだ提供しない。
-等間隔格子の生成・数値処理・環境選択は変更していない。
+維持して直交不等間隔格子に対応させる作業。**現在は入力・格子生成まで。本計算は未対応。**
+等間隔格子の生成・数値処理・環境選択は維持する。
+
+## 入力・プレビュー（追加実装）
+
+case.yamlで次を指定すると、環境の種類とは独立してinput.datへ変換される。
+既存のnx/ny/nz、領域範囲などと同じ `grid` 内に記述する。
+
+```yaml
+grid:
+  # nx/ny/nz、領域範囲などの既存項目も必要
+  mapping:
+    type: sinh
+    strength: [0.0, 2.0, 2.0]
+```
+
+これは現時点では**幾何プレビュー専用**。本ソルバーに渡すと、
+CPU/MPI/CUDA/MPI+CUDA共通の入力段階で「演算未接続」と明示して停止する。
+solver側からこの停止を解除する入力スイッチはない。
+`mapping` を省略すれば以前と同じinput.datを生成する。
+`type: uniform` のstrengthは全て0に限る。
+未知キー、3要素以外、非有限値、負値、20超、真偽値を拒否する。
+GPEへsinhを転用する設定は拒否する。
+
+伸長用に全域の軸情報から局所範囲のセル中心・面積・体積を生成する経路を追加した。
+MPI通信を行う処理ではなく、各領域が同じ全域座標から切り出す構成。
+現在の非周期ゴースト座標延長では物理端の幅を鏡映する。周期境界との接続は未完了。
+sim%dx/dy/dzは伸長時には全域最小幅となるため、平均間隔とは区別する必要がある。
+
+プレビューは各軸の左右境界・中心・幅をCSVへ出す（3D配列は作らない）。
+ソルバー、MPIランチャー、GPU計算を起動せず、1プロセスで実行する。
+
+Windows PowerShell、既存CPUビルドを使う例：
+
+```powershell
+cmake --build build/nse-positivity-cpu --target nse_grid_preview
+.\build\nse-positivity-cpu\bin\nse_grid_preview.exe SolverLibrary/NSE/tests/input_grid_preview.dat build/grid_preview.csv
+```
+
+Linux、同じ名前でCPUビルドを構成済みの場合：
+
+```bash
+cmake --build build/nse-positivity-cpu --target nse_grid_preview
+./build/nse-positivity-cpu/bin/nse_grid_preview SolverLibrary/NSE/tests/input_grid_preview.dat build/grid_preview.csv
+```
+
+生成環境ではサンプルの代わりに自分のinput.datを指定できる。
+出力先の親フォルダが必要。既存CSVは上書きしない。
+今回の確認はCPU構成のビルドのみ。実行例、Python回帰、MPI/CUDA実行は未検証。
 
 ## 今回追加したもの
 
@@ -32,10 +78,10 @@ APIにはn>=ng>=3の制限がある。
 
 ## 残作業（完了条件）
 
-1. 共通入力：grid設定のcase.yaml→input.dat変換、テンプレート、既定uniform、
-   設定値の検査。CPU/MPI/CUDA/MPI+CUDAの選択は独立させる。
+1. 共通入力：case.yaml→input.dat、テンプレートコメント、既定uniform、値検査は追加済み。
+   実行環境生成を通した回帰確認は残る。
 2. 格子と入出力：既存 `mod_grid_fvm` への接続、MPI局所範囲への切出し、
-   SLF座標とメタデータ、初期化と境界の距離依存処理。
+   SLF座標とメタデータ、初期化と境界の距離依存処理。伸長用の局所幾何生成までは追加済み。
 3. 保存的演算：KEEP2/KEEP6、WENO5Z、ハイブリッド、粘性・熱流束・CFLを
    不等間隔用に整合させる。形式的な点微分の精度と保存性を別々に確認する。
 4. GPU：同じ座標・係数をGPUへ常駐させ、CUDA/MPI+CUDAの演算を接続。
@@ -47,7 +93,7 @@ APIにはn>=ng>=3の制限がある。
 
 いずれかの環境を廃止したり、不等間隔指定を黙って等間隔へ戻したりしない。
 上記が未完了である間は、不等間隔計算が可能になったとは案内しない。
-今回のモジュールは既存計算に自動適用されず、設定だけで未接続の計算へ入ることもない。
+入力のsinh指定はプレビューにのみ使用でき、未接続の計算へ入ることはない。
 
 ## 確認状況
 

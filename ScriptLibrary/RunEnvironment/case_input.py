@@ -1661,6 +1661,42 @@ def _validate_solver_selection(
         raise CaseInputError("case solver.omp_threads must be a positive integer")
 
 
+def _grid_mapping_values(case: dict[str, Any], equation: str) -> list[tuple[str, Any]]:
+    raw = nested(case, "grid.mapping")
+    if raw is None:
+        return []  # Preserve legacy generated inputs byte-for-byte.
+    mapping = _mapping(raw, "grid.mapping")
+    unknown = set(mapping) - {"type", "strength"}
+    if unknown:
+        raise CaseInputError(f"unknown grid.mapping keys: {sorted(unknown)}")
+    kind = mapping.get("type", "uniform")
+    if kind not in ("uniform", "sinh"):
+        raise CaseInputError("grid.mapping.type must be uniform or sinh")
+    strength = mapping.get("strength", [0.0, 0.0, 0.0])
+    if not isinstance(strength, list) or len(strength) != 3:
+        raise CaseInputError("grid.mapping.strength must contain three numbers [x,y,z]")
+    if any(isinstance(value, bool) for value in strength):
+        raise CaseInputError("grid.mapping.strength must not contain booleans")
+    strength = [_finite_float(value, "grid.mapping.strength") for value in strength]
+    if any(value < 0 or value > 20 for value in strength):
+        raise CaseInputError("grid.mapping.strength must be in [0,20]")
+    if kind == "uniform" and any(strength):
+        raise CaseInputError("uniform grid.mapping requires zero strength")
+    if equation.upper() != "NSE":
+        if kind != "uniform":
+            raise CaseInputError("nonuniform grid.mapping is only available for NSE geometry preview")
+        return []
+    if kind == "sinh":
+        nghost = nested(case, "grid.nghost", 3)
+        if type(nghost) is not int or nghost < 3:
+            raise CaseInputError("sinh grid requires integer grid.nghost >= 3")
+        for key in ("nx", "ny", "nz"):
+            n = nested(case, f"grid.{key}")
+            if type(n) is not int or n < nghost:
+                raise CaseInputError(f"sinh grid requires grid.{key} >= grid.nghost")
+    return [("grid_mapping", kind), ("grid_stretch", strength)]
+
+
 def _common_values(
     case: dict[str, Any],
     equation: str,
@@ -1719,6 +1755,7 @@ def _common_values(
         ("rank", 0),
         ("nprocs", processes),
     ]
+    values.extend(_grid_mapping_values(case, equation))
     return values
 
 
