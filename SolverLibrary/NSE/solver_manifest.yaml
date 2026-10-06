@@ -32,6 +32,7 @@ components:
       - src/extensions/fluctuating/mod_nse_fluctuating.f90
       - src/forcing/mod_nse_forcing_common.f90
       - src/grid/mod_grid_fvm.f90
+      - src/grid/mod_grid_axis.f90
       - src/field/mod_field_nse.f90
       - src/io/mod_input_reader.f90
       - src/io/mod_slf_output.f90

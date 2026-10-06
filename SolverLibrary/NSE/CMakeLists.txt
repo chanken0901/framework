@@ -437,6 +437,7 @@ set(
   src/common/mod_model_config.f90
   src/forcing/mod_nse_forcing_common.f90
   src/grid/mod_grid_fvm.f90
+  src/grid/mod_grid_axis.f90
   src/field/mod_field_nse.f90
   src/io/mod_input_reader.f90
   ${NSE_MPI_SOURCE}
@@ -513,6 +514,7 @@ if("${NSE_CORE_SOURCES}" MATCHES "mod_nse_spatial_operator[.]f90|mod_nse_gpu_cud
     list(APPEND NSE_CORE_SOURCES src/extensions/fluctuating/mod_nse_fluctuating.f90)
   endif()
 endif()
+list(APPEND NSE_CORE_SOURCES src/grid/mod_grid_axis.f90)
 list(REMOVE_DUPLICATES NSE_CORE_SOURCES)
 add_library(nse_core STATIC ${NSE_CORE_SOURCES})
 add_library(NSE::core ALIAS nse_core)
@@ -1114,6 +1116,13 @@ if(BUILD_TESTING AND NSE_ENABLE_CUFFTMP_CONTRACT_TESTS)
   )
 endif()
 if(BUILD_TESTING)
+  add_executable(nse_test_grid_axis tests/test_grid_axis.f90)
+  target_link_libraries(nse_test_grid_axis PRIVATE NSE::core)
+  set_target_properties(nse_test_grid_axis PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+  nse_apply_fortran_options(nse_test_grid_axis)
+  add_test(NAME nse_grid_axis COMMAND $<TARGET_FILE:nse_test_grid_axis>)
+  add_test(NAME nse_grid_axis_reject_duplicate COMMAND $<TARGET_FILE:nse_test_grid_axis> duplicate)
+  set_tests_properties(nse_grid_axis_reject_duplicate PROPERTIES WILL_FAIL TRUE)
   add_executable(nse_test_fluctuating tests/test_fluctuating.f90)
   target_link_libraries(nse_test_fluctuating PRIVATE NSE::core)
   set_target_properties(nse_test_fluctuating PROPERTIES
