@@ -514,7 +514,8 @@ if("${NSE_CORE_SOURCES}" MATCHES "mod_nse_spatial_operator[.]f90|mod_nse_gpu_cud
     list(APPEND NSE_CORE_SOURCES src/extensions/fluctuating/mod_nse_fluctuating.f90)
   endif()
 endif()
-list(APPEND NSE_CORE_SOURCES src/grid/mod_grid_axis.f90)
+list(APPEND NSE_CORE_SOURCES src/grid/mod_grid_axis.f90
+  src/numerics/reconstruction/mod_reconstruction_nonuniform.f90)
 list(REMOVE_DUPLICATES NSE_CORE_SOURCES)
 add_library(nse_core STATIC ${NSE_CORE_SOURCES})
 add_library(NSE::core ALIAS nse_core)
@@ -1125,6 +1126,14 @@ if(BUILD_TESTING AND NSE_ENABLE_CUFFTMP_CONTRACT_TESTS)
   )
 endif()
 if(BUILD_TESTING)
+  add_executable(nse_test_nonuniform_weno tests/test_nonuniform_weno.f90
+    src/numerics/reconstruction/mod_reconstruction_weno5z.f90)
+  target_link_libraries(nse_test_nonuniform_weno PRIVATE NSE::core)
+  set_target_properties(nse_test_nonuniform_weno PROPERTIES
+    Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/nonuniform_weno_test"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+  nse_apply_fortran_options(nse_test_nonuniform_weno)
+  add_test(NAME nse_nonuniform_weno COMMAND $<TARGET_FILE:nse_test_nonuniform_weno>)
   add_executable(nse_test_grid_axis tests/test_grid_axis.f90)
   target_link_libraries(nse_test_grid_axis PRIVATE NSE::core)
   set_target_properties(nse_test_grid_axis PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")

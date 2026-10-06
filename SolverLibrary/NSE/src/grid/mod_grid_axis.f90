@@ -1,10 +1,12 @@
 module mod_grid_axis
   ! Backend-neutral axis geometry. Not yet wired to production NSE operators.
   use mod_precision, only: dp
+  use mod_reconstruction_nonuniform, only: weno_face_geometry,build_weno_geometry
   use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
   implicit none
   private
   public :: grid_axis,build_axis,build_sinh_axis,axis_derivative_weights
+  public :: prepare_axis_weno
   type :: grid_axis
     integer :: n=0,ng=0
     logical :: periodic=.false.
@@ -12,8 +14,19 @@ module mod_grid_axis
     real(dp), allocatable :: edge(:),center(:),width(:)
     ! Offset is contiguous: directly packable for GPU, global cell indexing.
     real(dp), allocatable :: d1(:,:),d2(:,:)
+    type(weno_face_geometry), allocatable :: weno_left(:),weno_right(:)
   end type
 contains
+  subroutine prepare_axis_weno(axis)
+    type(grid_axis), intent(inout) :: axis
+    integer :: f
+    if(allocated(axis%weno_left)) deallocate(axis%weno_left,axis%weno_right)
+    allocate(axis%weno_left(0:axis%n),axis%weno_right(0:axis%n))
+    do f=0,axis%n
+      call build_weno_geometry(axis%edge(f-3:f+2),axis%weno_left(f))
+      call build_weno_geometry(-axis%edge(f+3:f-2:-1),axis%weno_right(f))
+    end do
+  end subroutine
   subroutine check(valid,message)
     logical, intent(in) :: valid
     character(*), intent(in) :: message

@@ -3,6 +3,8 @@ module mod_convective_weno5z_roe
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config
+  use mod_grid_fvm, only: axis_x,axis_y,axis_z
+  use mod_reconstruction_nonuniform, only: reconstruct_nonuniform_left
   use mod_reconstruction_weno5z, only : reconstruct_weno5z_left, &
     reconstruct_weno5z_right
   use mod_riemann_roe, only : rotate_conserved_to_normal, &
@@ -84,6 +86,16 @@ contains
       end do
       left_characteristic(characteristic) = &
         reconstruct_weno5z_left(characteristic_stencil)
+      if(sim%grid_mapping=='sinh') then
+        select case(direction)
+        case(1)
+          left_characteristic(characteristic)=reconstruct_nonuniform_left(characteristic_stencil,axis_x%weno_left(i))
+        case(2)
+          left_characteristic(characteristic)=reconstruct_nonuniform_left(characteristic_stencil,axis_y%weno_left(j))
+        case(3)
+          left_characteristic(characteristic)=reconstruct_nonuniform_left(characteristic_stencil,axis_z%weno_left(k))
+        end select
+      end if
 
       do point = 1, 5
         call normal_state_at_offset(q, i, j, k, direction, point-2, &
@@ -93,6 +105,16 @@ contains
       end do
       right_characteristic(characteristic) = &
         reconstruct_weno5z_right(characteristic_stencil)
+      if(sim%grid_mapping=='sinh') then
+        select case(direction)
+        case(1)
+          right_characteristic(characteristic)=reconstruct_nonuniform_left(characteristic_stencil(5:1:-1),axis_x%weno_right(i))
+        case(2)
+          right_characteristic(characteristic)=reconstruct_nonuniform_left(characteristic_stencil(5:1:-1),axis_y%weno_right(j))
+        case(3)
+          right_characteristic(characteristic)=reconstruct_nonuniform_left(characteristic_stencil(5:1:-1),axis_z%weno_right(k))
+        end select
+      end if
     end do
 
     left_state = matmul(right_matrix, left_characteristic)

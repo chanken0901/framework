@@ -1,7 +1,7 @@
 module mod_grid_fvm
   use mod_precision,     only : dp
   use mod_common_config, only : simulation_config
-  use mod_grid_axis, only: grid_axis,build_sinh_axis
+  use mod_grid_axis, only: grid_axis,build_sinh_axis,prepare_axis_weno
   implicit none
 
   private
@@ -114,6 +114,9 @@ contains
     call build_sinh_axis(sim%nx,g,sim%x_min,sim%x_max,sim%grid_stretch(1),.false.,axis_x)
     call build_sinh_axis(sim%ny,g,sim%y_min,sim%y_max,sim%grid_stretch(2),.false.,axis_y)
     call build_sinh_axis(sim%nz,g,sim%z_min,sim%z_max,sim%grid_stretch(3),.false.,axis_z)
+    call prepare_axis_weno(axis_x)
+    call prepare_axis_weno(axis_y)
+    call prepare_axis_weno(axis_z)
     allocate(x_edge(-g:sim%nx+g,js-g-1:je+g,ks-g-1:ke+g))
     allocate(y_edge,mold=x_edge);allocate(z_edge,mold=x_edge)
     allocate(x_cell(1-g:sim%nx+g,js-g:je+g,ks-g:ke+g))
