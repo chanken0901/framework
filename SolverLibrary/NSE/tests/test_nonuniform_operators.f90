@@ -3,7 +3,7 @@ program test_nonuniform_operators
   use mod_common_config, only: simulation_config
   use mod_model_config, only: nse_config
   use mod_grid_axis, only: build_sinh_axis,prepare_axis_weno,pack_axis_geometry
-  use mod_grid_fvm, only: axis_x,axis_y,axis_z
+  use mod_grid_fvm, only: axis_x,axis_y,axis_z,build_stretched_grid
   use mod_convective_hybrid, only: hybrid_face_weight
   use mod_viscous_fv2, only: add_viscous_fv2_rhs
   implicit none
@@ -14,9 +14,10 @@ program test_nonuniform_operators
   real(dp) :: x,u,p,alpha,expected
   integer :: i,j,k,mode
   sim%nx=8;sim%ny=8;sim%nz=8;sim%nghost=3;sim%grid_mapping='sinh'
-  call build_sinh_axis(8,3,0._dp,1._dp,2._dp,.false.,axis_x)
-  call build_sinh_axis(8,3,0._dp,1._dp,1._dp,.false.,axis_y)
-  call build_sinh_axis(8,3,0._dp,1._dp,3._dp,.false.,axis_z)
+  sim%grid_stretch=[2._dp,1._dp,3._dp]
+  call build_stretched_grid(sim,1,8,1,8,[.false.,.true.,.true.])
+  if(axis_x%periodic.or..not.axis_y%periodic.or..not.axis_z%periodic) &
+    error stop 'Physical boundary topology was not passed to grid builder'
   sim%dx=axis_x%minimum_width;sim%dy=axis_y%minimum_width;sim%dz=axis_z%minimum_width
   call prepare_axis_weno(axis_x)
   call pack_axis_geometry(axis_x,2,3,centers,widths,coefficients)

@@ -53,7 +53,8 @@ program main
   ks = k_sta
   ke = k_end
 
-  call build_uniform_grid(sim, js, je, ks, ke)
+  call build_uniform_grid(sim, js, je, ks, ke, &
+    nse%boundary_face_type([1,3,5])=='periodic')
   if (my_rank == root) write(*,'(A)') 'Complete build grid'
 
   call allocate_nse_fields(sim, nse, js, je, ks, ke)
@@ -66,12 +67,10 @@ program main
 
   call write_meta_json(sim, is=1, ie=sim%nx, js=js, je=je, ks=ks, ke=ke, &
     use_cuda=.false.)
-  if (should_output(sim, 0)) then
-    call write_nse_conserved_slf(sim, 0, 0.0_dp, Q, rank=my_rank)
+  if (sim%write_initial) then
+    call write_nse_conserved_slf(sim, sim%step, sim%t, Q, rank=my_rank)
   end if
 
-  sim%t = 0.0_dp
-  sim%step = 0
   sim%ttotal = 0.0_dp
 
   !$OMP PARALLEL DEFAULT(NONE) &

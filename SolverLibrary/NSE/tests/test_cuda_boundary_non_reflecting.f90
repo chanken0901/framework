@@ -1,6 +1,8 @@
 program test_cuda_boundary_non_reflecting
   use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
   use mod_precision, only : dp
+  use mod_grid_axis, only : build_sinh_axis,prepare_axis_weno
+  use mod_grid_fvm, only : axis_x,axis_y,axis_z
   use mod_common_config, only : simulation_config, init_simulation_config
   use mod_model_config, only : nse_config, init_nse_config, &
     nse_boundary_face_count, nse_face_x_min, nse_face_x_max
@@ -12,6 +14,8 @@ program test_cuda_boundary_non_reflecting
   type(simulation_config) :: sim
   type(nse_config) :: nse
   integer :: face
+  character(len=32) :: test_mode
+  call get_command_argument(1,test_mode)
 
   call init_simulation_config(sim)
   call init_nse_config(nse)
@@ -50,6 +54,18 @@ program test_cuda_boundary_non_reflecting
   nse%boundary_face_type(nse_face_x_max) = 'non_reflecting'
   call compare_cpu_and_cuda('x non-reflecting, y/z periodic', .true.)
 
+  nse%boundary_face_type='periodic'
+  nse%boundary_face_type(3:4)='non_reflecting'
+  call compare_cpu_and_cuda('y non-reflecting, x/z periodic',.false.)
+  nse%boundary_face_type='periodic'
+  nse%boundary_face_type(5:6)='non_reflecting'
+  call compare_cpu_and_cuda('z non-reflecting, x/y periodic',.false.)
+  nse%boundary_face_type='periodic';nse%boundary_condition='periodic'
+  call compare_cpu_and_cuda('all periodic',.false.)
+  nse%boundary_face_type='non_reflecting';nse%boundary_condition='mixed'
+  nse%boundary_length_scale=.37_dp
+  call compare_cpu_and_cuda('explicit relaxation length',.false.)
+
   write(*,'(A)') 'CUDA non-reflecting boundary comparison passed'
 
 contains
@@ -61,6 +77,19 @@ contains
     real(dp), allocatable :: initial(:,:,:,:), q_cpu(:,:,:,:), q_cuda(:,:,:,:)
     real(dp) :: maximum_error, rho, pressure, velocity(3)
     integer :: i, j, k
+
+    if(test_mode=='stretched') then
+      sim%grid_mapping='sinh'
+      nse%convective_scheme='keep2';nse%viscous_scheme='fv2'
+      call build_sinh_axis(sim%nx,3,sim%x_min,sim%x_max,2._dp, &
+        nse%boundary_face_type(1)=='periodic',axis_x)
+      call build_sinh_axis(sim%ny,3,sim%y_min,sim%y_max,1._dp, &
+        nse%boundary_face_type(3)=='periodic',axis_y)
+      call build_sinh_axis(sim%nz,3,sim%z_min,sim%z_max,1.5_dp, &
+        nse%boundary_face_type(5)=='periodic',axis_z)
+      call prepare_axis_weno(axis_x);call prepare_axis_weno(axis_y);call prepare_axis_weno(axis_z)
+      sim%dx=axis_x%minimum_width;sim%dy=axis_y%minimum_width;sim%dz=axis_z%minimum_width
+    end if
 
     allocate(initial(1-sim%nghost:sim%nx+sim%nghost, &
       1-sim%nghost:sim%ny+sim%nghost, &

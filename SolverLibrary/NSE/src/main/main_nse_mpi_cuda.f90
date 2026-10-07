@@ -79,7 +79,8 @@ program main_nse_mpi_cuda
   write(*,'(A,I0,A,I0,A,4(I0,1X))') '# rank=', my_rank, &
     ' cuda_device=', selected_device, ' local_range=', js, je, ks, ke
 
-  call build_uniform_grid(sim, js, je, ks, ke)
+  call build_uniform_grid(sim, js, je, ks, ke, &
+    nse%boundary_face_type([1,3,5])=='periodic')
   allocate(q(1-sim%nghost:sim%nx+sim%nghost, &
     js-sim%nghost:je+sim%nghost, ks-sim%nghost:ke+sim%nghost, nse%nv))
   q = 0.0_dp
@@ -101,13 +102,11 @@ program main_nse_mpi_cuda
     call write_meta_json(sim, is=1, ie=sim%nx, js=js, je=je, ks=ks, &
       ke=ke, use_cuda=.true.)
   end if
-  if (should_output(sim, 0)) then
+  if (sim%write_initial) then
     call nse_gpu_download(gpu, q)
-    call write_nse_conserved_slf(sim, 0, 0.0_dp, q, rank=my_rank)
+    call write_nse_conserved_slf(sim, sim%step, sim%t, q, rank=my_rank)
   end if
 
-  sim%t = 0.0_dp
-  sim%step = 0
   sim%ttotal = 0.0_dp
   if (my_rank == root) then
     write(*,'(A)') '# step time dt step_wall_seconds total_wall_seconds'

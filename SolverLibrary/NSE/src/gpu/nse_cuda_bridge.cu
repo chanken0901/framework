@@ -57,6 +57,7 @@ struct GridView {
   const double* axis_center[3]{};
   const double* axis_width[3]{};
   const double* axis_keep6_metric[3]{};
+  double axis_domain_length[3]{};
   const double* axis_weno[3]{};
   int nx;
   int ny;
@@ -490,7 +491,8 @@ __global__ void boundary_halo_kernel(
           ? grid.nghost - x : x - (grid.nghost + grid.nx) + 1;
       apply_non_reflecting_state(
           state, boundary, x_face, 0, x_low ? -1.0 : 1.0, layer,
-          dx, dx * static_cast<double>(grid.nx), gamma, small_rho, small_p);
+          grid.axis_center[0]?fabs(grid.axis_center[0][x]-grid.axis_center[0][x_low?grid.nghost:grid.nghost+grid.nx-1])/layer:dx,
+          grid.axis_center[0]?grid.axis_domain_length[0]:dx*grid.nx,gamma,small_rho,small_p);
     }
   }
   if (y_halo) {
@@ -503,7 +505,8 @@ __global__ void boundary_halo_kernel(
           ? grid.nghost - y : y - (grid.nghost + grid.ny) + 1;
       apply_non_reflecting_state(
           state, boundary, y_face, 1, y_low ? -1.0 : 1.0, layer,
-          dy, dy * static_cast<double>(global_ny), gamma, small_rho, small_p);
+          grid.axis_center[1]?fabs(grid.axis_center[1][y]-grid.axis_center[1][y_low?grid.nghost:grid.nghost+grid.ny-1])/layer:dy,
+          grid.axis_center[1]?grid.axis_domain_length[1]:dy*global_ny,gamma,small_rho,small_p);
     }
   }
   if (z_halo) {
@@ -516,7 +519,8 @@ __global__ void boundary_halo_kernel(
           ? grid.nghost - z : z - (grid.nghost + grid.nz) + 1;
       apply_non_reflecting_state(
           state, boundary, z_face, 2, z_low ? -1.0 : 1.0, layer,
-          dz, dz * static_cast<double>(global_nz), gamma, small_rho, small_p);
+          grid.axis_center[2]?fabs(grid.axis_center[2][z]-grid.axis_center[2][z_low?grid.nghost:grid.nghost+grid.nz-1])/layer:dz,
+          grid.axis_center[2]?grid.axis_domain_length[2]:dz*global_nz,gamma,small_rho,small_p);
     }
   }
   for (int variable = 0; variable < nvar; ++variable) {
@@ -3262,9 +3266,9 @@ NSE_CUDA_EXPORT int nse_cuda_compute_dt(void* handle, double* dt) {
 }
 
 NSE_CUDA_EXPORT int nse_cuda_upload_axis(void* handle, int axis, int n,
-    const double* centers, const double* widths, const double* coefficients) {
+    const double* centers, const double* widths, const double* coefficients, double domain_length) {
   auto* c=static_cast<NseCudaContext*>(handle);
-  if(!c || axis<0 || axis>2 || !centers || !widths || !coefficients) {
+  if(!c || axis<0 || axis>2 || !centers || !widths || !coefficients || !std::isfinite(domain_length) || domain_length<=0) {
     set_error("invalid axis geometry upload"); return 1;
   }
   const int expected[3]={c->grid.nx,c->grid.ny,c->grid.nz};
@@ -3314,6 +3318,7 @@ NSE_CUDA_EXPORT int nse_cuda_upload_axis(void* handle, int axis, int n,
   c->axis_storage[axis]=storage;
   c->grid.axis_center[axis]=storage;c->grid.axis_width[axis]=storage+count;
   c->grid.axis_keep6_metric[axis]=storage+2*count;
+  c->grid.axis_domain_length[axis]=domain_length;
   c->grid.axis_weno[axis]=storage+3*count;
   return 0;
 }

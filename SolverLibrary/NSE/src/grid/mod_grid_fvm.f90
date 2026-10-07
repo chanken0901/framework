@@ -31,15 +31,16 @@ module mod_grid_fvm
 
 contains
 
-  subroutine build_uniform_grid(sim, js, je, ks, ke)
+  subroutine build_uniform_grid(sim, js, je, ks, ke, periodic)
     type(simulation_config), intent(inout) :: sim
     integer, intent(in) :: js, je, ks, ke
+    logical, optional, intent(in) :: periodic(3)
 
     integer :: i, j, k
     real(dp) :: dx, dy, dz
 
     if(trim(sim%grid_mapping)=='sinh') then
-      call build_stretched_grid(sim,js,je,ks,ke)
+      call build_stretched_grid(sim,js,je,ks,ke,periodic)
       return
     end if
     if(trim(sim%grid_mapping)/='uniform') error stop 'Unsupported grid mapping'
@@ -101,19 +102,23 @@ contains
 
   end subroutine build_uniform_grid
 
-  subroutine build_stretched_grid(sim,js,je,ks,ke)
+  subroutine build_stretched_grid(sim,js,je,ks,ke,periodic)
     type(simulation_config), intent(inout) :: sim
     integer, intent(in) :: js,je,ks,ke
+    logical, optional, intent(in) :: periodic(3)
+    logical :: wrap(3)
     integer :: i,j,k,g
     real(dp) :: dx,dy,dz
     g=sim%nghost
+    wrap=.false.
+    if(present(periodic)) wrap=periodic
     if(js<1.or.je>sim%ny.or.ks<1.or.ke>sim%nz.or.js>je.or.ks>ke) error stop 'Invalid grid partition'
     if(allocated(vol)) error stop 'Grid already allocated'
     ! Global geometry is generated deterministically before selecting local indices.
-    ! Physical-boundary ghost widths are mirrored; periodic mapping is not connected yet.
-    call build_sinh_axis(sim%nx,g,sim%x_min,sim%x_max,sim%grid_stretch(1),.false.,axis_x)
-    call build_sinh_axis(sim%ny,g,sim%y_min,sim%y_max,sim%grid_stretch(2),.false.,axis_y)
-    call build_sinh_axis(sim%nz,g,sim%z_min,sim%z_max,sim%grid_stretch(3),.false.,axis_z)
+    ! Wrap periodic axes; mirror widths only at nonperiodic physical boundaries.
+    call build_sinh_axis(sim%nx,g,sim%x_min,sim%x_max,sim%grid_stretch(1),wrap(1),axis_x)
+    call build_sinh_axis(sim%ny,g,sim%y_min,sim%y_max,sim%grid_stretch(2),wrap(2),axis_y)
+    call build_sinh_axis(sim%nz,g,sim%z_min,sim%z_max,sim%grid_stretch(3),wrap(3),axis_z)
     call prepare_axis_weno(axis_x)
     call prepare_axis_weno(axis_y)
     call prepare_axis_weno(axis_z)

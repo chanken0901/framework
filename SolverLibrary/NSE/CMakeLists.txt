@@ -1451,6 +1451,9 @@ if(BUILD_TESTING AND NSE_USE_MPI AND NSE_GPU_BACKEND STREQUAL "none")
     )
     target_link_libraries(nse_test_boundary_non_reflecting PRIVATE NSE::core)
     nse_apply_fortran_options(nse_test_boundary_non_reflecting)
+    add_test(NAME nse_stretched_boundary_mpi
+      COMMAND mpiexec -n 4 $<TARGET_FILE:nse_test_boundary_non_reflecting> stretched)
+    set_tests_properties(nse_stretched_boundary_mpi PROPERTIES TIMEOUT 60 ENVIRONMENT "OMP_NUM_THREADS=2")
     add_test(
       NAME nse_boundary_non_reflecting
       COMMAND mpiexec -n 4 $<TARGET_FILE:nse_test_boundary_non_reflecting>
@@ -1666,6 +1669,9 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda" AND NOT NSE_USE_MPI)
   )
   target_link_libraries(nse_test_cuda_boundary_non_reflecting PRIVATE NSE::core)
   nse_apply_fortran_options(nse_test_cuda_boundary_non_reflecting)
+  add_test(NAME nse_stretched_boundary_cuda
+    COMMAND $<TARGET_FILE:nse_test_cuda_boundary_non_reflecting> stretched)
+  set_tests_properties(nse_stretched_boundary_cuda PROPERTIES TIMEOUT 60)
   add_test(
     NAME nse_cuda_boundary_non_reflecting_compare
     COMMAND $<TARGET_FILE:nse_test_cuda_boundary_non_reflecting>

@@ -1,6 +1,8 @@
 module mod_nse_boundary
   use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
   use mod_precision, only : dp
+  use mod_grid_fvm, only : axis_x,axis_y,axis_z
+  use mod_grid_axis, only : grid_axis
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config, nse_boundary_face_count, &
     nse_face_x_min, nse_face_x_max, nse_face_y_min, nse_face_y_max, &
@@ -18,8 +20,23 @@ module mod_nse_boundary
   public :: validate_boundary_scheme
   public :: boundary_required_ghost_cells
   public :: boundary_scheme_name
+  public :: boundary_ghost_distance
 
 contains
+
+  real(dp) function boundary_ghost_distance(axis,high,layer) result(distance)
+    type(grid_axis), intent(in) :: axis
+    logical, intent(in) :: high
+    integer, intent(in) :: layer
+    if(.not.allocated(axis%center)) error stop 'Boundary grid coordinates are missing'
+    if(layer<1.or.layer>axis%ng) error stop 'Invalid boundary ghost layer'
+    if(high) then
+      distance=axis%center(axis%n+layer)-axis%center(axis%n)
+    else
+      distance=axis%center(1)-axis%center(1-layer)
+    end if
+    if(.not.ieee_is_finite(distance).or.distance<=0) error stop 'Invalid boundary ghost distance'
+  end function
 
   subroutine apply_nse_boundary(q, sim, nse, js, je, ks, ke)
     type(simulation_config), intent(in) :: sim
@@ -46,7 +63,8 @@ contains
       js-sim%nghost, je+sim%nghost, ks-sim%nghost, ke+sim%nghost)
     ! The second staged exchange propagates completed physical-face values
     ! through transverse MPI halos for sixth-order mixed derivatives.
-    if (trim(adjustl(nse%viscous_scheme)) == 'central6') then
+    if (trim(adjustl(nse%viscous_scheme)) == 'central6' .or. &
+        trim(adjustl(nse%viscous_scheme)) == 'fv2') then
       call mp_send_recv_pre_r8_Vec(q, sim%nghost, &
         1-sim%nghost, sim%nx+sim%nghost, &
         js-sim%nghost, je+sim%nghost, ks-sim%nghost, ke+sim%nghost)
@@ -245,7 +263,7 @@ contains
     real(dp) :: jminus_i, jplus_i, jminus_r, jplus_r
     real(dp) :: jminus_b, jplus_b, entropy_i, entropy_r, entropy_b
     real(dp) :: sound_b, rho_b, pressure_b, alpha
-    real(dp) :: spacing, length_scale
+    real(dp) :: spacing, length_scale, distance
     integer :: component
 
     call conserved_to_primitive(q_inside, rho_i, velocity_i, pressure_i, &
@@ -277,11 +295,19 @@ contains
     case default
       error stop 'invalid non-reflecting boundary normal axis'
     end select
+    distance=real(ghost_layer,dp)*spacing
+    if(sim%grid_mapping=='sinh') then
+      select case(normal_axis)
+      case(1);distance=boundary_ghost_distance(axis_x,outward_sign>0,ghost_layer)
+      case(2);distance=boundary_ghost_distance(axis_y,outward_sign>0,ghost_layer)
+      case(3);distance=boundary_ghost_distance(axis_z,outward_sign>0,ghost_layer)
+      end select
+    end if
     if (nse%boundary_length_scale > 0.0_dp) then
       length_scale = nse%boundary_length_scale
     end if
     alpha = 1.0_dp - exp(-nse%boundary_relaxation_strength * &
-      real(ghost_layer,dp) * spacing / length_scale)
+      distance / length_scale)
     alpha = max(0.0_dp, min(1.0_dp, alpha))
     if (normal_i + sound_i < 0.0_dp) alpha = 1.0_dp
 

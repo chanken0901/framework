@@ -3,6 +3,8 @@ module mod_nse_gpu
     c_int, c_double, c_char, c_null_char, c_size_t
   use, intrinsic :: iso_fortran_env, only : error_unit
   use mod_precision, only : dp
+  use mod_grid_axis, only: pack_axis_geometry
+  use mod_grid_fvm, only: axis_x,axis_y,axis_z
   use module_mpi, only : nprocs, mp_stop
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config, nse_boundary_face_count
@@ -53,6 +55,15 @@ module mod_nse_gpu
   public :: validate_nse_gpu_configuration
 
   interface
+    function c_upload_axis(handle,axis,n,centers,widths,coefficients,domain_length) &
+        bind(C,name="nse_cuda_upload_axis") result(status)
+      import :: c_ptr,c_int,c_double
+      type(c_ptr), value :: handle
+      integer(c_int), value :: axis,n
+      real(c_double), intent(in) :: centers(*),widths(*),coefficients(*)
+      real(c_double), value :: domain_length
+      integer(c_int) :: status
+    end function
     function c_device_mpi_available() bind(C,name="nse_cuda_device_mpi_available") result(status)
       import :: c_int
       integer(c_int) :: status
@@ -271,10 +282,10 @@ contains
       end if
     end if
     if (trim(adjustl(nse%viscous_scheme)) /= "none" .and. &
-        trim(adjustl(nse%viscous_scheme)) /= "central6") then
-      error stop "CUDA backend supports viscous_scheme=none or central6"
+        trim(adjustl(nse%viscous_scheme)) /= "central6".and.trim(nse%viscous_scheme)/='fv2') then
+      error stop "CUDA backend supports viscous_scheme=none, central6 or fv2"
     end if
-    if (trim(adjustl(nse%viscous_scheme)) == "central6") then
+    if (trim(adjustl(nse%viscous_scheme)) == "central6".or.trim(nse%viscous_scheme)=='fv2') then
       if (sim%nghost < 3) then
         error stop "CUDA central6 viscosity requires at least three ghost cells"
       end if
@@ -285,6 +296,8 @@ contains
         error stop "CUDA central6 viscosity requires prandtl > 0"
       end if
     end if
+    if(trim(nse%viscous_scheme)=='fv2'.and.sim%grid_mapping/='sinh') &
+      error stop 'CUDA fv2 requires stretched geometry'
     call validate_boundary_scheme(sim, nse)
     call validate_fh(sim,nse)
     if (trim(adjustl(nse%time_integrator)) /= "ssprk3") then
@@ -323,6 +336,7 @@ contains
     real(c_double) :: boundary_reference(5,nse_boundary_face_count)
     integer :: cuda_ny, cuda_nz, cuda_device
     integer :: cuda_global_y_start, cuda_global_z_start, face
+    real(dp), allocatable :: centers(:),widths(:),coefficients(:,:,:)
 
     call validate_nse_gpu_configuration(sim, nse)
     if (kind(1.0_dp) /= c_double) then
@@ -380,6 +394,7 @@ contains
     end do
 
     viscous_enabled = 0_c_int
+    if(trim(nse%viscous_scheme)=='fv2') viscous_enabled=2_c_int
     if (trim(adjustl(nse%viscous_scheme)) == "central6") then
       viscous_enabled = 1_c_int
     end if
@@ -418,6 +433,17 @@ contains
       nse%forcing_denominator_floor, nse%forcing_max_coefficient, &
       nse%hybrid_sensor_onset, nse%hybrid_sensor_full)
     call require_success(status, "initialize NSE CUDA context")
+    if(sim%grid_mapping=='sinh') then
+      call pack_axis_geometry(axis_x,0,sim%nx,centers,widths,coefficients)
+      status=c_upload_axis(context%handle,0_c_int,int(sim%nx,c_int),centers,widths,coefficients,sim%x_max-sim%x_min)
+      call require_success(status,'upload resident x geometry')
+      call pack_axis_geometry(axis_y,cuda_global_y_start,cuda_ny,centers,widths,coefficients)
+      status=c_upload_axis(context%handle,1_c_int,int(cuda_ny,c_int),centers,widths,coefficients,sim%y_max-sim%y_min)
+      call require_success(status,'upload resident y geometry')
+      call pack_axis_geometry(axis_z,cuda_global_z_start,cuda_nz,centers,widths,coefficients)
+      status=c_upload_axis(context%handle,2_c_int,int(cuda_nz,c_int),centers,widths,coefficients,sim%z_max-sim%z_min)
+      call require_success(status,'upload resident z geometry')
+    end if
     if(nse%fh_enabled) then
       status=c_nse_cuda_configure_fh(context%handle,nse%fh_boltzmann_number, &
         int(nse%fh_seed,c_int),int(sim%step,c_int))
