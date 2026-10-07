@@ -2,6 +2,7 @@ module mod_convective_hybrid
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config
+  use mod_grid_fvm, only : axis_x, axis_y, axis_z
   use mod_convective_leaf_registry, only : compute_leaf_face_flux, &
     validate_leaf_scheme, leaf_required_ghost_cells
   implicit none
@@ -116,6 +117,7 @@ contains
     real(dp) :: divergence, scaled_divergence, compression, vorticity(3)
     real(dp) :: scaled_vorticity(3), rate_scale
     real(dp) :: vorticity_squared, pressure_curvature, ducros_factor
+    real(dp) :: vc(3), gx(3), gy(3), gz(3), dl(3), dr(3), hm, hp
 
     call velocity_pressure_at(q, i-1, j, k, sim, nse, js, ks, &
       velocity_xm, pressure_minus)
@@ -139,6 +141,18 @@ contains
       (velocity_xp(3)-velocity_xm(3))/(2.0_dp*sim%dx)
     vorticity(3) = (velocity_xp(2)-velocity_xm(2))/(2.0_dp*sim%dx) - &
       (velocity_yp(1)-velocity_ym(1))/(2.0_dp*sim%dy)
+    if (sim%grid_mapping == 'sinh') then
+      call velocity_pressure_at(q,i,j,k,sim,nse,js,ks,vc,pressure_center)
+      dl=[axis_x%center(i)-axis_x%center(i-1), &
+          axis_y%center(j)-axis_y%center(j-1),axis_z%center(k)-axis_z%center(k-1)]
+      dr=[axis_x%center(i+1)-axis_x%center(i), &
+          axis_y%center(j+1)-axis_y%center(j),axis_z%center(k+1)-axis_z%center(k)]
+      gx=(dr(1)*(vc-velocity_xm)/dl(1)+dl(1)*(velocity_xp-vc)/dr(1))/(dl(1)+dr(1))
+      gy=(dr(2)*(vc-velocity_ym)/dl(2)+dl(2)*(velocity_yp-vc)/dr(2))/(dl(2)+dr(2))
+      gz=(dr(3)*(vc-velocity_zm)/dl(3)+dl(3)*(velocity_zp-vc)/dr(3))/(dl(3)+dr(3))
+      divergence=gx(1)+gy(2)+gz(3)
+      vorticity=[gy(3)-gz(2),gz(1)-gx(3),gx(2)-gy(1)]
+    end if
     rate_scale = max(abs(divergence), maxval(abs(vorticity)))
     if (rate_scale <= sqrt(sensor_epsilon)) then
       ducros_factor = 0.0_dp
@@ -157,6 +171,12 @@ contains
     pressure_curvature = abs(pressure_plus-2.0_dp*pressure_center + &
       pressure_minus) / (pressure_plus+2.0_dp*pressure_center + &
       pressure_minus+sensor_epsilon)
+    if (sim%grid_mapping == 'sinh') then
+      ! Distance-weighted curvature: zero for pressure linear in physical coordinates.
+      hm=dl(direction);hp=dr(direction)
+      pressure_curvature=abs(hm*(pressure_plus-pressure_center)-hp*(pressure_center-pressure_minus)) / &
+        (hm*pressure_plus+(hm+hp)*pressure_center+hp*pressure_minus+sensor_epsilon*(hm+hp))
+    end if
     sensor = max(0.0_dp, min(1.0_dp, pressure_curvature*ducros_factor))
   end function ducros_pressure_cell_sensor
 

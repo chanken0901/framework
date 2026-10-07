@@ -74,19 +74,37 @@ __device__ inline double ducros_pressure_cell_sensor_cuda(
       q, grid, i, j, k + 1, gamma, small_rho, small_p,
       velocity_zp, unused_pressure);
 
-  const double divergence =
+  double divergence =
       0.5 * inverse_dx * (velocity_xp[0] - velocity_xm[0])
       + 0.5 * inverse_dy * (velocity_yp[1] - velocity_ym[1])
       + 0.5 * inverse_dz * (velocity_zp[2] - velocity_zm[2]);
-  const double vorticity_x =
+  double vorticity_x =
       0.5 * inverse_dy * (velocity_yp[2] - velocity_ym[2])
       - 0.5 * inverse_dz * (velocity_zp[1] - velocity_zm[1]);
-  const double vorticity_y =
+  double vorticity_y =
       0.5 * inverse_dz * (velocity_zp[0] - velocity_zm[0])
       - 0.5 * inverse_dx * (velocity_xp[2] - velocity_xm[2]);
-  const double vorticity_z =
+  double vorticity_z =
       0.5 * inverse_dx * (velocity_xp[1] - velocity_xm[1])
       - 0.5 * inverse_dy * (velocity_yp[0] - velocity_ym[0]);
+  double dl[3], dr[3];
+  if (grid.axis_center[0]) {
+    double vc[3], grad[3][3];
+    hybrid_velocity_pressure_at_cuda(q,grid,i,j,k,gamma,small_rho,small_p,vc,unused_pressure);
+    const int index[3]={i,j,k};
+    const double* vm[3]={velocity_xm,velocity_ym,velocity_zm};
+    const double* vp[3]={velocity_xp,velocity_yp,velocity_zp};
+    for(int a=0;a<3;++a) {
+      const double* x=grid.axis_center[a]; const int p=index[a];
+      dl[a]=x[p]-x[p-1]; dr[a]=x[p+1]-x[p];
+      for(int v=0;v<3;++v)
+        grad[a][v]=(dr[a]*(vc[v]-vm[a][v])/dl[a]+dl[a]*(vp[a][v]-vc[v])/dr[a])/(dl[a]+dr[a]);
+    }
+    divergence=grad[0][0]+grad[1][1]+grad[2][2];
+    vorticity_x=grad[1][2]-grad[2][1];
+    vorticity_y=grad[2][0]-grad[0][2];
+    vorticity_z=grad[0][1]-grad[1][0];
+  }
   const double rate_scale = fmax(
       fabs(divergence),
       fmax(fabs(vorticity_x), fmax(fabs(vorticity_y), fabs(vorticity_z))));
@@ -117,10 +135,15 @@ __device__ inline double ducros_pressure_cell_sensor_cuda(
   const double pressure_plus = hybrid_pressure_at_cuda(
       q, grid, i + di, j + dj, k + dk,
       gamma, small_rho, small_p);
-  const double pressure_curvature = fabs(
+  double pressure_curvature = fabs(
       pressure_plus - 2.0 * pressure_center + pressure_minus) / (
       pressure_plus + 2.0 * pressure_center + pressure_minus
       + sensor_epsilon);
+  if(grid.axis_center[0]) {
+    const double hm=dl[direction], hp=dr[direction];
+    pressure_curvature=fabs(hm*(pressure_plus-pressure_center)-hp*(pressure_center-pressure_minus)) /
+        (hm*pressure_plus+(hm+hp)*pressure_center+hp*pressure_minus+sensor_epsilon*(hm+hp));
+  }
   return fmax(0.0, fmin(1.0, pressure_curvature * ducros_factor));
 }
 
@@ -273,7 +296,10 @@ __global__ void rhs_hybrid_kernel(
         gamma, small_rho, small_p, inverse_dx, inverse_dy, inverse_dz,
         plus_flux);
     for (int variable = 0; variable < 5; ++variable) {
-      result[variable] -= inverse_spacing[direction]
+      const int coordinate=direction==0?i:(direction==1?j:k);
+      const double inverse_width=grid.axis_width[direction]?
+          1.0/grid.axis_width[direction][coordinate]:inverse_spacing[direction];
+      result[variable] -= inverse_width
           * (plus_flux[variable] - minus_flux[variable]);
     }
   }

@@ -515,8 +515,10 @@ if("${NSE_CORE_SOURCES}" MATCHES "mod_nse_spatial_operator[.]f90|mod_nse_gpu_cud
   endif()
 endif()
 list(APPEND NSE_CORE_SOURCES src/grid/mod_grid_axis.f90
-  src/numerics/reconstruction/mod_reconstruction_nonuniform.f90
-  src/numerics/viscous/mod_viscous_fv2.f90)
+  src/numerics/reconstruction/mod_reconstruction_nonuniform.f90)
+if("${NSE_CORE_SOURCES}" MATCHES "mod_grid_fvm[.]f90")
+  list(APPEND NSE_CORE_SOURCES src/numerics/viscous/mod_viscous_fv2.f90)
+endif()
 list(REMOVE_DUPLICATES NSE_CORE_SOURCES)
 add_library(nse_core STATIC ${NSE_CORE_SOURCES})
 add_library(NSE::core ALIAS nse_core)
@@ -1327,6 +1329,13 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "none")
   )
 
   add_executable(nse_test_hybrid_flux tests/test_hybrid_flux.f90)
+  add_executable(nse_test_nonuniform_operators tests/test_nonuniform_operators.f90)
+  target_link_libraries(nse_test_nonuniform_operators PRIVATE NSE::core)
+  set_target_properties(nse_test_nonuniform_operators PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+  nse_apply_fortran_options(nse_test_nonuniform_operators)
+  add_test(NAME nse_nonuniform_operators COMMAND $<TARGET_FILE:nse_test_nonuniform_operators>)
+  set_tests_properties(nse_nonuniform_operators PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=2")
   set_target_properties(
     nse_test_hybrid_flux
     PROPERTIES
