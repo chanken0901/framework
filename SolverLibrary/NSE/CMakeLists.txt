@@ -1295,6 +1295,14 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "none")
   )
 
   add_executable(nse_test_keep6_accuracy tests/test_keep6_accuracy.f90)
+  add_executable(nse_test_nonuniform_keep tests/test_nonuniform_keep.f90)
+  target_link_libraries(nse_test_nonuniform_keep PRIVATE NSE::core)
+  set_target_properties(nse_test_nonuniform_keep PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+  nse_apply_fortran_options(nse_test_nonuniform_keep)
+  add_test(NAME nse_nonuniform_keep COMMAND $<TARGET_FILE:nse_test_nonuniform_keep>)
+  add_test(NAME nse_nonuniform_keep6_rejected COMMAND $<TARGET_FILE:nse_test_nonuniform_keep> reject_keep6)
+  set_tests_properties(nse_nonuniform_keep6_rejected PROPERTIES WILL_FAIL TRUE)
   set_target_properties(
     nse_test_keep6_accuracy
     PROPERTIES

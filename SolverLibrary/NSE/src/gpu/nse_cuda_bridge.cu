@@ -53,6 +53,9 @@ constexpr int boundary_face_z_max = 5;
 thread_local std::string last_error;
 
 struct GridView {
+  const double* axis_center[3]{};
+  const double* axis_width[3]{};
+  const double* axis_weno[3]{};
   int nx;
   int ny;
   int nz;
@@ -71,6 +74,7 @@ struct BoundaryView {
 };
 
 struct NseCudaContext {
+  double* axis_storage[3]{};
   GridView grid{};
   int nvar = 0;
   int device = 0;
@@ -97,6 +101,7 @@ struct NseCudaContext {
   double dy = 0.0;
   double dz = 0.0;
   bool viscous_enabled = false;
+  bool viscous_fv2 = false;
   bool fh_enabled = false;
   double fh_beta = 0.0;
   int fh_seed = 0, fh_step = 0, fh_begin_step = 0;
@@ -200,6 +205,7 @@ void release_context(NseCudaContext* context) {
     return;
   }
   cudaSetDevice(context->device);
+  for (int d=0;d<3;++d) cudaFree(context->axis_storage[d]);
 #if defined(NSE_FORCING_CUFFT)
   if (context->forcing_plan != 0) {
     cufftDestroy(context->forcing_plan);
@@ -932,8 +938,11 @@ __global__ void rhs_keep_kernel(
       const double derivative_coefficient =
           keep_order == 2 ? 0.5
                           : central6_coefficient[separation - 1];
+      const int coordinate=direction==0?i:(direction==1?j:k);
+      const double inverse_width=grid.axis_width[direction]?
+          1.0/grid.axis_width[direction][coordinate]:inverse_spacing[direction];
       const double weight =
-          2.0 * derivative_coefficient * inverse_spacing[direction];
+          2.0 * derivative_coefficient * inverse_width;
       for (int variable = 0; variable < 5; ++variable) {
         result[variable] -=
             weight * (plus_flux[variable] - minus_flux[variable]);
@@ -2039,6 +2048,7 @@ bool launch_boundary(NseCudaContext* context) {
 }
 
 #include "nse_cuda_fluctuating.cuh"
+#include "nse_cuda_fv2.cuh"
 
 bool launch_rhs(NseCudaContext* context) {
   if (context->convective_scheme == convective_hybrid) {
@@ -2102,6 +2112,14 @@ bool launch_rhs(NseCudaContext* context) {
     if (!check_cuda(cudaGetLastError(), "primitive-state kernel")) {
       return false;
     }
+    if(context->viscous_fv2) {
+      for(int d=0;d<3;++d) if(!context->grid.axis_width[d]) {
+        set_error("fv2 requires resident axis geometry");return false;
+      }
+      viscous_fv2_kernel<<<block_count(context->physical_count),256>>>(context->primitive,context->rhs,
+          context->grid,1.0/context->reynolds,context->gamma/((context->gamma-1)*context->prandtl),
+          context->physical_count);
+    } else {
     viscous_central6_kernel<<<block_count(context->physical_count), 256>>>(
         context->primitive,
         context->rhs,
@@ -2113,7 +2131,8 @@ bool launch_rhs(NseCudaContext* context) {
         1.0 / context->dy,
         1.0 / context->dz,
         context->physical_count);
-    if (!check_cuda(cudaGetLastError(), "central6 viscous kernel")) {
+    }
+    if (!check_cuda(cudaGetLastError(), "viscous kernel")) {
       return false;
     }
   }
@@ -2724,6 +2743,7 @@ NSE_CUDA_EXPORT int nse_cuda_create(
   context->reynolds = reynolds;
   context->prandtl = prandtl;
   context->viscous_enabled = viscous_enabled != 0;
+  context->viscous_fv2 = viscous_enabled == 2;
   context->forcing_enabled = forcing_enabled != 0;
   context->forcing_spectrum = forcing_spectrum;
   context->forcing_report_interval = forcing_report_interval;
@@ -3236,6 +3256,53 @@ NSE_CUDA_EXPORT int nse_cuda_compute_dt(void* handle, double* dt) {
     return 1;
   }
   *dt = context->cfl / max_speed;
+  return 0;
+}
+
+NSE_CUDA_EXPORT int nse_cuda_upload_axis(void* handle, int axis, int n,
+    const double* centers, const double* widths, const double* coefficients) {
+  auto* c=static_cast<NseCudaContext*>(handle);
+  if(!c || axis<0 || axis>2 || !centers || !widths || !coefficients) {
+    set_error("invalid axis geometry upload"); return 1;
+  }
+  const int expected[3]={c->grid.nx,c->grid.ny,c->grid.nz};
+  // Keep the unsupported high-order metric combination out of device kernels,
+  // including KEEP6 used as either leaf of the hybrid flux.
+  if(c->convective_scheme==convective_keep6 ||
+     (c->convective_scheme==convective_hybrid &&
+      (c->hybrid_smooth_scheme==convective_keep6 || c->hybrid_shock_scheme==convective_keep6))) {
+    set_error("nonuniform KEEP6 metric operator is not implemented; select KEEP2 explicitly");
+    return 1;
+  }
+  if(n!=expected[axis] || c->axis_storage[axis]) {
+    set_error("axis size mismatch or geometry already uploaded"); return 1;
+  }
+  const std::size_t count=static_cast<std::size_t>(n)+2*c->grid.nghost;
+  const std::size_t faces=60*(static_cast<std::size_t>(n)+1);
+  if(count>(std::numeric_limits<std::size_t>::max()/sizeof(double)-faces)/2) {
+    set_error("axis allocation overflow"); return 1;
+  }
+  for(std::size_t i=0;i<count;++i) {
+    if(!std::isfinite(centers[i]) || !std::isfinite(widths[i]) || widths[i]<=0 ||
+        (i && centers[i]<=centers[i-1])) {
+      set_error("invalid axis coordinates/widths"); return 1;
+    }
+  }
+  for(std::size_t i=0;i<faces;++i) if(!std::isfinite(coefficients[i])) {
+    set_error("nonfinite axis reconstruction coefficients"); return 1;
+  }
+  if(!check_cuda(cudaSetDevice(c->device),"select axis upload device")) return 1;
+  double* storage=nullptr;
+  if(!check_cuda(cudaMalloc(reinterpret_cast<void**>(&storage),(2*count+faces)*sizeof(double)),
+      "allocate resident axis geometry")) return 1;
+  if(!check_cuda(cudaMemcpy(storage,centers,count*sizeof(double),cudaMemcpyHostToDevice),"upload centers") ||
+     !check_cuda(cudaMemcpy(storage+count,widths,count*sizeof(double),cudaMemcpyHostToDevice),"upload widths") ||
+     !check_cuda(cudaMemcpy(storage+2*count,coefficients,faces*sizeof(double),cudaMemcpyHostToDevice),"upload WENO geometry")) {
+    cudaFree(storage);return 1;
+  }
+  c->axis_storage[axis]=storage;
+  c->grid.axis_center[axis]=storage;c->grid.axis_width[axis]=storage+count;
+  c->grid.axis_weno[axis]=storage+2*count;
   return 0;
 }
 
