@@ -2,6 +2,8 @@ module mod_convective_keep
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config
+  use mod_grid_fvm, only : axis_x,axis_y,axis_z
+  use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
   implicit none
   private
 
@@ -13,8 +15,29 @@ module mod_convective_keep
   public :: compute_keep_face_flux
   public :: validate_keep_scheme
   public :: keep_required_ghost_cells
+  public :: keep6_inverse_metric
 
 contains
+
+  real(dp) function keep6_inverse_metric(i,j,k,direction) result(inverse)
+    integer, intent(in) :: i,j,k,direction
+    real(dp) :: metric
+    select case(direction)
+    case(1)
+      if(.not.allocated(axis_x%keep6_metric)) error stop 'KEEP6 x metric missing'
+      metric=axis_x%keep6_metric(i)
+    case(2)
+      if(.not.allocated(axis_y%keep6_metric)) error stop 'KEEP6 y metric missing'
+      metric=axis_y%keep6_metric(j)
+    case(3)
+      if(.not.allocated(axis_z%keep6_metric)) error stop 'KEEP6 z metric missing'
+      metric=axis_z%keep6_metric(k)
+    case default
+      error stop 'Invalid KEEP6 metric direction'
+    end select
+    if(.not.ieee_is_finite(metric).or.metric<=0) error stop 'Nonpositive KEEP6 mapping metric'
+    inverse=1._dp/metric
+  end function
 
   subroutine compute_keep_flux(q, fface, direction, sim, nse, js, je, ks, ke)
     type(simulation_config), intent(in) :: sim
@@ -95,8 +118,9 @@ contains
     integer :: separation, offset, maximum_separation
     integer :: im, jm, km, ip, jp, kp
 
-    if (sim%grid_mapping /= 'uniform' .and. order /= 2) &
-      error stop 'Nonuniform KEEP6 requires a compatible high-order metric operator; not implemented'
+    if (sim%grid_mapping /= 'uniform' .and. order == 6 .and. &
+        trim(nse%convective_scheme) == 'hybrid') &
+      error stop 'Nonuniform KEEP6 hybrid requires a common mapped norm for both leaves'
     ! KEEP2 retains the arithmetic symmetric pair flux on stretched grids.
     ! Distance-weighting velocity would destroy the kinetic-energy identity.
     ! The shared spatial operator uses physical face areas and cell volumes.

@@ -3,6 +3,7 @@ module mod_nse_spatial_operator
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config
   use mod_grid_fvm, only : vol, area_x, area_y, area_z
+  use mod_convective_keep, only : keep6_inverse_metric
   use mod_nse_boundary, only : apply_nse_boundary, validate_boundary_scheme, &
     boundary_required_ghost_cells
   use mod_convective_scheme, only : compute_convective_flux, &
@@ -49,6 +50,8 @@ contains
         do i = 1, sim%nx
           flux_divergence = (area_x(i,j,k)*fface(i,j,k,:) - &
             area_x(i-1,j,k)*fface(i-1,j,k,:)) / vol(i,j,k)
+          if(sim%grid_mapping=='sinh'.and.nse%convective_scheme=='keep6') &
+            flux_divergence=(fface(i,j,k,:)-fface(i-1,j,k,:))*keep6_inverse_metric(i,j,k,1)
           rhs(i,j,k,:) = rhs(i,j,k,:) - flux_divergence
         end do
       end do
@@ -62,6 +65,8 @@ contains
         do i = 1, sim%nx
           flux_divergence = (area_y(i,j,k)*fface(i,j,k,:) - &
             area_y(i,j-1,k)*fface(i,j-1,k,:)) / vol(i,j,k)
+          if(sim%grid_mapping=='sinh'.and.nse%convective_scheme=='keep6') &
+            flux_divergence=(fface(i,j,k,:)-fface(i,j-1,k,:))*keep6_inverse_metric(i,j,k,2)
           rhs(i,j,k,:) = rhs(i,j,k,:) - flux_divergence
         end do
       end do
@@ -75,6 +80,8 @@ contains
         do i = 1, sim%nx
           flux_divergence = (area_z(i,j,k)*fface(i,j,k,:) - &
             area_z(i,j,k-1)*fface(i,j,k-1,:)) / vol(i,j,k)
+          if(sim%grid_mapping=='sinh'.and.nse%convective_scheme=='keep6') &
+            flux_divergence=(fface(i,j,k,:)-fface(i,j,k-1,:))*keep6_inverse_metric(i,j,k,3)
           rhs(i,j,k,:) = rhs(i,j,k,:) - flux_divergence
         end do
       end do

@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -55,6 +56,7 @@ thread_local std::string last_error;
 struct GridView {
   const double* axis_center[3]{};
   const double* axis_width[3]{};
+  const double* axis_keep6_metric[3]{};
   const double* axis_weno[3]{};
   int nx;
   int ny;
@@ -939,8 +941,8 @@ __global__ void rhs_keep_kernel(
           keep_order == 2 ? 0.5
                           : central6_coefficient[separation - 1];
       const int coordinate=direction==0?i:(direction==1?j:k);
-      const double inverse_width=grid.axis_width[direction]?
-          1.0/grid.axis_width[direction][coordinate]:inverse_spacing[direction];
+      const double* metric=keep_order==6?grid.axis_keep6_metric[direction]:grid.axis_width[direction];
+      const double inverse_width=metric?1.0/metric[coordinate]:inverse_spacing[direction];
       const double weight =
           2.0 * derivative_coefficient * inverse_width;
       for (int variable = 0; variable < 5; ++variable) {
@@ -3266,12 +3268,12 @@ NSE_CUDA_EXPORT int nse_cuda_upload_axis(void* handle, int axis, int n,
     set_error("invalid axis geometry upload"); return 1;
   }
   const int expected[3]={c->grid.nx,c->grid.ny,c->grid.nz};
-  // Keep the unsupported high-order metric combination out of device kernels,
-  // including KEEP6 used as either leaf of the hybrid flux.
-  if(c->convective_scheme==convective_keep6 ||
-     (c->convective_scheme==convective_hybrid &&
-      (c->hybrid_smooth_scheme==convective_keep6 || c->hybrid_shock_scheme==convective_keep6))) {
-    set_error("nonuniform KEEP6 metric operator is not implemented; select KEEP2 explicitly");
+  // The FV WENO leaf and mapped KEEP6 use different integration norms.
+  // Do not mix them until the hybrid operator has a common mapped norm.
+  if(c->grid.nghost<3) {set_error("mapped geometry requires three ghost cells");return 1;}
+  if(c->convective_scheme==convective_hybrid &&
+      (c->hybrid_smooth_scheme==convective_keep6 || c->hybrid_shock_scheme==convective_keep6)) {
+    set_error("nonuniform KEEP6 hybrid requires a common mapped norm for both leaves");
     return 1;
   }
   if(n!=expected[axis] || c->axis_storage[axis]) {
@@ -3279,7 +3281,7 @@ NSE_CUDA_EXPORT int nse_cuda_upload_axis(void* handle, int axis, int n,
   }
   const std::size_t count=static_cast<std::size_t>(n)+2*c->grid.nghost;
   const std::size_t faces=60*(static_cast<std::size_t>(n)+1);
-  if(count>(std::numeric_limits<std::size_t>::max()/sizeof(double)-faces)/2) {
+  if(count>(std::numeric_limits<std::size_t>::max()/sizeof(double)-faces)/3) {
     set_error("axis allocation overflow"); return 1;
   }
   for(std::size_t i=0;i<count;++i) {
@@ -3291,18 +3293,28 @@ NSE_CUDA_EXPORT int nse_cuda_upload_axis(void* handle, int axis, int n,
   for(std::size_t i=0;i<faces;++i) if(!std::isfinite(coefficients[i])) {
     set_error("nonfinite axis reconstruction coefficients"); return 1;
   }
+  std::vector<double> metric(widths,widths+count);
+  for(int i=c->grid.nghost;i<c->grid.nghost+n;++i) {
+    metric[i]=.75*(centers[i+1]-centers[i-1])-.15*(centers[i+2]-centers[i-2])
+        +(centers[i+3]-centers[i-3])/60.0;
+    if(c->convective_scheme==convective_keep6 && (!std::isfinite(metric[i]) || metric[i]<=0)) {
+      set_error("nonpositive KEEP6 mapping metric");return 1;
+    }
+  }
   if(!check_cuda(cudaSetDevice(c->device),"select axis upload device")) return 1;
   double* storage=nullptr;
-  if(!check_cuda(cudaMalloc(reinterpret_cast<void**>(&storage),(2*count+faces)*sizeof(double)),
+  if(!check_cuda(cudaMalloc(reinterpret_cast<void**>(&storage),(3*count+faces)*sizeof(double)),
       "allocate resident axis geometry")) return 1;
   if(!check_cuda(cudaMemcpy(storage,centers,count*sizeof(double),cudaMemcpyHostToDevice),"upload centers") ||
      !check_cuda(cudaMemcpy(storage+count,widths,count*sizeof(double),cudaMemcpyHostToDevice),"upload widths") ||
-     !check_cuda(cudaMemcpy(storage+2*count,coefficients,faces*sizeof(double),cudaMemcpyHostToDevice),"upload WENO geometry")) {
+     !check_cuda(cudaMemcpy(storage+2*count,metric.data(),count*sizeof(double),cudaMemcpyHostToDevice),"upload KEEP6 metric") ||
+     !check_cuda(cudaMemcpy(storage+3*count,coefficients,faces*sizeof(double),cudaMemcpyHostToDevice),"upload WENO geometry")) {
     cudaFree(storage);return 1;
   }
   c->axis_storage[axis]=storage;
   c->grid.axis_center[axis]=storage;c->grid.axis_width[axis]=storage+count;
-  c->grid.axis_weno[axis]=storage+2*count;
+  c->grid.axis_keep6_metric[axis]=storage+2*count;
+  c->grid.axis_weno[axis]=storage+3*count;
   return 0;
 }
 

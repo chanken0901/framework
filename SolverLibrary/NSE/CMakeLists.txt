@@ -1303,6 +1303,8 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "none")
   add_test(NAME nse_nonuniform_keep COMMAND $<TARGET_FILE:nse_test_nonuniform_keep>)
   add_test(NAME nse_nonuniform_keep6_rejected COMMAND $<TARGET_FILE:nse_test_nonuniform_keep> reject_keep6)
   set_tests_properties(nse_nonuniform_keep6_rejected PROPERTIES WILL_FAIL TRUE)
+  add_test(NAME nse_mapped_keep6_accuracy COMMAND $<TARGET_FILE:nse_test_keep6_accuracy> mapped)
+  add_test(NAME nse_mapped_keep6_conservation COMMAND $<TARGET_FILE:nse_test_nonuniform_keep> mapped)
   set_target_properties(
     nse_test_keep6_accuracy
     PROPERTIES

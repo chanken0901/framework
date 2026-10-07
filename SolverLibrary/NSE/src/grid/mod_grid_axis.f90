@@ -13,6 +13,8 @@ module mod_grid_axis
     logical :: periodic=.false.
     real(dp) :: minimum_width=0
     real(dp), allocatable :: edge(:),center(:),width(:)
+    ! D6 x with unit computational-index spacing. Not a physical cell width.
+    real(dp), allocatable :: keep6_metric(:)
     ! Offset is contiguous: directly packable for GPU, global cell indexing.
     real(dp), allocatable :: d1(:,:),d2(:,:)
     type(weno_face_geometry), allocatable :: weno_left(:),weno_right(:)
@@ -111,6 +113,15 @@ contains
     call check(all(ieee_is_finite(axis%width)).and.all(axis%width>0),'Invalid axis widths')
     call check(all(ieee_is_finite(axis%center)),'Nonfinite centers')
     axis%minimum_width=minval(axis%width(1:n))
+    allocate(axis%keep6_metric(1-ng:n+ng))
+    axis%keep6_metric=axis%width
+    do i=1,n
+      axis%keep6_metric(i)=.75_dp*(axis%center(i+1)-axis%center(i-1)) &
+        -.15_dp*(axis%center(i+2)-axis%center(i-2)) &
+        +(axis%center(i+3)-axis%center(i-3))/60._dp
+    end do
+    ! A positive metric is essential to the mapped energy norm. Callers that
+    ! use KEEP6 must validate it; WENO geometry need not satisfy this condition.
     do i=1,n
       call axis_derivative_weights(axis%center(i-3:i+3),axis%center(i),weights)
       axis%d1(:,i)=weights(:,1);axis%d2(:,i)=weights(:,2)

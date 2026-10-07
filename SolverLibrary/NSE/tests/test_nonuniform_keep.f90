@@ -14,7 +14,11 @@ program test_nonuniform_keep
   character(len=32) :: mode
   call get_command_argument(1,mode)
   pi=acos(-1._dp);order=2
-  if(mode=='reject_keep6') order=6
+  if(mode=='mapped') order=6
+  if(mode=='reject_keep6') then
+    order=6
+    nse%convective_scheme='hybrid'
+  end if
   ! Nonconstant volume weights with periodic data: conservation and KE balance.
   n=32
   call configure(n)
@@ -27,6 +31,7 @@ program test_nonuniform_keep
   rate=0;ke_rate=0
   do i=1,n
     rho=q(i,1,1,1);u=q(i,1,1,2)/rho;volume=axis%width(i)
+    if(order==6) volume=axis%keep6_metric(i)
     rate=rate+volume*rhs(i,:)
     ke_rate=ke_rate+volume*(u*rhs(i,2)-.5_dp*u*u*rhs(i,1))
   end do
@@ -48,13 +53,16 @@ program test_nonuniform_keep
     call evaluate()
     err(pass)=0
     do i=4,n-3
+      if(order==6.and.(axis%center(i)<.2_dp.or.axis%center(i)>.8_dp)) cycle
       exact=-.3_dp*.1_dp*2*pi*cos(2*pi*axis%center(i))
       err(pass)=max(err(pass),abs(rhs(i,1)-exact))
     end do
     deallocate(q,face,rhs)
   end do
-  if(err(1)/err(2)<3.0_dp) error stop 'KEEP2 smooth-grid convergence'
-  print *, '[OK] stretched KEEP2: conservation, KE convection, free stream, interior convergence',err
+  if(order==2.and.err(1)/err(2)<3.0_dp) error stop 'KEEP2 smooth-grid convergence'
+  if(order==6) print *, 'KEEP6 sinh interior errors and ratio:',err,err(1)/err(2)
+  if(order==6.and.err(1)/err(2)<32.0_dp) error stop 'KEEP6 smooth-grid convergence'
+  print *, '[OK] stretched KEEP order=',order,': conservation, KE convection, free stream, interior convergence',err
 contains
   subroutine configure(n)
     integer, intent(in) :: n
@@ -73,6 +81,7 @@ contains
     end do
     do l=1,n
       rhs(l,:)=-(face(l,:)-face(l-1,:))/axis%width(l)
+      if(order==6) rhs(l,:)=-(face(l,:)-face(l-1,:))/axis%keep6_metric(l)
     end do
   end subroutine
 end program
