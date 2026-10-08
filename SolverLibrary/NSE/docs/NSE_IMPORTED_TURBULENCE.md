@@ -4,6 +4,62 @@
 
 ## 概要
 
+### 元計算の物理パラメータの自動継承（2026-10-08）
+
+新しいNSE出力はSLF本体の末尾へ、実効 `gamma, reynolds, prandtl, rho0, mach` と
+粘性方式を記録する。HITの場合はYAMLの表示値でなく、乱流目標から解決した
+**ソルバー用Re**を保存する。可搬SLFへの変換で全rankの一致を確認して引き継ぐ。
+SLFだけをコピーすれば元条件も移動し、CPU/MPI/CUDAの元の並列数に依存しない。
+
+`--prepare` はsource SLFの5パラメータを読込み先input.datへ優先適用する。
+HITの再スタートでも元の実効値を優先し、衝撃波関係式も継承したgammaで計算する。
+Fortran実行時にも同じ記録を読んで適用し、`# inherited gamma,Re,Pr,rho0,mach:` を表示する。
+case.yaml自体は書き換えない。`case.resolved`相当のYAMLは設定の展開であり、
+最終的な実効物理値はinput.datと上記実行ログを確認する。
+
+境界、衝撃波状態、格子、対流方式、時間刻み、forcingは読込み先で選択する。
+特に、元のHITのforcingを干渉計算へ自動で持ち込まない。
+粘性あり／なしが元と異なる場合は停止する。CENTRAL6/FV2等の数値方式は
+読込み先の選択を維持する（不等間隔importは依然未対応）。
+5パラメータを意図的に変更する読込みモードは現段階では設けない。
+
+**古いSLFには条件が記録されていないため、自動推定はしない。**
+変換時に、その出力を作った際の実際のinput.datを明示する。
+現在のcase.yamlや後から上書きされたinput.datを元条件だと推測して使わない。
+既にghostなし可搬SLFがある場合も、別名の出力へ以下のように移行できる。
+
+PowerShell（パスは実際の元データ・保存済み実行入力へ置換）:
+
+```powershell
+python ./SolverLibrary/NSE/tools/nse_prepare_imported_turbulence.py ./initial_data/turbulence.slf --source-input C:/path/to/original/input.dat -o ./initial_data/turbulence_with_parameters.slf
+```
+
+Linux/bash:
+
+```bash
+python3 ./SolverLibrary/NSE/tools/nse_prepare_imported_turbulence.py ./initial_data/turbulence.slf --source-input /path/to/original/input.dat -o ./initial_data/turbulence_with_parameters.slf
+```
+
+その後 `flow.imported_turbulence.file`（restartなら`restart.file`）を新ファイルへ変更し、
+`python ./tools/run_case.py --prepare`（Linuxはpython3）で再生成する。
+元条件不明・記録破損・rank間不一致の場合は停止する。`--gamma`は上書きではなく一致確認。
+既に新形式の記録がある場合、矛盾する`--source-input`で上書きできない。
+旧実行環境のtoolsとソルバーは自動更新されないため、現行FrameWorkで環境を再生成／再ビルドする。
+
+形式: SLF1の宣言済みfloat64データの直後に80 bytesを追加する。
+8 bytes `NSEPAR1\0`、little-endian float64×5（上記順）、ASCII空白埋め32 bytesの粘性方式。
+既存のSLFヘッダー・配列は変更しない。宣言されたデータ数を読む従来の後処理と互換。
+VTR出力はこのSLF再利用仕様の対象外。
+
+検証: 元Re=1767.7669529663692に対し読込み先Re=100と別gamma/Pr/rho0/machを指定し、
+restartとtile読込みをCPU・4 MPI・CUDA・4 MPI＋CUDAで実行。
+継承値と、元計算を継続した5保存量との一致（絶対差2e-11以内）を確認。
+MPI＋CUDAは1GPU共有の検証。旧データ拒否・明示移行・gamma不一致もテストする。
+
+時刻・ステップも引き継ぐ場合は、`flow.type`を変更せず
+[`restart.file`による再スタート](NSE_RESTART.md)を利用する。
+本書の可搬SLF変換ツールは再スタート用にも共用する。
+
 `flow.type: imported_turbulence`は、NSEのrank別SLF出力を一つの可搬SLFへ
 変換して読み込み、より長いx方向計算領域へ初期乱流場を配置する。
 

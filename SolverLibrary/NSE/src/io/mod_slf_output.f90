@@ -2,6 +2,8 @@ module mod_slf_output
   use, intrinsic :: iso_fortran_env, only : int32
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
+  use mod_model_config, only : nse_config
+  use mod_grid_fvm, only : axis_x,axis_y,axis_z
   use mod_openmp_runtime, only : nse_max_threads
   use module_mpi
   implicit none
@@ -27,14 +29,22 @@ contains
   subroutine ensure_directory(dirname)
     character(len=*), intent(in) :: dirname
     character(len=512) :: cmd
+    character(len=32) :: os_name
+    integer :: status
+    logical :: exists
 
     if (len_trim(dirname) == 0) return
 
-    ! Works on Linux/macOS/Git Bash/MSYS2.  If this is not available on a
-    ! target system, create the output directory before running the solver.
+    call get_environment_variable('OS', os_name)
     write(cmd,'(A,A,A)') 'mkdir -p "', trim(dirname), '"'
-    !call execute_command_line(trim(cmd), wait=.true.)
-    call execute_command_line('if not exist "' // trim(dirname) // '" mkdir "' // trim(dirname) // '"')
+    if (trim(os_name)=='Windows_NT') cmd='if not exist "'//trim(dirname)//'" mkdir "'//trim(dirname)//'"'
+    call execute_command_line(trim(cmd), wait=.true., exitstat=status)
+    if (status/=0) then
+      ! Another rank may have created the same directory between the shell's
+      ! existence test and mkdir, especially when meta output is disabled.
+      inquire(file=trim(dirname)//'/.',exist=exists)
+      if (.not.exists) error stop 'Cannot create output directory'
+    end if
   end subroutine ensure_directory
 
   subroutine make_step_filename(cfg, step, rank, ext, fname)
@@ -131,10 +141,22 @@ if (present(ke)) local_range(6) = ke
     write(u,'(A)') '{'
     write(u,'(A,A,A)') '  "equation": "', trim(cfg%equation), '",'
     write(u,'(A,A,A)') '  "case_name": "', trim(cfg%case_name), '",'
+    if(cfg%mapped_keep6) then
+      write(u,'(A)') '  "state_representation": "mapped_grid_point_values",'
+      write(u,'(A)') '  "integration_weight": "integration_weight (VTR CellData)",'
+    end if
     write(u,'(A,I0,A,I0,A,I0,A)') '  "grid": [', cfg%nx, ', ', cfg%ny, ', ', cfg%nz, '],'
     write(u,'(A,ES24.16,A,ES24.16,A,ES24.16,A)') '  "domain_length": [', cfg%lx, ', ', cfg%ly, ', ', cfg%lz, '],'
     write(u,'(A,ES24.16,A,ES24.16,A,ES24.16,A)') '  "origin": [', cfg%x_min, ', ', cfg%y_min, ', ', cfg%z_min, '],'
-    write(u,'(A,ES24.16,A,ES24.16,A,ES24.16,A)') '  "spacing": [', cfg%dx, ', ', cfg%dy, ', ', cfg%dz, '],'
+    if (trim(cfg%grid_mapping)=='uniform') then
+      write(u,'(A,ES24.16,A,ES24.16,A,ES24.16,A)') '  "spacing": [', cfg%dx, ', ', cfg%dy, ', ', cfg%dz, '],'
+    else
+      write(u,'(A)') '  "spacing": null,'
+      write(u,'(A)') '  "grid_mapping": "sinh",'
+      write(u,'(A,ES24.16,A,ES24.16,A,ES24.16,A)') &
+        '  "grid_stretch": [',cfg%grid_stretch(1),',',cfg%grid_stretch(2),',',cfg%grid_stretch(3),'],'
+      write(u,'(A)') '  "coordinates": "VTR cell edges; no ghost cells",'
+    end if
     write(u,'(A,A,A)') '  "precision": "', trim(cfg%precision_name), '",'
     write(u,'(A,A,A)') '  "format": "', trim(cfg%output_format), '",'
   
@@ -302,8 +324,9 @@ write(u,'(A)') '}'
     end do
   end subroutine write_header
 
-  subroutine write_field_real4_slf(cfg, step, time, field, variable_names, rank)
+  subroutine write_field_real4_slf(cfg, step, time, field, variable_names, rank, nse)
     ! Generic writer for real primary variables stored as field(nx,ny,nz,nvar).
+    type(nse_config), intent(in), optional :: nse
     ! For NSE, pass the conservative-variable array directly, e.g. Q(:,:,:,:).
     type(simulation_config), intent(in) :: cfg
     integer, intent(in) :: step
@@ -332,6 +355,13 @@ write(u,'(A)') '}'
 
     call write_header(u, cfg, step, time, nvar, shape3, rank, variable_names)
     write(u) field
+    ! Optional v1 physics trailer; existing SLF readers read the declared
+    ! data count and remain compatible. Parameters travel with this snapshot.
+    if(present(nse)) then
+      write(u) 'NSEPAR1'//achar(0)
+      write(u) nse%gamma,nse%reynolds,nse%prandtl,nse%rho0,nse%mach
+      write(u) nse%viscous_scheme
+    end if
     close(u)
   end subroutine write_field_real4_slf
 
@@ -377,8 +407,9 @@ write(u,'(A)') '}'
     deallocate(tmp)
   end subroutine write_field_complex3_slf
 
-  subroutine write_nse_conserved_slf(cfg, step, time, q, rank)
+  subroutine write_nse_conserved_slf(cfg, step, time, q, rank, js, je, ks, ke, nse)
     ! NSE standard output: conservative variables only.
+    type(nse_config), intent(in), optional :: nse
     ! q(:,:,:,1:5) = [rho, rho_u, rho_v, rho_w, rho_E]
     ! Primitive variables such as u,v,w,p,T are intentionally not written here.
     type(simulation_config), intent(in) :: cfg
@@ -386,6 +417,7 @@ write(u,'(A)') '}'
     real(dp), intent(in) :: time
     real(dp), intent(in) :: q(:,:,:,:)
     integer, intent(in), optional :: rank
+    integer, intent(in), optional :: js, je, ks, ke
 
     character(len=32), allocatable :: names(:)
     integer :: nvar, ivar
@@ -404,9 +436,120 @@ write(u,'(A)') '}'
       end do
     end if
 
-    call write_field_real4_slf(cfg, step, time, q, names, rank)
+    if (trim(cfg%output_format)=='vtr') then
+      if (.not.(present(js).and.present(je).and.present(ks).and.present(ke))) &
+        error stop 'VTR output requires local index ranges'
+      call write_nse_vtr(cfg,step,time,q,names,js,je,ks,ke)
+    else
+      if(trim(cfg%grid_mapping)/='uniform') error stop 'SLF cannot store nonuniform coordinates; use VTR'
+      call write_field_real4_slf(cfg, step, time, q, names, rank, nse)
+    end if
     deallocate(names)
   end subroutine write_nse_conserved_slf
+
+  subroutine write_nse_vtr(cfg,step,time,q,names,js,je,ks,ke)
+    ! Physical cell geometry. Mapped KEEP6 stores center point values and a
+    ! separate quadrature weight, NOT finite-volume cell averages.
+    ! Each rank writes a piece; rank zero publishes a parallel VTK collection.
+    type(simulation_config), intent(in) :: cfg
+    integer, intent(in) :: step,js,je,ks,ke
+    real(dp), intent(in) :: time,q(:,:,:,:)
+    character(len=*), intent(in) :: names(:)
+    integer :: u,ios,iv,i,j,k,g,a,r,ierr
+    integer :: ext(6),counts(3),starts(3),ends(3)
+    integer, allocatable :: ranges(:,:)
+    real(dp) :: lo(3),hi(3),beta,s,fraction,x
+    character(len=512) :: fname,piece
+    character(len=100) :: extent_text
+
+    g=cfg%nghost
+    if(any(shape(q(:,:,:,1))/=[cfg%nx+2*g,je-js+1+2*g,ke-ks+1+2*g])) &
+      error stop 'VTR field shape does not match local cells plus ghosts'
+    if(my_rank==root) call ensure_directory(cfg%output_dir)
+    call mp_barrier
+    ext=[0,cfg%nx,js-1,je,ks-1,ke]
+    write(extent_text,'(6(I0,1X))') ext
+    call make_step_filename(cfg,step,my_rank,'vtr',fname)
+    open(newunit=u,file=trim(fname),status='replace',action='write',iostat=ios)
+    if(ios/=0) error stop 'Cannot open VTR output'
+    write(u,'(A)') '<?xml version="1.0"?>'
+    write(u,'(A)') '<VTKFile type="RectilinearGrid" version="1.0" byte_order="LittleEndian">'
+    write(u,'(A)') '<RectilinearGrid WholeExtent="'//trim(extent_text)//'">'
+    write(u,'(A)') '<FieldData>'
+    write(u,'(A,ES25.17E3,A)') &
+      '<DataArray type="Float64" Name="TimeValue" NumberOfTuples="1" format="ascii">',time,'</DataArray>'
+    write(u,'(A,I0,A)') &
+      '<DataArray type="Int32" Name="Step" NumberOfTuples="1" format="ascii">',step,'</DataArray>'
+    write(u,'(A)') '</FieldData>'
+    write(u,'(A)') '<Piece Extent="'//trim(extent_text)//'"><PointData/><CellData>'
+    do iv=1,size(q,4)
+      write(u,'(A)') '<DataArray type="Float64" Name="'//trim(names(iv))//'" format="ascii">'
+      do k=1,ke-ks+1
+        do j=1,je-js+1
+          write(u,'(*(ES25.17E3,1X))') (q(i+g,j+g,k+g,iv),i=1,cfg%nx)
+        end do
+      end do
+      write(u,'(A)') '</DataArray>'
+    end do
+    if(cfg%mapped_keep6) then
+      write(u,'(A)') '<DataArray type="Float64" Name="integration_weight" format="ascii">'
+      do k=ks,ke
+        do j=js,je
+          write(u,'(*(ES25.17E3,1X))') &
+            (axis_x%keep6_metric(i)*axis_y%keep6_metric(j)*axis_z%keep6_metric(k),i=1,cfg%nx)
+        end do
+      end do
+      write(u,'(A)') '</DataArray>'
+    end if
+    write(u,'(A)') '</CellData><Coordinates>'
+    counts=[cfg%nx,cfg%ny,cfg%nz];starts=[0,js-1,ks-1];ends=[cfg%nx,je,ke]
+    lo=[cfg%x_min,cfg%y_min,cfg%z_min];hi=[cfg%x_max,cfg%y_max,cfg%z_max]
+    do a=1,3
+      write(u,'(A)') '<DataArray type="Float64" format="ascii">'
+      beta=cfg%grid_stretch(a)
+      do i=starts(a),ends(a)
+        s=real(i,dp)/counts(a)
+        fraction=s
+        if(trim(cfg%grid_mapping)=='sinh'.and.beta>=sqrt(epsilon(beta))) &
+          fraction=.5_dp*(1+sinh(beta*(2*s-1))/sinh(beta))
+        x=lo(a)+(hi(a)-lo(a))*fraction
+        if(i==0) x=lo(a)
+        if(i==counts(a)) x=hi(a)
+        write(u,'(ES25.17E3)') x
+      end do
+      write(u,'(A)') '</DataArray>'
+    end do
+    write(u,'(A)') '</Coordinates></Piece></RectilinearGrid></VTKFile>'
+    close(u)
+    allocate(ranges(6,max(1,nprocs)))
+    call MPI_Gather(ext,6,MPI_INTEGER,ranges,6,MPI_INTEGER,root,MPI_COMM_WORLD,ierr)
+    if(ierr/=0) error stop 'VTR rank extent gather failed'
+    if(my_rank/=root) return
+    call make_step_filename(cfg,step,ext='pvtr',fname=fname)
+    open(newunit=u,file=trim(fname),status='replace',action='write',iostat=ios)
+    if(ios/=0) error stop 'Cannot open PVTR output'
+    write(extent_text,'(6(I0,1X))') 0,cfg%nx,0,cfg%ny,0,cfg%nz
+    write(u,'(A)') '<?xml version="1.0"?>'
+    write(u,'(A)') '<VTKFile type="PRectilinearGrid" version="1.0" byte_order="LittleEndian">'
+    write(u,'(A)') '<PRectilinearGrid WholeExtent="'//trim(extent_text)//'" GhostLevel="0">'
+    write(u,'(A)') '<PPointData/><PCellData>'
+    do iv=1,size(q,4)
+      write(u,'(A)') '<PDataArray type="Float64" Name="'//trim(names(iv))//'"/>'
+    end do
+    if(cfg%mapped_keep6) write(u,'(A)') '<PDataArray type="Float64" Name="integration_weight"/>'
+    write(u,'(A)') '</PCellData><PCoordinates>'
+    do a=1,3
+      write(u,'(A)') '<PDataArray type="Float64"/>'
+    end do
+    write(u,'(A)') '</PCoordinates>'
+    do r=0,nprocs-1
+      write(extent_text,'(6(I0,1X))') ranges(:,r+1)
+      write(piece,'(A,I0.6,A,I0.5,A)') 'field_',step,'_rank',r,'.vtr'
+      write(u,'(A)') '<Piece Extent="'//trim(extent_text)//'" Source="'//trim(piece)//'"/>'
+    end do
+    write(u,'(A)') '</PRectilinearGrid></VTKFile>'
+    close(u)
+  end subroutine write_nse_vtr
 
   subroutine write_gpe_psi_slf(cfg, step, time, psi, rank)
     ! GPE standard output: wave function only.

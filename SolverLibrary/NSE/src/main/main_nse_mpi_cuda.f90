@@ -9,6 +9,7 @@ program main_nse_mpi_cuda
   use mod_input_reader, only : read_all_inputs
   use mod_grid_fvm, only : build_uniform_grid
   use mod_nse_initial_conditions, only : initialize_nse_state
+  use mod_init_imported_turbulence, only : inherit_nse_parameters
   use mod_nse_gpu, only : nse_gpu_context, nse_gpu_initialize, &
     nse_gpu_select_device, nse_gpu_configure_cufftmp, &
     nse_gpu_upload, nse_gpu_download, nse_gpu_compute_dt, &
@@ -43,6 +44,7 @@ program main_nse_mpi_cuda
   call init_nse_config(nse)
   call read_all_inputs(trim(input_path), sim, nse=nse)
   call resolve_nse_flow_parameters(nse, sim%initial_condition)
+  call inherit_nse_parameters(sim,nse)
   sim%backend = 'cuda_mpi'
   sim%use_mpi = .true.
   sim%use_openmp = .false.
@@ -104,7 +106,7 @@ program main_nse_mpi_cuda
   end if
   if (sim%write_initial) then
     call nse_gpu_download(gpu, q)
-    call write_nse_conserved_slf(sim, sim%step, sim%t, q, rank=my_rank)
+    call write_nse_conserved_slf(sim, sim%step, sim%t, q, rank=my_rank, js=js, je=je, ks=ks, ke=ke,nse=nse)
   end if
 
   sim%ttotal = 0.0_dp
@@ -164,7 +166,7 @@ program main_nse_mpi_cuda
     if (should_output(sim, sim%step)) then
       call nse_gpu_mpi_exchange(halo, gpu)
       call nse_gpu_download(gpu, q)
-      call write_nse_conserved_slf(sim, sim%step, sim%t, q, rank=my_rank)
+      call write_nse_conserved_slf(sim, sim%step, sim%t, q, rank=my_rank, js=js, je=je, ks=ks, ke=ke,nse=nse)
     end if
 
     sim%t2 = MPI_Wtime()

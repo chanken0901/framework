@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import math
 import struct
 from pathlib import Path
 
@@ -27,6 +29,57 @@ from slf_to_paraview_merged_cropghost import (
 
 
 REQUIRED_FIELDS = ("rho", "rho_u", "rho_v", "rho_w", "rho_E")
+PARAMETER_FORMAT = struct.Struct("<8s5d32s")
+PARAMETER_KEYS = ("gamma", "reynolds", "prandtl", "rho0", "mach")
+
+
+def validate_parameters(values, viscous):
+    if (not all(np.isfinite(values)) or values[0] <= 1 or min(values[2:4]) <= 0 or values[4] < 0
+            or values[1] < 0 or (viscous != "none" and values[1] <= 0)):
+        raise ValueError("invalid source NSE parameters")
+    if viscous not in {"none", "central6", "fv2"}:
+        raise ValueError("unsupported source viscosity model")
+    return PARAMETER_FORMAT.pack(b"NSEPAR1\0", *values, viscous.encode().ljust(32, b" "))
+
+
+def read_parameters(path):
+    with Path(path).open("rb") as stream:
+        header = stream.read(128)
+        if len(header) != 128 or header[:8] != b"SLF1\0\0\0\0":
+            raise ValueError("invalid source SLF header")
+        if struct.unpack_from("<3i", header, 8) != (1,2,4):
+            raise ValueError("source parameters require float64 SLF1")
+        shape = struct.unpack_from("<4i", header, 20)
+        if min(shape) <= 0 or struct.unpack_from("<i", header, 124)[0] != shape[3]:
+            raise ValueError("invalid source SLF dimensions")
+        stream.seek(128 + 32*shape[3] + 8*math.prod(shape))
+        raw = stream.read(PARAMETER_FORMAT.size)
+    if not raw:
+        return None
+    if len(raw) != PARAMETER_FORMAT.size:
+        raise ValueError("truncated NSE parameter trailer")
+    magic, *fields = PARAMETER_FORMAT.unpack(raw)
+    if magic != b"NSEPAR1\0":
+        raise ValueError("unknown NSE parameter trailer")
+    return validate_parameters(fields[:5], fields[5].decode("ascii").strip())
+
+
+def parameters_from_input(path):
+    # Explicit legacy migration only: use the actual resolved input, not case.yaml.
+    text = "\n".join(line.split("!")[0] for line in Path(path).read_text(encoding="utf-8-sig").splitlines())
+    block = re.search(r"&nse\b(.*?)^\s*/", text, re.I | re.S | re.M)
+    if not block:
+        raise ValueError("--source-input requires a resolved &nse namelist")
+    values = []
+    for key in PARAMETER_KEYS:
+        match = re.search(r"\b" + key + r"\s*=\s*([-+0-9.eEdD]+)", block[1], re.I)
+        if not match:
+            raise ValueError(f"source input lacks {key}")
+        values.append(float(match[1].lower().replace("d", "e")))
+    match = re.search(r"\bviscous_scheme\s*=\s*['\"]([^'\"]+)['\"]", block[1], re.I)
+    if not match:
+        raise ValueError("source input lacks viscous_scheme")
+    return validate_parameters(values, match[1].strip().lower())
 
 
 def _default_meta_path(input_path: Path) -> Path | None:
@@ -132,11 +185,12 @@ def prepare_imported_turbulence(
     meta_path: Path | None = None,
     step: str = "latest",
     layout: str = "auto",
-    gamma: float = 1.4,
+    gamma: float | None = None,
+    source_input: Path | None = None,
 ) -> tuple[int, tuple[int, int, int]]:
     input_path = input_path.resolve()
     output_path = output_path.resolve()
-    if gamma <= 1.0 or not np.isfinite(gamma):
+    if gamma is not None and (gamma <= 1.0 or not np.isfinite(gamma)):
         raise ValueError("gamma must be finite and greater than 1")
 
     if meta_path is None:
@@ -156,6 +210,25 @@ def prepare_imported_turbulence(
     groups = complete_step_groups(group_by_step(files), meta)
     selected_step = _select_step(groups, step)
     selected_files = groups[selected_step]
+    if output_path in [p.resolve() for p in selected_files]:
+        raise ValueError("output must not overwrite a source SLF")
+    fallback = parameters_from_input(source_input) if source_input else None
+    parameters = None
+    for path in selected_files:
+        record = read_parameters(path)
+        if record is None:
+            record = fallback
+        elif fallback is not None and record != fallback:
+            raise ValueError("--source-input disagrees with embedded source parameters")
+        if record is None:
+            raise ValueError("source SLF lacks NSE parameters; specify --source-input ORIGINAL/input.dat")
+        if parameters is not None and record != parameters:
+            raise ValueError("source rank files disagree on NSE parameters")
+        parameters = record
+    source_gamma = PARAMETER_FORMAT.unpack(parameters)[1]
+    if gamma is not None and gamma != source_gamma:
+        raise ValueError("--gamma disagrees with source parameters")
+    gamma = source_gamma
     first = read_slf(selected_files[0])
     origin, spacing = get_origin_spacing(meta, first)
     global_shape = get_global_grid(meta, first)
@@ -220,6 +293,8 @@ def prepare_imported_turbulence(
             validate_conserved_field(output[:, :, k_start:k_end, :], gamma)
     finally:
         del output
+    with output_path.open("ab") as stream:
+        stream.write(parameters)
     return selected_step, global_shape
 
 
@@ -237,7 +312,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--layout", choices=("auto", "rank", "global"), default="auto"
     )
-    parser.add_argument("--gamma", type=float, default=1.4)
+    parser.add_argument("--gamma", type=float, help="Optional consistency check against source gamma")
+    parser.add_argument("--source-input", type=Path,
+                        help="Legacy SLF migration: actual resolved input.dat used to generate the data")
     return parser
 
 
@@ -251,6 +328,7 @@ def main() -> int:
             step=args.step,
             layout=args.layout,
             gamma=args.gamma,
+            source_input=args.source_input,
         )
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print(f"[ERROR] {exc}")

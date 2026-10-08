@@ -10,6 +10,7 @@ module mod_init_imported_turbulence
   integer, parameter :: nconserved = 5
 
   type :: slf_header
+    integer :: step = 0
     integer :: nx = 0
     integer :: ny = 0
     integer :: nz = 0
@@ -22,9 +23,104 @@ module mod_init_imported_turbulence
   end type slf_header
 
   public :: initialize_imported_turbulence
+  public :: initialize_restart
   public :: imported_turbulence_weight
+  public :: inherit_nse_parameters
 
 contains
+
+  subroutine inherit_nse_parameters(sim,nse)
+    type(simulation_config), intent(in) :: sim
+    type(nse_config), intent(inout) :: nse
+    type(slf_header) :: header
+    character(len=1024) :: path
+    character(len=8) :: magic
+    character(len=32) :: viscous
+    real(dp) :: values(5)
+    integer :: unit,ios
+    integer(int64) :: offset
+    path=sim%restart_file
+    if(len_trim(path)==0) then
+      select case(trim(sim%initial_condition))
+      case('imported_turbulence','shock_turbulence_interaction','shock_tube_turbulence_interaction')
+        path=nse%imported_turbulence_file
+      case default
+        return
+      end select
+    end if
+    open(newunit=unit,file=trim(path),access='stream',form='unformatted', &
+      status='old',action='read',convert='little_endian',iostat=ios)
+    if(ios/=0) error stop 'Cannot open source SLF for parameter inheritance'
+    call read_slf_header(unit,header)
+    offset=header%data_position+8_int64*header%nx*header%ny*header%nz*header%nvar
+    read(unit,pos=offset,iostat=ios) magic
+    if(ios/=0) error stop 'Source SLF lacks NSE parameters; reconvert with --source-input ORIGINAL/input.dat'
+    if(magic/='NSEPAR1'//achar(0)) error stop 'Invalid NSE parameter trailer'
+    read(unit,iostat=ios) values,viscous
+    close(unit)
+    if(ios/=0) error stop 'Truncated NSE parameter trailer'
+    if(.not.all(ieee_is_finite(values))) error stop 'Nonfinite source NSE parameters'
+    if(values(1)<=1.or.minval(values(3:4))<=0.or.values(5)<0.or.values(2)<0) &
+      error stop 'Invalid source NSE parameters'
+    if(trim(viscous)/='none'.and.values(2)<=0) error stop 'Source viscosity requires positive Reynolds number'
+    if(trim(viscous)/='none'.and.trim(viscous)/='central6'.and.trim(viscous)/='fv2') &
+      error stop 'Unsupported source viscosity model'
+    if((trim(viscous)=='none').neqv.(trim(nse%viscous_scheme)=='none')) &
+      error stop 'Source/destination disagree on viscous versus inviscid physics'
+    nse%gamma=values(1);nse%reynolds=values(2);nse%prandtl=values(3)
+    nse%rho0=values(4);nse%mach=values(5)
+    if(sim%rank==0) write(*,'(A,5ES23.15)') '# inherited gamma,Re,Pr,rho0,mach: ',values
+  end subroutine inherit_nse_parameters
+
+  subroutine initialize_restart(q, sim, nse, js, je, ks, ke)
+    type(simulation_config), intent(inout) :: sim
+    type(nse_config), intent(in) :: nse
+    integer, intent(in) :: js, je, ks, ke
+    real(dp), intent(inout) :: q(1-sim%nghost:,js-sim%nghost:,ks-sim%nghost:,:)
+    type(slf_header) :: header
+    integer :: unit, ios, map(5), j, k, v, i
+    integer(int64) :: offset
+    real(dp) :: dx, dy, dz
+    logical :: exists
+    if (sim%rank == 0) then
+      inquire(file=trim(sim%output_dir)//'/meta.json',exist=exists)
+      if (exists) error stop 'restart requires a new output directory (existing meta.json found)'
+    end if
+    if (nse%nv /= 5 .or. sim%grid_mapping /= 'uniform') &
+      error stop 'restart currently requires single-component uniform-grid NSE'
+    open(newunit=unit,file=trim(sim%restart_file),access='stream',form='unformatted', &
+      status='old',action='read',convert='little_endian',iostat=ios)
+    if (ios /= 0) error stop 'cannot open restart SLF'
+    call read_slf_header(unit,header)
+    call validate_slf_header(header,sim,nse,map,dx,dy,dz)
+    if (header%nx /= sim%nx .or. header%nvar /= 5 .or. &
+        .not.nearly_equal(header%bounds(1),sim%x_min) .or. &
+        .not.nearly_equal(header%bounds(2),sim%x_max)) error stop 'restart grid mismatch'
+    if (.not.ieee_is_finite(header%time)) error stop 'nonfinite restart time'
+    if (header%time < 0 .or. header%step < 0) error stop 'invalid restart time/step'
+    if (sim%nsteps <= header%step .or. sim%t_max <= header%time) &
+      error stop 'restart requires nsteps and t_max greater than saved step and time'
+    do v=1,5
+      do k=ks,ke
+        do j=js,je
+          offset = ((int(map(v)-1,int64)*header%nz+k-1)*header%ny+j-1)*header%nx
+          read(unit,pos=header%data_position+8_int64*offset,iostat=ios) q(1:sim%nx,j,k,v)
+          if (ios /= 0) error stop 'truncated restart SLF'
+        end do
+      end do
+    end do
+    close(unit)
+    do k=ks,ke
+      do j=js,je
+        do i=1,sim%nx
+          call require_admissible(q(i,j,k,1:5),nse,'restart state')
+        end do
+      end do
+    end do
+    sim%t=header%time
+    sim%step=header%step
+    if (sim%rank == 0) write(*,'(A,I0,A,ES24.16)') 'Restart loaded: step=',sim%step,', time=',sim%t
+  end subroutine initialize_restart
 
   subroutine initialize_imported_turbulence(q, sim, nse, js, je, ks, ke, &
       embedded_first_i, embedded_last_i)
@@ -246,6 +342,7 @@ contains
     end if
 
     header%nx = int(shape4(1))
+    header%step = int(meta(1))
     header%ny = int(shape4(2))
     header%nz = int(shape4(3))
     header%nvar = int(shape4(4))

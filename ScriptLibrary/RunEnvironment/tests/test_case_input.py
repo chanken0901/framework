@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import sys
 import unittest
+import tempfile
+import struct
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -14,6 +17,7 @@ from case_input import (  # noqa: E402
     _resolve_nse_forcing,
     _grid_mapping_values,
     _validate_nonuniform_nse,
+    _source_nse_parameters,
     NSE_BOUNDARY_FACES,
     _validate_solver_selection,
     derive_nse_hit_transport,
@@ -30,6 +34,19 @@ NSE_MANIFEST = FRAMEWORK_ROOT / "SolverLibrary" / "NSE" / "solver_manifest.yaml"
 
 
 class GridMappingTests(unittest.TestCase):
+    def test_keep6_mapped_render(self):
+        case = load_yaml(FRAMEWORK_ROOT / "SolverLibrary/NSE/examples/nonuniform_tgv.case.yaml")
+        manifest = load_yaml(NSE_MANIFEST)
+        case["numerics"]["convective_scheme"] = "keep6"
+        for profile in ("cpu_mpi", "cuda_single", "cuda_mpi"):
+            for viscous in ("none", "fv2"):
+                case["numerics"]["viscous_scheme"] = viscous
+                text = render_nse(case, manifest, profile)
+                self.assertIn('convective_scheme = "keep6"', text)
+                self.assertIn('grid_mapping = "sinh"', text)
+                self.assertNotIn('hybrid_smooth_scheme =', text)
+                self.assertNotIn('mapped_keep6 =', text)  # derived internally
+
     def test_uniform_flow_render_and_validation(self):
         case = load_yaml(FRAMEWORK_ROOT / "SolverLibrary/NSE/examples/nonuniform_tgv.case.yaml")
         manifest = load_yaml(NSE_MANIFEST)
@@ -61,7 +78,7 @@ class GridMappingTests(unittest.TestCase):
 
     def test_production_subset(self):
         common = dict(grid_mapping="sinh", initial_condition="taylor_green", output_format="vtr")
-        for scheme in ("keep2", "weno5z_roe", "hybrid"):
+        for scheme in ("keep2", "keep6", "weno5z_roe", "hybrid"):
             for viscous in ("none", "fv2"):
                 _validate_nonuniform_nse(common, dict(convective_scheme=scheme,
                     hybrid_smooth_scheme="keep2", viscous_scheme=viscous))
@@ -69,7 +86,7 @@ class GridMappingTests(unittest.TestCase):
                         dict(initial_condition="hit_spectral")):
             with self.subTest(updates=updates), self.assertRaises(CaseInputError):
                 _validate_nonuniform_nse(common | updates, dict(convective_scheme="keep2"))
-        for updates in (dict(convective_scheme="keep6"), dict(viscous_scheme="central6"),
+        for updates in (dict(convective_scheme="unsupported"), dict(viscous_scheme="central6"),
                         dict(fh_enabled=True), dict(forcing_scheme="petersen_livescu"),
                         dict(convective_scheme="hybrid", hybrid_smooth_scheme="keep6")):
             with self.subTest(updates=updates), self.assertRaises(CaseInputError):
@@ -1014,6 +1031,43 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
 
 
 class NseCaseInputTests(unittest.TestCase):
+    def test_snapshot_parameters_override_destination_and_hit_targets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)/"restart.slf"
+            header = bytearray(128)
+            header[:8] = b"SLF1\0\0\0\0"
+            struct.pack_into("<3i",header,8,1,2,4)
+            struct.pack_into("<4i",header,20,1,1,1,5)
+            struct.pack_into("<i",header,124,5)
+            payload = bytes(header)+bytes(32*5+8*5)
+            trailer = struct.pack("<8s5d32s",b"NSEPAR1\0",1.4,1767.7669529663692,.72,1,.3,
+                                  b"central6".ljust(32,b" "))
+            path.write_bytes(payload+trailer)
+            case = self.case()
+            case["restart"] = {"file": "restart.slf"}
+            case["numerics"]["viscous_scheme"] = "central6"
+            case["physics"]["nse"]["reynolds_number"] = 100
+            for profile in ("cpu_mpi", "cuda_single", "cuda_mpi"):
+                text = render_nse(case,self.manifest,profile,case_dir=Path(tmp))
+                self.assertIn("reynolds = 1767.7669529663692", text)
+                self.assertIn("NSEPAR1", text)
+                self.assertNotIn('forcing_scheme = "petersen_livescu"',text)
+            self.assertEqual(case["physics"]["nse"]["reynolds_number"],100)
+            case["flow"] = {"type":"hit", "hit":{
+                "turbulent_mach_number":.5,"turbulent_reynolds_number":30,
+                "spectrum":{"type":"pope","pope":{"integral_length":1}}}}
+            self.assertIn("reynolds = 1767.7669529663692",
+                          render_nse(case,self.manifest,"cuda_single",case_dir=Path(tmp)))
+            case["numerics"]["viscous_scheme"] = "none"
+            with self.assertRaisesRegex(CaseInputError,"viscous versus inviscid"):
+                render_nse(case,self.manifest,"cpu_mpi",case_dir=Path(tmp))
+            path.write_bytes(payload)
+            with self.assertRaisesRegex(CaseInputError,"source NSE parameters missing"):
+                _source_nse_parameters(case,Path(tmp))
+            path.write_bytes(payload+trailer[:-1])
+            with self.assertRaises(CaseInputError):
+                _source_nse_parameters(case,Path(tmp))
+
     def test_nonuniform_render_profiles(self):
         case = self.case()
         case["grid"]["mapping"] = {"type": "sinh", "strength": [0.4, 1, 1.5]}
@@ -1037,7 +1091,8 @@ class NseCaseInputTests(unittest.TestCase):
         for profile in ("cpu_mpi", "cuda_single", "cuda_mpi"):
             self.assertIn('grid_mapping = "sinh"', render_nse(case, self.manifest, profile))
 
-    def test_restart_path(self):
+    @patch("case_input._source_nse_parameters", return_value=None)
+    def test_restart_path(self, _source):
         case = self.case()
         case["restart"] = {"file": "initial_data/restart.slf"}
         for profile in ("cpu_mpi", "cuda_single"):
@@ -1651,7 +1706,8 @@ class NseCaseInputTests(unittest.TestCase):
             text = render_nse(case, self.manifest, "cpu_mpi")
             self.assertIn('imported_turbulence_mode = "periodic_embed"', text)
 
-    def test_resolves_imported_turbulence_file_from_case_directory(self) -> None:
+    @patch("case_input._source_nse_parameters", return_value=None)
+    def test_resolves_imported_turbulence_file_from_case_directory(self, _source) -> None:
         case = self.case()
         case["flow"] = {
             "type": "imported_turbulence",
@@ -1677,7 +1733,8 @@ class NseCaseInputTests(unittest.TestCase):
             text,
         )
 
-    def test_keeps_external_imported_turbulence_file_absolute(self) -> None:
+    @patch("case_input._source_nse_parameters", return_value=None)
+    def test_keeps_external_imported_turbulence_file_absolute(self, _source) -> None:
         case = self.case()
         case["flow"] = {
             "type": "imported_turbulence",

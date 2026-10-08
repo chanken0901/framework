@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import math
+import copy
+import struct
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,57 @@ from yaml_support import YamlFormatError, load_yaml
 
 class CaseInputError(ValueError):
     """Raised when a case cannot be converted to a solver input file."""
+
+
+def _source_nse_parameters(case, case_dir):
+    """Read snapshot-bound physical parameters, never guess from adjacent YAML."""
+    if case_dir is None:
+        return None  # Pure in-memory rendering; execution/generation supplies case_dir.
+    path = nested(case, "restart.file")
+    flow = _canonical_selector(str(nested(case, "flow.type", "")))
+    imports = {"imported_turbulence", "turbulence_import", "turbulence_embed", "turbulence_tile",
+               "shock_turbulence_interaction", "planar_shock_turbulence", "shock_turbulence",
+               "shock_tube_turbulence_interaction", "shock_tube_turbulence", "finite_driver_shock_turbulence"}
+    if not path and flow in imports:
+        path = nested(case, "flow.imported_turbulence.file")
+    if not path:
+        return None
+    if not isinstance(path, str) or not path.strip():
+        raise CaseInputError("source SLF path must be a nonempty string")
+    path = Path(path)
+    if not path.is_absolute():
+        path = Path(case_dir) / path
+    try:
+        with path.open("rb") as stream:
+            header = stream.read(128)
+            if len(header) != 128 or header[:8] != b"SLF1\0\0\0\0":
+                raise CaseInputError(f"invalid source SLF: {path}")
+            if struct.unpack_from("<3i", header, 8) != (1, 2, 4):
+                raise CaseInputError("source parameters require float64 SLF1")
+            shape = struct.unpack_from("<4i", header, 20)
+            if min(shape) <= 0 or struct.unpack_from("<i", header, 124)[0] != shape[3]:
+                raise CaseInputError("invalid source SLF dimensions")
+            stream.seek(128 + 32*shape[3] + 8*math.prod(shape))
+            raw = stream.read(80)
+    except OSError as exc:
+        raise CaseInputError(f"cannot read source parameters: {path}: {exc}") from exc
+    if len(raw) != 80 or raw[:8] != b"NSEPAR1\0":
+        raise CaseInputError(f"{path}: source NSE parameters missing/invalid; reconvert with "
+                             "nse_prepare_imported_turbulence.py --source-input ORIGINAL/input.dat")
+    _, gamma, reynolds, prandtl, rho0, mach, viscous = struct.unpack("<8s5d32s", raw)
+    if (not all(map(math.isfinite, (gamma,reynolds,prandtl,rho0,mach))) or
+            gamma <= 1 or min(prandtl,rho0) <= 0 or reynolds < 0 or mach < 0):
+        raise CaseInputError("invalid source NSE physical parameters")
+    try:
+        viscous = viscous.decode("ascii").strip()
+    except UnicodeDecodeError as exc:
+        raise CaseInputError("invalid source viscosity metadata") from exc
+    if viscous not in {"none", "central6", "fv2"}:
+        raise CaseInputError("unsupported source viscosity model")
+    if viscous != "none" and reynolds <= 0:
+        raise CaseInputError("source viscosity requires positive Reynolds number")
+    return dict(gamma=gamma, reynolds=reynolds, prandtl=prandtl, rho0=rho0, mach=mach,
+                viscous_scheme=viscous)
 
 
 GPE_KEYS = (
@@ -1813,8 +1866,8 @@ def _validate_nonuniform_nse(common: dict[str, Any], nse: dict[str, Any]) -> Non
     if nse.get("fh_enabled", False) or nse.get("forcing_scheme", "none") != "none":
         raise CaseInputError("Nonuniform forcing and fluctuating hydrodynamics are not supported yet")
     scheme = nse.get("convective_scheme", "keep6")
-    if scheme not in {"keep2", "weno5z_roe", "hybrid"}:
-        raise CaseInputError("Nonuniform production supports KEEP2, WENO5Z_ROE or their HYBRID; KEEP6 remains experimental")
+    if scheme not in {"keep2", "keep6", "weno5z_roe", "hybrid"}:
+        raise CaseInputError("Nonuniform production supports KEEP2, KEEP6, WENO5Z_ROE or KEEP2/WENO HYBRID")
     if scheme == "hybrid" and (nse.get("hybrid_smooth_scheme", "keep6") != "keep2"
                               or nse.get("hybrid_shock_scheme", "weno5z_roe") != "weno5z_roe"):
         raise CaseInputError("Nonuniform HYBRID requires smooth_scheme: KEEP2 and shock_scheme: WENO5Z_ROE")
@@ -1839,6 +1892,12 @@ def render_nse(
         manifest, profile_name
     )
     nse = dict(_mapping(nested(case, "physics.nse", {}), "physics.nse"))
+    source_parameters = _source_nse_parameters(case, case_dir)
+    if source_parameters is not None:
+        case = copy.deepcopy(case)
+        # Shock relations must use the inherited gamma as well.
+        case["physics"].setdefault("nse", {}).update(
+            {k:v for k,v in source_parameters.items() if k != "viscous_scheme"})
     numerics = _mapping(nested(case, "numerics", {}), "numerics")
     hybrid = _mapping(numerics.get("hybrid", {}), "numerics.hybrid")
     for legacy_key in ("flux", "reconstruction"):
@@ -1897,6 +1956,11 @@ def render_nse(
         nse["cfl"] = nested(case, "time.cfl")
     hit_values = _resolve_nse_hit(case)
     nse.update(hit_values)
+    if source_parameters is not None:
+        if ((source_parameters["viscous_scheme"] == "none") !=
+                (_canonical_selector(str(nse.get("viscous_scheme", "none"))) == "none")):
+            raise CaseInputError("source/destination disagree on viscous versus inviscid physics")
+        nse.update({k:v for k,v in source_parameters.items() if k != "viscous_scheme"})
     shock_values, shock_states = _resolve_nse_planar_shock(case)
     nse.update(shock_values)
     tube_values, tube_states = _resolve_nse_shock_tube(case)
@@ -2054,6 +2118,8 @@ def render_nse(
         "",
         "&simulation",
     ]
+    if source_parameters is not None:
+        lines.insert(2, "! gamma, reynolds, prandtl, rho0, mach inherited from source SLF (NSEPAR1).")
     common = _common_values(case, "NSE", use_mpi, use_openmp, backend)
     uniform_state = None
     if dict(common)["initial_condition"] == "uniform_flow":

@@ -10,6 +10,7 @@ program main
   use mod_nse_field, only : allocate_nse_fields, deallocate_nse_fields, &
     Q, Q0, RHS, F
   use mod_nse_initial_conditions, only : initialize_nse_state
+  use mod_init_imported_turbulence, only : inherit_nse_parameters
   use mod_nse_boundary, only : apply_nse_boundary
   use mod_nse_spatial_operator, only : validate_nse_spatial_configuration
   use mod_nse_forcing, only : initialize_nse_forcing, finalize_nse_forcing
@@ -22,6 +23,7 @@ program main
   type(nse_config) :: nse
   integer :: js, je, ks, ke
   integer :: ierror_local, ierr_local
+  real(dp) :: minimum_local_cells
   character(len=512) :: input_path
 
   call MPI_Init(ierror_local)
@@ -35,6 +37,7 @@ program main
   call init_nse_config(nse)
   call read_all_inputs(trim(input_path), sim, nse=nse)
   call resolve_nse_flow_parameters(nse, sim%initial_condition)
+  call inherit_nse_parameters(sim,nse)
   sim%rank = my_rank
   sim%nprocs = nprocs
   sim%use_mpi = .true.
@@ -53,6 +56,15 @@ program main
   ks = k_sta
   ke = k_end
 
+  if (trim(sim%grid_mapping)/='uniform') then
+    minimum_local_cells=real(min(je-js+1,ke-ks+1),dp)
+    call mp_allminr8(minimum_local_cells)
+    if(minimum_local_cells<sim%nghost) then
+      if(my_rank==root) write(*,'(A)') 'ERROR: nonuniform MPI blocks need at least nghost cells in Y and Z'
+      call mp_stop(11)
+    end if
+  end if
+
   call build_uniform_grid(sim, js, je, ks, ke, &
     nse%boundary_face_type([1,3,5])=='periodic')
   if (my_rank == root) write(*,'(A)') 'Complete build grid'
@@ -68,7 +80,7 @@ program main
   call write_meta_json(sim, is=1, ie=sim%nx, js=js, je=je, ks=ks, ke=ke, &
     use_cuda=.false.)
   if (sim%write_initial) then
-    call write_nse_conserved_slf(sim, sim%step, sim%t, Q, rank=my_rank)
+    call write_nse_conserved_slf(sim, sim%step, sim%t, Q, rank=my_rank, js=js, je=je, ks=ks, ke=ke,nse=nse)
   end if
 
   sim%ttotal = 0.0_dp
@@ -99,7 +111,7 @@ program main
     sim%t = sim%t + sim%dt
     sim%step = sim%step + 1
     if (should_output(sim, sim%step)) then
-      call write_nse_conserved_slf(sim, sim%step, sim%t, Q, rank=my_rank)
+      call write_nse_conserved_slf(sim, sim%step, sim%t, Q, rank=my_rank, js=js, je=je, ks=ks, ke=ke,nse=nse)
     end if
     sim%t2 = MPI_Wtime()
     sim%ttotal = sim%ttotal + (sim%t2 - sim%t1)

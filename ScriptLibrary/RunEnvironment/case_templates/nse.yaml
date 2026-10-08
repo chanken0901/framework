@@ -24,6 +24,12 @@ physics:
     # Thermal diffusion is coupled through 1 / (Re * Pr).
     prandtl_number: 0.72
 
+# Optional restart from a ghost-free global conserved SLF. Keep the original
+# physics/flow settings; initial field construction is bypassed on restart.
+# time.nsteps and time.t_max remain TOTAL end limits. Use a NEW output directory.
+# restart:
+#   file: initial_data/restart.slf
+
 flow:
   type: taylor_green
   taylor_green:
@@ -57,6 +63,8 @@ flow:
         large_scale_exponent: 2.0
         dissipation_exponent: 5.2
   imported_turbulence:
+    # Effective gamma/Re/Pr/rho0/mach are inherited from the source SLF.
+    # Legacy SLF: reconvert with --source-input ORIGINAL/input.dat before --prepare.
     # First convert rank-wise solver output to one ghost-free portable SLF:
     # python SolverLibrary/NSE/tools/nse_prepare_imported_turbulence.py <output-dir> -o <case-dir>/initial_data/turbulence.slf
     file: initial_data/turbulence.slf
@@ -136,7 +144,9 @@ forcing:
     report_interval: 100
 
 grid:
-  # Experimental geometry preview only; nonuniform solver operators are not connected yet.
+  # Optional orthogonal nonuniform production: TGV/uniform_flow, KEEP2/KEEP6/WENO5Z_ROE/HYBRID(KEEP2+WENO),
+  # viscous_scheme FV2/NONE and output.format vtr. Standalone KEEP6 uses mapped integration weights.
+  # KEEP6 hybrid/FH/forcing/restart are not yet supported on stretched grids.
   # Omit mapping for the existing uniform calculation.
   # mapping:
   #   type: sinh
