@@ -24,6 +24,7 @@ contains
     character(len=32)  :: equation, output_format, backend, precision_name
     character(len=256) :: case_name, input_file, output_dir
     character(len=64)  :: initial_condition
+    character(len=1024) :: restart_file
     integer :: nx, ny, nz, nghost, nsteps, output_frequency
     integer :: rank, nprocs, cuda_device
     real(dp) :: x_min, x_max, y_min, y_max, z_min, z_max
@@ -38,13 +39,14 @@ contains
       dt, t_max, nsteps, cfl, use_fixed_dt, &
       output_frequency, output_dir, output_format, precision_name, &
       write_initial, write_meta, backend, use_mpi, use_openmp, rank, nprocs, &
-      cuda_device
+      cuda_device, restart_file
 
     ! copy defaults from cfg
     equation = cfg%equation
     case_name = cfg%case_name
     input_file = filename
     initial_condition = cfg%initial_condition
+    restart_file = cfg%restart_file
     nx = cfg%nx; ny = cfg%ny; nz = cfg%nz
     nghost = cfg%nghost
     grid_mapping=cfg%grid_mapping;grid_stretch=cfg%grid_stretch
@@ -87,6 +89,7 @@ contains
     cfg%case_name = case_name
     cfg%input_file = input_file
     cfg%initial_condition = initial_condition
+    cfg%restart_file = restart_file
     cfg%nx = nx; cfg%ny = ny; cfg%nz = nz
     cfg%nghost = nghost
     if(grid_mapping/='uniform'.and.grid_mapping/='sinh') error stop 'Unknown grid_mapping'
@@ -155,6 +158,7 @@ contains
     real(dp) :: fh_boltzmann_number
     integer :: fh_seed
     real(dp) :: gamma, cfl, small_rho, small_p, rho0, mach, reynolds, prandtl
+    real(dp) :: uniform_state(5)
     real(dp) :: hit_turbulent_mach, hit_turbulent_reynolds
     real(dp) :: hit_rms_velocity, hit_peak_wavenumber
     real(dp) :: hit_integral_length, hit_kolmogorov_length
@@ -229,7 +233,7 @@ contains
     character(len=32) :: forcing_scheme, forcing_spectrum, forcing_fft_backend
     integer :: u, ios
     logical :: exists, any_boundary_face, all_boundary_faces
-    namelist /nse/ fh_enabled, fh_boltzmann_number, fh_seed, &
+    namelist /nse/ uniform_state, fh_enabled, fh_boltzmann_number, fh_seed, &
       nv, nghost, gamma, cfl, small_rho, small_p, rho0, mach, &
       reynolds, prandtl, convective_scheme, hybrid_smooth_scheme, &
       hybrid_shock_scheme, hybrid_sensor, hybrid_sensor_onset, &
@@ -293,6 +297,7 @@ contains
     gamma = cfg%gamma; cfl = cfg%cfl
     small_rho = cfg%small_rho; small_p = cfg%small_p
     rho0 = cfg%rho0; mach = cfg%mach; reynolds = cfg%reynolds; prandtl = cfg%prandtl
+    uniform_state = cfg%uniform_state
     fh_enabled = cfg%fh_enabled
     fh_boltzmann_number = cfg%fh_boltzmann_number
     fh_seed = cfg%fh_seed
@@ -437,6 +442,7 @@ contains
     cfg%gamma = gamma; cfg%cfl = cfl
     cfg%small_rho = small_rho; cfg%small_p = small_p
     cfg%rho0 = rho0; cfg%mach = mach; cfg%reynolds = reynolds; cfg%prandtl = prandtl
+    cfg%uniform_state = uniform_state
     cfg%fh_enabled = fh_enabled
     cfg%fh_boltzmann_number = fh_boltzmann_number
     cfg%fh_seed = fh_seed
@@ -589,12 +595,50 @@ contains
     type(gpe_config), intent(inout), optional :: gpe
     type(nse_config), intent(inout), optional :: nse
 
-    call read_common_input(filename, sim)
+    ! Only the single-component NSE entry points may opt into mapped runs.
+    call read_common_input(filename, sim, allow_grid_preview=present(nse))
     if (present(gpe)) call read_gpe_input(filename, gpe)
     if (present(nse)) then
       nse%cfl = sim%cfl
       call read_nse_input(filename, nse)
+      if (trim(sim%initial_condition)=='uniform_flow') then
+        if (.not.all(ieee_is_finite(nse%uniform_state))) error stop 'uniform_state must be finite'
+        if (nse%uniform_state(1)<=nse%small_rho.or.nse%uniform_state(5)<=nse%small_p) &
+          error stop 'uniform_state requires explicit density and pressure above solver floors'
+      end if
+      call validate_mapped_run(sim, nse)
     end if
   end subroutine read_all_inputs
+
+  subroutine validate_mapped_run(sim, nse)
+    type(simulation_config), intent(in) :: sim
+    type(nse_config), intent(in) :: nse
+    integer :: f
+    if (trim(sim%grid_mapping)=='uniform') return
+    if (nse%nv/=5) error stop 'Nonuniform production supports single-component NSE only'
+    if (trim(sim%initial_condition)/='taylor_green'.and.trim(sim%initial_condition)/='uniform_flow') &
+      error stop 'Nonuniform production requires initial_condition=taylor_green or uniform_flow'
+    if (len_trim(sim%restart_file)>0) error stop 'Nonuniform restart is not supported yet'
+    if (trim(sim%output_format)/='vtr') error stop 'Nonuniform production requires output_format=vtr (physical coordinates)'
+    if (nse%fh_enabled.or.trim(nse%forcing_scheme)/='none') &
+      error stop 'Nonuniform forcing and fluctuating hydrodynamics are not supported yet'
+    select case(trim(nse%convective_scheme))
+    case('keep2','weno5z_roe')
+    case('hybrid')
+      if (trim(nse%hybrid_smooth_scheme)/='keep2'.or.trim(nse%hybrid_shock_scheme)/='weno5z_roe') &
+        error stop 'Nonuniform hybrid requires smooth=keep2 and shock=weno5z_roe'
+    case default
+      error stop 'Nonuniform production supports KEEP2, WENO5Z_Roe or their hybrid; mapped KEEP6 remains experimental'
+    end select
+    if (trim(nse%viscous_scheme)/='none'.and.trim(nse%viscous_scheme)/='fv2') &
+      error stop 'Nonuniform production requires viscous_scheme=none or fv2'
+    do f=1,6
+      select case(trim(nse%boundary_face_type(f)))
+      case('periodic','non_reflecting','dirichlet','reflective')
+      case default
+        error stop 'Unsupported boundary for nonuniform production'
+      end select
+    end do
+  end subroutine validate_mapped_run
 
 end module mod_input_reader

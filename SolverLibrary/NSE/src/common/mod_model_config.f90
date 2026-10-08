@@ -31,6 +31,8 @@ module mod_model_config
     real(dp) :: small_rho = 1.0e-12_dp
     real(dp) :: small_p   = 1.0e-12_dp
     real(dp) :: rho0 = 1.0_dp
+    ! Primitive initial state [rho,u,v,w,p]; explicit for uniform_flow only.
+    real(dp) :: uniform_state(5) = 0.0_dp
     real(dp) :: mach = 0.5_dp
     real(dp) :: reynolds = 0.0_dp
     real(dp) :: prandtl = 0.72_dp

@@ -1798,6 +1798,30 @@ def _resolve_nse_fh(case, nse, backend):
     return {"fh_enabled": True, "fh_boltzmann_number": beta, "fh_seed": seed}
 
 
+def _validate_nonuniform_nse(common: dict[str, Any], nse: dict[str, Any]) -> None:
+    """Keep the production subset in sync with mod_input_reader.f90."""
+    if common.get("grid_mapping", "uniform") == "uniform":
+        return
+    if nse.get("nv", 5) != 5:
+        raise CaseInputError("Nonuniform production supports single-component NSE only")
+    if common.get("initial_condition") not in {"taylor_green", "uniform_flow"}:
+        raise CaseInputError("Nonuniform production requires flow.type=taylor_green or uniform_flow")
+    if common.get("restart_file"):
+        raise CaseInputError("Nonuniform restart is not supported yet")
+    if common.get("output_format", "slf") != "vtr":
+        raise CaseInputError("Nonuniform production requires output.format: vtr (physical coordinates)")
+    if nse.get("fh_enabled", False) or nse.get("forcing_scheme", "none") != "none":
+        raise CaseInputError("Nonuniform forcing and fluctuating hydrodynamics are not supported yet")
+    scheme = nse.get("convective_scheme", "keep6")
+    if scheme not in {"keep2", "weno5z_roe", "hybrid"}:
+        raise CaseInputError("Nonuniform production supports KEEP2, WENO5Z_ROE or their HYBRID; KEEP6 remains experimental")
+    if scheme == "hybrid" and (nse.get("hybrid_smooth_scheme", "keep6") != "keep2"
+                              or nse.get("hybrid_shock_scheme", "weno5z_roe") != "weno5z_roe"):
+        raise CaseInputError("Nonuniform HYBRID requires smooth_scheme: KEEP2 and shock_scheme: WENO5Z_ROE")
+    if nse.get("viscous_scheme", "none") not in {"none", "fv2"}:
+        raise CaseInputError("Nonuniform production requires numerics.viscous_scheme: FV2 or NONE")
+
+
 def render_nse(
     case: dict[str, Any],
     manifest: dict[str, Any],
@@ -2031,10 +2055,33 @@ def render_nse(
         "&simulation",
     ]
     common = _common_values(case, "NSE", use_mpi, use_openmp, backend)
+    uniform_state = None
+    if dict(common)["initial_condition"] == "uniform_flow":
+        rho, velocity, pressure = _nse_primitive_state(
+            _required(case, "flow.uniform_state"), "flow.uniform_state")
+        if rho <= nse.get("small_rho", 1e-12) or pressure <= nse.get("small_p", 1e-12):
+            raise CaseInputError("flow.uniform_state density and pressure must exceed solver floors")
+        uniform_state = [rho, *velocity, pressure]
+    elif nested(case, "flow.uniform_state") is not None:
+        raise CaseInputError("flow.uniform_state requires flow.type=uniform_flow")
+    restart = _mapping(case.get("restart", {}), "restart")
+    if set(restart) - {"file"}:
+        raise CaseInputError("NSE restart accepts only restart.file")
+    if restart:
+        restart_file = restart.get("file")
+        if not isinstance(restart_file, str) or not restart_file.strip():
+            raise CaseInputError("restart.file must be a nonempty portable SLF path")
+        restart_path = Path(restart_file)
+        if case_dir is not None and not restart_path.is_absolute():
+            restart_path = (case_dir / restart_path).resolve()
+        common.append(("restart_file", restart_path.as_posix()))
     common.append(("cuda_device", nested(case, "solver.cuda_device", 0)))
+    _validate_nonuniform_nse(dict(common), nse)
     _append(lines, common)
     lines.extend(["/", "", "&nse"])
     _append(lines, [(key, nse.get(key)) for key in NSE_KEYS])
+    if uniform_state is not None:
+        _append(lines, [("uniform_state", uniform_state)])
     lines.extend(["/", ""])
     return "\n".join(lines)
 

@@ -1,6 +1,191 @@
 # 単成分NSEの不等間隔格子：実装状況と接続方針
 
-## 2026-10-07：周期・無反射の境界処理（最新）
+## 本計算の接続（2026-10-07・最新）
+
+限定した組合せで、格子生成→初期化→時間発展→座標付き出力を実行可能にした。
+**全機能の不等間隔対応や、噴流の本番条件の検証が完了したという意味ではない。**
+後述の開発履歴にある「共通停止ガード維持」は当時の状態であり、現在は以下の
+許可リストに置き換わる。等間隔の既存設定・SLF出力は変更しない。
+
+| 項目 | 不等間隔で現在選択できる内容 |
+|---|---|
+| 格子 | 直交・方向分離 `sinh`、各方向のstrength=0ならその方向は等間隔 |
+| 初期条件 | `taylor_green`（物理セル中心の座標で評価）、`uniform_flow`（2026-10-08追加） |
+| 対流 | `keep2`、`weno5z_roe`、`hybrid`（KEEP2＋WENO5Z_Roe） |
+| 粘性・熱伝導 | `fv2`、または `none`。FV2にはRe>0、Pr>0が必要 |
+| 時間積分 | 既存SSPRK3、固定dt／CFL自動dt |
+| 境界 | 各面の周期・特性緩和無反射・鏡像・固定値。周期は方向ごとの両端ペア |
+| 実行構成 | CPU/OpenMP、MPI、CUDA、MPI＋CUDA。従来の環境・実行窓口を使用 |
+| 出力 | `vtr`。各rankのVTRと全rankを参照するPVTR。保存量5変数、物理セル辺座標、ghost除外 |
+
+KEEP6は計量重みとFV物理体積の整合が未解決のため、本計算では引き続き拒否する。
+CENTRAL6、HIT、読み込み乱流、restart、forcing、揺らぎもこの不等間隔モードでは
+未対応として拒否する。これらは**等間隔では従来どおり**。別スキームへの自動変更はしない。
+WENOという名前だけで全体5次精度を保証しない。粘性FV2は滑らかな格子で2次を意図する方式。
+
+### 実行方法
+
+#### 一様流・入口出口の確認（2026-10-08追加）
+
+`flow.type: uniform_flow` では `flow.uniform_state` に密度、3方向速度、圧力を
+明示する。単位は既存NSEと同じ無次元量であり、Mach数として再解釈しない。
+指定がない場合や密度・圧力がsolverの下限以下の場合は生成時／読込み時に停止する。
+等間隔格子でも使用できるが、既存の初期条件・既定値の意味は変更しない。
+
+```yaml
+flow:
+  type: uniform_flow
+  uniform_state:
+    density: 1.2
+    velocity: [0.13, -0.04, 0.02]
+    pressure: 0.9
+```
+
+既存の `examples/nonuniform_tgv.case.yaml` のflow節を上記へ置き換えれば
+全周期の一様流計算になる。固定値入口＋無反射出口の場合は、既存の
+`boundary.faces.x_min` を `type: DIRICHLET`、`x_max` を `type: NON_REFLECTING`
+とし、各 `reference_state` に上記と同じdensity/velocity/pressureを指定する。
+y/zは両端周期とする。これは一定の入口状態であり、噴流の半径方向分布ではない。
+境界の参照状態は初期値から自動で補わず、従来どおり明示指定する。
+
+Fortranの直接入力では `initial_condition='uniform_flow'` と
+`&nse uniform_state=1.2,0.13,-0.04,0.02,0.9 /` を指定する。
+保存量は `[rho,rho*u,rho*v,rho*w,p/(gamma-1)+rho*|u|^2/2]` で初期化する。
+
+検証スクリプトに `--uniform-flow` を追加すると、12³伸長格子で移動一様流の
+保持（全保存量の各セル絶対差2e-11未満）を検査する。3対流×2粘性×
+周期／固定値入口＋無反射出口×CPU・4 MPI・CUDA・4 MPI＋CUDAの48実行が成功。
+MPI＋CUDAは1GPU共有の試験であり、実際の複数GPU通信の確認ではない。
+既存のCUDA hybrid衝撃波回帰試験も維持する。今回CUDAカーネルの変更はない。
+従来のTaylor–Greenについても同じ4構成・48実行を再確認した。
+CPU CTest 35件、CUDAの対流／衝撃波／positivity試験7件、入力生成119件が成功。
+今回の更新はFrameWork内のみで、既存ResearchRuns環境には自動反映しない。
+
+#### 既存の環境生成・実行手順
+
+完全な入力例は `examples/nonuniform_tgv.case.yaml`。環境生成時のMPI/CUDAの選択は
+変更不要。生成済みの `cases/<case-id>/case.yaml` ではcase_id、出力先、solver設定を
+自分の環境のまま維持し、例のflow/grid/numerics/output設定を反映する。
+特に `grid.mapping` だけ変更せず、`viscous_scheme: fv2` と `output.format: vtr` も設定する。
+既存の拡張config参照でforcing/FHが有効なら、その不等間隔ケースでは無効化が必要。
+
+新しいソースで生成した実行環境のルートで、Windows PowerShell:
+
+```powershell
+python .\tools\run_case.py --prepare
+python .\tools\run_case.py --configure --build --run
+```
+
+Linux:
+
+```bash
+python3 ./tools/run_case.py --prepare
+python3 ./tools/run_case.py --configure --build --run
+```
+
+古い実行環境はソースとtoolsのコピーを持つため、FrameWorkだけ更新しても変わらない。
+従来の環境再生成手順で更新し、計算結果は新しい出力先へ保存する。
+手動CMakeビルドの粘性バックエンドは `NSE_VISCOUS_SCHEME=central6` のままでよい。
+このバックエンドに実行時選択のFV2も含む。`NSE_VISCOUS_SCHEME=none` のビルドではFV2は使えない。
+MPIのy/z各局所ブロックはnghost以上のセル数を確保する。
+
+ParaViewでは `output_nonuniform/field_*.pvtr` の連番を開く。
+VTRは現在ASCII形式のためSLFより容量・書込時間が大きい。出力頻度に注意する。
+不等間隔ではoutput_frequency>0なら、出力間隔の途中で終了した場合も最終状態を保存する。
+output_frequency=0では時間発展後の出力を行わず、write_initialは独立に適用する。
+`meta.json` のspacingはnullであり、最小セル幅を一様格子間隔と偽って記録しない。
+座標はVTR内のセル辺から取得する。既存SLF用postprocess/FFT/import/restartは
+VTRに未対応なので、この出力には使用しない。非等間隔データをそのまま通常FFTへ渡すことも不可。
+
+### CFL・実用上の注意
+
+自動dtの対流制限は `CFL / [max(|u_d|+c) * sum_d(1/hmin_d)]`。
+全領域の方向別最小物理幅を使用し、CPU/CUDAで同じ定義とする。
+粘性制限も最小幅と最小密度を使用する。固定dtは自動調整されないため、まず
+低いCFLの自動dtで確認する。例の0.15は検証用初期値で、安定性の保証値ではない。
+極端なstretchは最小幅を非常に小さくし、精度・安定性・計算量を悪化させる。
+
+周期接続部や無反射境界で全体の高次精度を保証しない。
+また、無反射は既存の特性緩和であって反射を厳密にゼロにはしない。
+噴流入口の半径方向速度・温度分布の設定は別途未実装。
+長時間噴流DNSへ移る前に、その初期条件・入口分布の追加と格子収束・反射率検証が必要。
+
+### 自動検証
+
+`tests/check_nonuniform_production.py` は12³、20ステップで、各3対流方式×2粘性方式×
+全周期／x無反射・yz周期を実行する。後者は自動dt、前者は固定dt。
+正の密度・圧力、5保存量の物理体積積分（周期）、実座標・MPI領域被覆・初期場、
+CPU/MPI/CUDA間の場と時刻の一致を検査する。実行にはPython標準ライブラリのみ使用する。
+例（FrameWorkルート、実行ファイルの場所は環境に合わせる）:
+
+```powershell
+python SolverLibrary/NSE/tests/check_nonuniform_production.py --cpu build/nse-positivity-cpu/bin/solver.exe --cuda build/nse-positivity-cuda/bin/nse_cuda.exe --work-dir build
+```
+
+```bash
+python3 SolverLibrary/NSE/tests/check_nonuniform_production.py --cpu build/nse-cpu/bin/solver --cuda build/nse-cuda/bin/nse_cuda --work-dir build
+```
+
+`--mpi <exe> --mpiexec <launcher>` で4プロセスCPU比較、
+`--mpi-cuda <exe>` で4プロセスCUDA比較を追加できる。
+`--shared-gpu` は検証目的で全rankを1GPUへ割当てる。複数GPU間通信や性能の検証ではない。
+許容誤差: CPU/GPU保存量の各セル値2e-10、時刻2e-12、周期体積積分2e-11×max(1,初期積分絶対値)。
+
+今回の確認結果:
+
+- 上記12条件×CPU/OpenMP・4 MPI・CUDA・4 MPI＋CUDAの計48実行が成功。
+- MPI＋CUDAは1GPU共有・host-staged通信。複数GPU実機・CUDA-aware通信の再検証は未実施。
+- CPUの12条件は `--steps 200` でも成功。長時間DNSの保証ではない。
+- 既存CPU CTest 35件、case入力テスト118件が成功。
+- 環境生成テストは51件中50件成功。残る1件は既存のforcingテンプレートに対し、
+  廃止済み `target_dissipation` の文字列を期待するテストの不一致。
+  今回そのforcing仕様やテストは変更していない。
+- VTR/PVTRはXMLの読み戻し、セル数・座標・領域被覆・データを検証済み。
+  ParaView GUIでの表示確認は未実施。
+
+## この接続作業のコミット用コマンド
+
+Gitの操作は未実施。この接続は以前の不等間隔演算・境界実装に依存するため、
+それらが未コミットなら先に変更を確認して含めること。
+下記は今回編集したファイルをまとめてステージするPowerShell用。
+同じファイル内に別作業の変更がある場合はそれも含まれるため、diffを確認する。
+今回のツール環境ではGitのworktree認識が失敗し、既存のステージ状態は確認できなかった。
+
+```powershell
+Set-Location 'C:\Users\Owner\Documents\Codex\FrameWork'
+$nse = 'SolverLibrary/NSE'
+$runenv = 'ScriptLibrary/RunEnvironment'
+$files = @(
+  "$nse/src/common/mod_common_config.f90",
+  "$nse/src/grid/mod_grid_axis.f90",
+  "$nse/src/io/mod_input_reader.f90",
+  "$nse/src/io/mod_slf_output.f90",
+  "$nse/src/time/mod_nse_time_integration.f90",
+  "$nse/src/gpu/nse_cuda_bridge.cu",
+  "$nse/src/main/main_nse.f90",
+  "$nse/src/main/main_nse_cuda.f90",
+  "$nse/src/main/main_nse_mpi_cuda.f90",
+  "$nse/solver_manifest.yaml",
+  "$nse/docs/NSE_NONUNIFORM_GRID.md",
+  "$nse/docs/NSE_BUILD_AND_RUN.md",
+  "$nse/examples/nonuniform_tgv.case.yaml",
+  "$nse/tests/input_nonuniform_production.dat",
+  "$nse/tests/check_nonuniform_production.py",
+  "$runenv/case_input.py",
+  "$runenv/case_templates/nse.yaml",
+  "$runenv/tests/test_case_input.py"
+)
+git add -- $files
+git diff --cached --stat
+git diff --cached --check
+# 内容を確認してから実行:
+git commit -m "Enable validated nonuniform NSE runs with physical-coordinate VTK output"
+```
+
+Linuxの場合はリポジトリのルートへ移動し、同じファイル一覧を `git add --` に渡す。
+commitコマンドは共通。pushは現在のブランチ・送信先を確認して別途行う。
+
+## 開発履歴：周期・無反射の境界処理（本計算接続前）
 
 CPU、CUDA、MPI+CUDAの格子生成に各方向の周期指定を接続した。
 周期方向は反対側セルの幅を使い、座標を領域長だけ平行移動してghostへ延長する。

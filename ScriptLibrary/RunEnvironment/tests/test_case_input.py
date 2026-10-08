@@ -13,6 +13,7 @@ from case_input import (  # noqa: E402
     CaseInputError,
     _resolve_nse_forcing,
     _grid_mapping_values,
+    _validate_nonuniform_nse,
     NSE_BOUNDARY_FACES,
     _validate_solver_selection,
     derive_nse_hit_transport,
@@ -29,6 +30,51 @@ NSE_MANIFEST = FRAMEWORK_ROOT / "SolverLibrary" / "NSE" / "solver_manifest.yaml"
 
 
 class GridMappingTests(unittest.TestCase):
+    def test_uniform_flow_render_and_validation(self):
+        case = load_yaml(FRAMEWORK_ROOT / "SolverLibrary/NSE/examples/nonuniform_tgv.case.yaml")
+        manifest = load_yaml(NSE_MANIFEST)
+        case["flow"] = {"type": "uniform_flow", "uniform_state": {
+            "density": 1.2, "velocity": [0.13, -0.04, 0.02], "pressure": 0.9}}
+        for profile in ("cpu_mpi", "cuda_single", "cuda_mpi"):
+            text = render_nse(case, manifest, profile)
+            self.assertIn('initial_condition = "uniform_flow"', text)
+            self.assertIn('uniform_state = ', text)
+        for invalid in (0, -1, float("nan"), float("inf"), 1e-14):
+            case["flow"]["uniform_state"]["density"] = invalid
+            with self.assertRaises(CaseInputError):
+                render_nse(case, manifest, "cpu_mpi")
+        case["flow"]["uniform_state"]["density"] = 1.2
+        for velocity in ([1, 2], [0, float("nan"), 0]):
+            case["flow"]["uniform_state"]["velocity"] = velocity
+            with self.assertRaises(CaseInputError):
+                render_nse(case, manifest, "cpu_mpi")
+        case["flow"]["uniform_state"]["velocity"] = [0.13, -0.04, 0.02]
+        case["grid"].pop("mapping")
+        self.assertIn('uniform_state = ', render_nse(case, manifest, "cuda_single"))
+        state = case["flow"].pop("uniform_state")
+        with self.assertRaises(CaseInputError):
+            render_nse(case, manifest, "cpu_mpi")
+        case["flow"]["uniform_state"] = state
+        case["flow"]["type"] = "taylor_green"
+        with self.assertRaises(CaseInputError):
+            render_nse(case, manifest, "cpu_mpi")
+
+    def test_production_subset(self):
+        common = dict(grid_mapping="sinh", initial_condition="taylor_green", output_format="vtr")
+        for scheme in ("keep2", "weno5z_roe", "hybrid"):
+            for viscous in ("none", "fv2"):
+                _validate_nonuniform_nse(common, dict(convective_scheme=scheme,
+                    hybrid_smooth_scheme="keep2", viscous_scheme=viscous))
+        for updates in (dict(output_format="slf"), dict(restart_file="old.slf"),
+                        dict(initial_condition="hit_spectral")):
+            with self.subTest(updates=updates), self.assertRaises(CaseInputError):
+                _validate_nonuniform_nse(common | updates, dict(convective_scheme="keep2"))
+        for updates in (dict(convective_scheme="keep6"), dict(viscous_scheme="central6"),
+                        dict(fh_enabled=True), dict(forcing_scheme="petersen_livescu"),
+                        dict(convective_scheme="hybrid", hybrid_smooth_scheme="keep6")):
+            with self.subTest(updates=updates), self.assertRaises(CaseInputError):
+                _validate_nonuniform_nse(common, dict(convective_scheme="keep2") | updates)
+
     def test_defaults_preserved(self):
         self.assertEqual(_grid_mapping_values({}, "NSE"), [])
 
@@ -968,6 +1014,41 @@ class MulticomponentFoundationInputTests(unittest.TestCase):
 
 
 class NseCaseInputTests(unittest.TestCase):
+    def test_nonuniform_render_profiles(self):
+        case = self.case()
+        case["grid"]["mapping"] = {"type": "sinh", "strength": [0.4, 1, 1.5]}
+        case["output"]["format"] = "vtr"
+        case["numerics"]["convective_scheme"] = "HYBRID"
+        case["numerics"]["hybrid"] = {"smooth_scheme": "KEEP2", "shock_scheme": "WENO5Z_ROE"}
+        case["numerics"]["viscous_scheme"] = "FV2"
+        case["physics"]["nse"]["reynolds_number"] = 100
+        for profile in ("cpu_mpi", "cuda_single", "cuda_mpi"):
+            with self.subTest(profile=profile):
+                text = render_nse(case, self.manifest, profile)
+                self.assertIn('grid_mapping = "sinh"', text)
+                self.assertIn('viscous_scheme = "fv2"', text)
+                self.assertIn('output_format = "vtr"', text)
+        case["output"]["format"] = "slf"
+        with self.assertRaisesRegex(CaseInputError, "output.format: vtr"):
+            render_nse(case, self.manifest, "cpu_mpi")
+
+    def test_nonuniform_example(self):
+        case = load_yaml(FRAMEWORK_ROOT / "SolverLibrary/NSE/examples/nonuniform_tgv.case.yaml")
+        for profile in ("cpu_mpi", "cuda_single", "cuda_mpi"):
+            self.assertIn('grid_mapping = "sinh"', render_nse(case, self.manifest, profile))
+
+    def test_restart_path(self):
+        case = self.case()
+        case["restart"] = {"file": "initial_data/restart.slf"}
+        for profile in ("cpu_mpi", "cuda_single"):
+            text = render_nse(case, self.manifest, profile, case_dir=Path.cwd())
+            self.assertIn("restart_file", text)
+            self.assertIn((Path.cwd()/"initial_data/restart.slf").as_posix(), text)
+        for restart in ({"file": ""}, {"file": 3}, {"step": 12}):
+            case["restart"] = restart
+            with self.assertRaises(CaseInputError):
+                render_nse(case, self.manifest, "cpu_mpi")
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.manifest = load_yaml(NSE_MANIFEST)
