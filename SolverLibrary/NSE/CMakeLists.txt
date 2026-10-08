@@ -1736,6 +1736,8 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda" AND NOT NSE_USE_MPI)
   )
   add_test(NAME nse_cuda_hybrid_compare
     COMMAND $<TARGET_FILE:nse_test_cuda_keep_compare> 7)
+  add_test(NAME nse_cuda_hybrid_shock_compare
+    COMMAND $<TARGET_FILE:nse_test_cuda_keep_compare> 7 shock)
   set_tests_properties(
     nse_cuda_hybrid_compare
     PROPERTIES PASS_REGULAR_EXPRESSION "CUDA convective comparison passed"

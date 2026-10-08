@@ -204,7 +204,10 @@ __device__ inline void leaf_face_flux_cuda(
   }
 }
 
-__device__ inline void hybrid_face_flux_cuda(
+// Keep the GridView reference in the caller: CUDA 13.3/sm_86 can emit an
+// invalid local-memory reference in an out-of-line optimized hybrid clone
+// when the shock branch calls WENO. Covered by the hybrid shock regression.
+__device__ __forceinline__ void hybrid_face_flux_cuda(
     const double* q,
     const GridView& grid,
     int i,

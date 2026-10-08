@@ -1,5 +1,6 @@
 program test_cuda_keep_compare
   use mod_precision, only : dp
+  use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
   use mod_common_config, only : simulation_config, init_simulation_config
   use mod_model_config, only : nse_config, init_nse_config
   use mod_convective_scheme, only : compute_convective_flux
@@ -15,14 +16,18 @@ program test_cuda_keep_compare
   real(dp), allocatable :: q0(:,:,:,:), rhs(:,:,:,:), fface(:,:,:,:)
   real(dp) :: x, y, z, rho, u, v, w, pressure
   real(dp) :: gpu_dt, cpu_dt, field_error, comparison_tolerance
-  integer :: i, j, k, scheme_code
-  character(len=16) :: scheme_argument
+  integer :: i, j, k, scheme_code, step, steps
+  real(dp) :: step_dt
+  logical :: shock_test
+  character(len=16) :: scheme_argument, profile_argument
 
   call init_simulation_config(sim)
   call init_nse_config(nse)
   scheme_code = 6
   call get_command_argument(1, scheme_argument)
   if (len_trim(scheme_argument) > 0) read(scheme_argument,*) scheme_code
+  call get_command_argument(2, profile_argument)
+  shock_test = trim(profile_argument) == 'shock'
   if (scheme_code /= 2 .and. scheme_code /= 5 .and. &
       scheme_code /= 6 .and. scheme_code /= 7) then
     error stop 'CUDA comparison scheme code must be 2, 5, 6, or 7'
@@ -51,6 +56,21 @@ program test_cuda_keep_compare
   sim%dy = 0.19_dp
   sim%dz = 0.23_dp
   nse%cfl = 0.37_dp
+  steps = 1
+  step_dt = 2.5e-4_dp
+  if (shock_test) then
+    if (scheme_code /= 7) error stop 'shock regression requires hybrid'
+    sim%nx = 128
+    sim%ny = 16
+    sim%nz = 16
+    sim%dx = 0.03125_dp
+    sim%dy = sim%dx
+    sim%dz = sim%dx
+    nse%hybrid_sensor_onset = 0.01_dp
+    nse%hybrid_sensor_full = 0.1_dp
+    step_dt = 0.002_dp
+    steps = 5
+  end if
 
   allocate(q_cpu(1-sim%nghost:sim%nx+sim%nghost, &
     1-sim%nghost:sim%ny+sim%nghost, &
@@ -77,6 +97,14 @@ program test_cuda_keep_compare
         v = -0.08_dp*sin(2.0_dp*x-z)
         w = 0.05_dp*cos(y+z)
         pressure = 1.0_dp + 0.04_dp*cos(x-y+2.0_dp*z)
+        if (shock_test) then
+          rho = 1.0_dp
+          u = 0.0_dp
+          v = 0.0_dp
+          w = 0.0_dp
+          pressure = 1.0_dp/nse%gamma
+          if (i <= sim%nx/2) pressure = 5.0_dp/nse%gamma
+        end if
         q_cpu(i,j,k,1) = rho
         q_cpu(i,j,k,2) = rho*u
         q_cpu(i,j,k,3) = rho*v
@@ -99,16 +127,20 @@ program test_cuda_keep_compare
     error stop "CUDA CFL differs from CPU reference"
   end if
 
-  call reference_ssprk3(q_cpu, q0, rhs, fface, 2.5e-4_dp, sim, nse)
-  call nse_gpu_advance_ssprk3(gpu, 2.5e-4_dp)
-  call nse_gpu_synchronize(gpu)
-  call nse_gpu_download(gpu, q_gpu)
-  field_error = maxval(abs(q_gpu(1:sim%nx,1:sim%ny,1:sim%nz,:) - &
-    q_cpu(1:sim%nx,1:sim%ny,1:sim%nz,:)))
-  if (field_error > comparison_tolerance) then
-    write(*,'(A,ES24.16)') "Convective/SSPRK3 field error: ", field_error
-    error stop "CUDA convective step differs from CPU reference"
-  end if
+  do step = 1, steps
+    call reference_ssprk3(q_cpu, q0, rhs, fface, step_dt, sim, nse)
+    call nse_gpu_advance_ssprk3(gpu, step_dt)
+    call nse_gpu_synchronize(gpu)
+    call nse_gpu_download(gpu, q_gpu)
+    if (.not. all(ieee_is_finite(q_gpu))) error stop 'nonfinite CUDA state'
+    if (.not. all(ieee_is_finite(q_cpu))) error stop 'nonfinite CPU reference'
+    field_error = maxval(abs(q_gpu(1:sim%nx,1:sim%ny,1:sim%nz,:) - &
+      q_cpu(1:sim%nx,1:sim%ny,1:sim%nz,:)))
+    if (field_error > comparison_tolerance) then
+      write(*,'(A,ES24.16)') "Convective/SSPRK3 field error: ", field_error
+      error stop "CUDA convective step differs from CPU reference"
+    end if
+  end do
 
   call nse_gpu_finalize(gpu)
   deallocate(q_cpu, q_gpu, q0, rhs, fface)

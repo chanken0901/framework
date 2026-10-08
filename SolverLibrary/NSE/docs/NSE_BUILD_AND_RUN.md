@@ -11,6 +11,11 @@ CUDA版は`environment.nse_fluctuating.cuda.yaml`を使い、`parallel.use_mpi`�
 
 ## 1. 推奨フロー
 
+直交不等間隔格子の限定した本計算は[不等間隔格子の手順](NSE_NONUNIFORM_GRID.md)を参照。
+Taylor–Green、KEEP2/WENO/KEEP2ハイブリッド、FV2/NONE、VTR出力に対応する。
+KEEP6・HIT・読み込み乱流・restart・揺らぎ・forcingの不等間隔対応は未完了。
+MPI/OpenMP/CUDAの選択と `run_case.py` の実行窓口は共通。
+
 単成分MPI＋CUDAのGPUバッファ直接通信は[CUDA-aware MPI手順](NSE_CUDA_AWARE_MPI.md)を参照。
 ビルド時`NSE_ENABLE_CUDA_AWARE_MPI=ON`、実行時`NSE_CUDA_MPI_TRANSPORT=device`で必須化する。
 
@@ -505,6 +510,26 @@ python3 -m unittest discover ../RunEnvironment/tests
 
 ハイブリッド流束を変更した場合は、CPUの保存性・切替えテストと
 CPU/CUDA一致テストの両方を確認する。
+
+### CUDA hybridの衝撃波回帰試験（2026-10-08）
+
+`nse_cuda_hybrid_shock_compare` は128×16×16の圧力比5の不連続場を
+KEEP6/WENO5Z-Roe hybridで5ステップ進め、CPUとGPUの全保存量を比較する。
+滑らかな乱流だけでなく、衝撃波側へ切り替わる経路も検証するため、
+CUDAのReleaseビルドで実行する。
+
+```sh
+ctest --test-dir <CUDA-build-directory> -R nse_cuda_hybrid_shock_compare --output-on-failure
+```
+
+WindowsのCUDA 13.3／sm_86で、拡張後の格子情報を参照する最適化済み
+hybrid関数からWENOを呼び出す際に、不正なローカルメモリ参照を確認した。
+当該関数の強制インライン化で回避し、流束式・センサー閾値は変更していない。
+修正後の上記試験はCPUとの差2.7e-15以下、Compute Sanitizerのmemcheckは0件。
+case0033相当の1024×128×128、CENTRAL6、鏡像／無反射／周期境界、
+乱流読込みを含む試験は5ステップ正常終了した（長時間精度の検証ではない）。
+致命的CUDAエラー後の不要なrollbackも抑止し、元のエラーを保持する。
+生成済み環境は自動更新されないため、対応するCUDAソースを更新して再ビルドする。
 
 ## 11. 衝撃波–乱流干渉ケース
 

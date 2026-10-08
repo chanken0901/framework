@@ -877,7 +877,8 @@ __global__ void wave_speed_kernel(
       rho, u, v, w, pressure);
   const double sound_speed = sqrt(gamma * pressure / rho);
   const double inverse_minimum_spacing =
-      fmax(inverse_dx, fmax(inverse_dy, inverse_dz));
+      grid.axis_width[0] != nullptr ? inverse_dx + inverse_dy + inverse_dz
+                                    : fmax(inverse_dx, fmax(inverse_dy, inverse_dz));
   const double convective_rate = inverse_minimum_spacing * fmax(
       fabs(u) + sound_speed,
       fmax(fabs(v) + sound_speed, fabs(w) + sound_speed));
@@ -3405,9 +3406,15 @@ NSE_CUDA_EXPORT int nse_cuda_advance_ssprk3(void* handle, double dt) {
     if (!launch_boundary(context)) return 1;
     const int status = nse_cuda_advance_ssprk3_stage(handle, dt, stage);
     if (status != 0) {
+      // A fatal CUDA error may poison the context. Do not hide its cause
+      // behind a second error from an attempted rollback.
+      if (status != 2) return status;
       const std::string reason = last_error;
       if (!check_cuda(cudaMemcpy(context->q, context->q0, context->state_bytes,
-              cudaMemcpyDeviceToDevice), "restore rejected fixed step")) return 1;
+              cudaMemcpyDeviceToDevice), "restore rejected fixed step")) {
+        set_error(reason + "; rollback also failed: " + last_error);
+        return 1;
+      }
       set_error(reason);
       return status;
     }
@@ -3443,10 +3450,14 @@ NSE_CUDA_EXPORT int nse_cuda_advance_adaptive(void* handle, double* dt) {
           retry, requested_dt, *dt);
       return 0;
     }
+    if (status != 2) return status;
     const std::string reason = last_error;
-    if (nse_cuda_restore_ssprk3(handle) != 0) return 1;
+    if (nse_cuda_restore_ssprk3(handle) != 0) {
+      set_error(reason + "; rollback also failed: " + last_error);
+      return 1;
+    }
     // dt may vary between steps, but LLNS must not reject noise by its outcome.
-    if (status != 2 || context->fh_enabled) { set_error(reason); return status; }
+    if (context->fh_enabled) { set_error(reason); return status; }
     if (retry == 20) break;
     *dt *= 0.5;
   }
