@@ -41,20 +41,7 @@ def _source_nse_parameters(case, case_dir):
     path = Path(path)
     if not path.is_absolute():
         path = Path(case_dir) / path
-    try:
-        with path.open("rb") as stream:
-            header = stream.read(128)
-            if len(header) != 128 or header[:8] != b"SLF1\0\0\0\0":
-                raise CaseInputError(f"invalid source SLF: {path}")
-            if struct.unpack_from("<3i", header, 8) != (1, 2, 4):
-                raise CaseInputError("source parameters require float64 SLF1")
-            shape = struct.unpack_from("<4i", header, 20)
-            if min(shape) <= 0 or struct.unpack_from("<i", header, 124)[0] != shape[3]:
-                raise CaseInputError("invalid source SLF dimensions")
-            stream.seek(128 + 32*shape[3] + 8*math.prod(shape))
-            raw = stream.read(80)
-    except OSError as exc:
-        raise CaseInputError(f"cannot read source parameters: {path}: {exc}") from exc
+    raw = _slf_parameter_trailer(path)
     if len(raw) != 80 or raw[:8] != b"NSEPAR1\0":
         raise CaseInputError(f"{path}: source NSE parameters missing/invalid; reconvert with "
                              "nse_prepare_imported_turbulence.py --source-input ORIGINAL/input.dat")
@@ -72,6 +59,24 @@ def _source_nse_parameters(case, case_dir):
         raise CaseInputError("source viscosity requires positive Reynolds number")
     return dict(gamma=gamma, reynolds=reynolds, prandtl=prandtl, rho0=rho0, mach=mach,
                 viscous_scheme=viscous)
+
+
+def _slf_parameter_trailer(path):
+    try:
+        with path.open("rb") as stream:
+            header = stream.read(128)
+            if len(header) != 128 or header[:8] != b"SLF1\0\0\0\0":
+                raise CaseInputError(f"invalid source SLF: {path}")
+            if struct.unpack_from("<3i", header, 8) != (1, 2, 4):
+                raise CaseInputError("source parameters require float64 SLF1")
+            shape = struct.unpack_from("<4i", header, 20)
+            if min(shape) <= 0 or struct.unpack_from("<i", header, 124)[0] != shape[3]:
+                raise CaseInputError("invalid source SLF dimensions")
+            stream.seek(128 + 32*shape[3] + 8*math.prod(shape))
+            raw = stream.read(80)
+    except OSError as exc:
+        raise CaseInputError(f"cannot read source parameters: {path}: {exc}") from exc
+    return raw
 
 
 GPE_KEYS = (
@@ -1859,10 +1864,10 @@ def _validate_nonuniform_nse(common: dict[str, Any], nse: dict[str, Any]) -> Non
         raise CaseInputError("Nonuniform production supports single-component NSE only")
     if common.get("initial_condition") not in {"taylor_green", "uniform_flow"}:
         raise CaseInputError("Nonuniform production requires flow.type=taylor_green or uniform_flow")
-    if common.get("restart_file"):
-        raise CaseInputError("Nonuniform restart is not supported yet")
-    if common.get("output_format", "slf") != "vtr":
-        raise CaseInputError("Nonuniform production requires output.format: vtr (physical coordinates)")
+    if common.get("restart_file") and Path(common["restart_file"]).suffix != ".slf":
+        raise CaseInputError("Nonuniform restart requires SLF with grid metadata")
+    if common.get("output_format", "slf") not in {"slf", "vtr"}:
+        raise CaseInputError("Nonuniform output requires SLF or VTR")
     if nse.get("fh_enabled", False) or nse.get("forcing_scheme", "none") != "none":
         raise CaseInputError("Nonuniform forcing and fluctuating hydrodynamics are not supported yet")
     scheme = nse.get("convective_scheme", "keep6")
@@ -2139,7 +2144,7 @@ def render_nse(
     if restart:
         restart_file = restart.get("file")
         if not isinstance(restart_file, str) or not restart_file.strip():
-            raise CaseInputError("restart.file must be a nonempty portable SLF path")
+            raise CaseInputError("restart.file must be a nonempty SLF path")
         restart_path = Path(restart_file)
         if case_dir is not None and not restart_path.is_absolute():
             restart_path = (case_dir / restart_path).resolve()

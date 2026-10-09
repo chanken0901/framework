@@ -199,7 +199,7 @@ def main():
         assert abs(time-.0035) < 1e-15
         print("PASS end-time", backend, flush=True)
     # Direct namelist callers also receive explicit rejection before any output.
-    rejections = [("output_format='vtr'", "output_format='slf'"),
+    rejections = [("output_format='vtr'", "output_format='unsupported'"),
                      ("hybrid_smooth_scheme='keep2'", "hybrid_smooth_scheme='unsupported', convective_scheme='hybrid'"),
                      ("viscous_scheme='fv2'", "viscous_scheme='central6'")]
     if args.uniform_flow:

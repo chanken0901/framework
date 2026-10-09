@@ -16,13 +16,21 @@
 | 時間積分 | 既存SSPRK3、固定dt／CFL自動dt |
 | 境界 | 各面の周期・特性緩和無反射・鏡像・固定値。周期は方向ごとの両端ペア |
 | 実行構成 | CPU/OpenMP、MPI、CUDA、MPI＋CUDA。従来の環境・実行窓口を使用 |
-| 出力 | `vtr`。各rankのVTRと全rankを参照するPVTR。保存量5変数、物理セル辺座標、ghost除外 |
+| 出力 | `slf`（格子情報付き・再スタート可能）、または可視化用`vtr`／`pvtr` |
+| 再スタート | 新しい格子情報付きSLFから時刻・stepを継承。MPI並列数／CPU・GPU変更可能 |
 
 KEEP6単独の写像差分を本計算へ接続した。保存量の積分重みは物理セル体積とは
 異なるため、下記の `integration_weight` を使用する。KEEP6＋WENO hybridも同じ重みを使用する。
-HIT、読み込み乱流、restart、forcing、揺らぎはこの不等間隔モードでは
+HIT、読み込み乱流、forcing、揺らぎはこの不等間隔モードでは
 未対応として拒否する。これらは**等間隔では従来どおり**。別スキームへの自動変更はしない。
 WENOという名前だけで全体5次精度を保証しない。粘性FV2は滑らかな格子で2次を意図する方式。
+
+2026-10-09：SLF出力と不等間隔再スタートを追加した。
+`output.format: slf`で保存し、`restart.file`に保存ステップのrank00000のSLFを指定する。
+同じステップの全rankファイルが必要。詳細とWindows/Linuxコマンドは
+[再スタート手順](NSE_RESTART.md)冒頭を参照。
+以前の「VTR必須」「restart未対応」は開発履歴であり、現在はこの節を優先する。
+SLFによる再スタートへの対応と、既存の等間隔専用後処理への対応は別である。
 
 ### KEEP6ハイブリッド＋高次粘性（2026-10-09）
 
@@ -120,7 +128,7 @@ FV2との併用では各方向の粘性流束差も同じhで割り、対流項�
 5.61276、5.89596、sinh内部固定物理区間の誤差比は61.8499（32→64点）。
 SSPRK3は時間3次、FV2は空間2次。非周期境界のゴースト閉包と周期sinh接続部で
 6次精度を保証しない。KEEP6単独に衝撃波捕獲能力を付加したわけではない。
-非等間隔KEEP6のFH／forcing／restart等の未対応組合せは
+非等間隔KEEP6のFH／forcing等の未対応組合せは
 黙って別方式へ変更せず拒否する。これらの等間隔での従来仕様は維持する。
 
 2026-10-08の接続検証:
@@ -179,7 +187,8 @@ CPU CTest 35件、CUDAの対流／衝撃波／positivity試験7件、入力生�
 完全な入力例は `examples/nonuniform_tgv.case.yaml`。環境生成時のMPI/CUDAの選択は
 変更不要。生成済みの `cases/<case-id>/case.yaml` ではcase_id、出力先、solver設定を
 自分の環境のまま維持し、例のflow/grid/numerics/output設定を反映する。
-特に `grid.mapping` だけ変更せず、`viscous_scheme: fv2` と `output.format: vtr` も設定する。
+特に `grid.mapping` だけ変更せず、対応する粘性方式（`fv2`、またはKEEP6系の`central6`）も設定する。
+保存形式は再スタート用の `output.format: slf`、または可視化用の `vtr` を選択できる。
 既存の拡張config参照でforcing/FHが有効なら、その不等間隔ケースでは無効化が必要。
 
 新しいソースで生成した実行環境のルートで、Windows PowerShell:
@@ -202,7 +211,7 @@ python3 ./tools/run_case.py --configure --build --run
 このバックエンドに実行時選択のFV2も含む。`NSE_VISCOUS_SCHEME=none` のビルドではFV2は使えない。
 MPIのy/z各局所ブロックはnghost以上のセル数を確保する。
 
-ParaViewでは `output_nonuniform/field_*.pvtr` の連番を開く。
+`output.format: vtr` を選んだ場合、ParaViewでは `output_nonuniform/field_*.pvtr` の連番を開く。
 VTRは現在ASCII形式のためSLFより容量・書込時間が大きい。出力頻度に注意する。
 不等間隔ではoutput_frequency>0なら、出力間隔の途中で終了した場合も最終状態を保存する。
 output_frequency=0では時間発展後の出力を行わず、write_initialは独立に適用する。

@@ -29,6 +29,8 @@ physics:
 # time.nsteps and time.t_max remain TOTAL end limits. Use a NEW output directory.
 # restart:
 #   file: initial_data/restart.slf
+# Nonuniform: use a new-format field_STEP_rank00000.slf directly; keep all ranks
+# of that step together. No merge/conversion is needed. Save with output.format: slf.
 
 flow:
   type: taylor_green
@@ -146,8 +148,9 @@ forcing:
 grid:
   # Optional orthogonal nonuniform production: TGV/uniform_flow, KEEP2/KEEP6/WENO5Z_ROE/HYBRID.
   # HYBRID smooth=KEEP2 or KEEP6, shock=WENO5Z_ROE. KEEP6 paths use mapped integration weights.
-  # Viscosity FV2/NONE; CENTRAL6 for KEEP6 or KEEP6 hybrid (six ghosts set automatically). Output vtr.
-  # FH/forcing/restart are not yet supported on stretched grids.
+  # Viscosity FV2/NONE; CENTRAL6 for KEEP6 or KEEP6 hybrid (six ghosts set automatically).
+  # Output slf supports restart with grid metadata; vtr remains a visualization option.
+  # FH/forcing are not yet supported on stretched grids.
   # Omit mapping for the existing uniform calculation.
   # mapping:
   #   type: sinh

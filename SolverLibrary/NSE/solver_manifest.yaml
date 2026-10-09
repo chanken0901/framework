@@ -39,6 +39,7 @@ components:
       - src/field/mod_field_nse.f90
       - src/io/mod_input_reader.f90
       - src/io/mod_slf_output.f90
+      - src/io/mod_nse_checkpoint.f90
 
   mpi_real:
     cmake_role: library
@@ -270,6 +271,8 @@ components:
       - tests/input_tgv_weno5z_roe_small.dat
       - tests/test_viscous_central6.f90
       - tests/test_mapped_viscous.f90
+      - tests/check_nonuniform_restart.py
+      - tests/input_nonuniform_production.dat
       - tests/test_boundary_periodic.f90
       - tests/test_boundary_non_reflecting.f90
       - tests/test_boundary_reflective.f90

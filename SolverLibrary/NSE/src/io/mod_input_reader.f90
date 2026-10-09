@@ -622,8 +622,13 @@ contains
     if (nse%nv/=5) error stop 'Nonuniform production supports single-component NSE only'
     if (trim(sim%initial_condition)/='taylor_green'.and.trim(sim%initial_condition)/='uniform_flow') &
       error stop 'Nonuniform production requires initial_condition=taylor_green or uniform_flow'
-    if (len_trim(sim%restart_file)>0) error stop 'Nonuniform restart is not supported yet'
-    if (trim(sim%output_format)/='vtr') error stop 'Nonuniform production requires output_format=vtr (physical coordinates)'
+    if(len_trim(sim%restart_file)>0) then
+      f=len_trim(sim%restart_file)
+      if(f<4) error stop 'Nonuniform restart requires SLF with grid metadata'
+      if(sim%restart_file(f-3:f)/='.slf') error stop 'Nonuniform restart requires SLF with grid metadata'
+    end if
+    if (trim(sim%output_format)/='vtr'.and.trim(sim%output_format)/='slf') &
+      error stop 'Nonuniform output requires SLF or VTR'
     if (nse%fh_enabled.or.trim(nse%forcing_scheme)/='none') &
       error stop 'Nonuniform forcing and fluctuating hydrodynamics are not supported yet'
     select case(trim(nse%convective_scheme))

@@ -4,6 +4,7 @@ module mod_init_imported_turbulence
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config
+  use mod_nse_checkpoint, only: load_checkpoint
   implicit none
   private
 
@@ -16,6 +17,7 @@ module mod_init_imported_turbulence
     integer :: nz = 0
     integer :: nvar = 0
     integer :: nghost = 0
+    logical :: mapped = .false.
     real(dp) :: time = 0.0_dp
     real(dp) :: bounds(6) = 0.0_dp
     character(len=32), allocatable :: names(:)
@@ -85,6 +87,10 @@ contains
     if (sim%rank == 0) then
       inquire(file=trim(sim%output_dir)//'/meta.json',exist=exists)
       if (exists) error stop 'restart requires a new output directory (existing meta.json found)'
+    end if
+    if(sim%grid_mapping/='uniform') then
+      call load_checkpoint(q,sim,nse,js,je,ks,ke)
+      return
     end if
     if (nse%nv /= 5 .or. sim%grid_mapping /= 'uniform') &
       error stop 'restart currently requires single-component uniform-grid NSE'
@@ -347,6 +353,7 @@ contains
     header%nz = int(shape4(3))
     header%nvar = int(shape4(4))
     header%nghost = int(meta(6))
+    header%mapped = meta(8)==1
     allocate(header%names(header%nvar))
     do ivar = 1, header%nvar
       read(unit, iostat=ios) header%names(ivar)
@@ -368,6 +375,7 @@ contains
     character(len=32) :: name
     integer :: ivar
 
+    if(header%mapped) error stop 'Mapped SLF requires nonuniform restart; uniform import is not supported'
     if (header%nx <= 0 .or. header%ny <= 0 .or. header%nz <= 0) then
       error stop 'imported turbulence SLF has an invalid grid shape'
     end if

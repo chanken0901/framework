@@ -1,4 +1,5 @@
 module mod_slf_output
+  use mod_nse_checkpoint, only: append_checkpoint
   use, intrinsic :: iso_fortran_env, only : int32
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
@@ -143,7 +144,11 @@ if (present(ke)) local_range(6) = ke
     write(u,'(A,A,A)') '  "case_name": "', trim(cfg%case_name), '",'
     if(cfg%mapped_keep6) then
       write(u,'(A)') '  "state_representation": "mapped_grid_point_values",'
-      write(u,'(A)') '  "integration_weight": "integration_weight (VTR CellData)",'
+      if(cfg%output_format=='slf') then
+        write(u,'(A)') '  "integration_weight": "product of D6(x_d); grid stored in NSEGRID1 SLF trailer",'
+      else
+        write(u,'(A)') '  "integration_weight": "integration_weight (VTR CellData)",'
+      end if
     end if
     write(u,'(A,I0,A,I0,A,I0,A)') '  "grid": [', cfg%nx, ', ', cfg%ny, ', ', cfg%nz, '],'
     write(u,'(A,ES24.16,A,ES24.16,A,ES24.16,A)') '  "domain_length": [', cfg%lx, ', ', cfg%ly, ', ', cfg%lz, '],'
@@ -155,7 +160,11 @@ if (present(ke)) local_range(6) = ke
       write(u,'(A)') '  "grid_mapping": "sinh",'
       write(u,'(A,ES24.16,A,ES24.16,A,ES24.16,A)') &
         '  "grid_stretch": [',cfg%grid_stretch(1),',',cfg%grid_stretch(2),',',cfg%grid_stretch(3),'],'
-      write(u,'(A)') '  "coordinates": "VTR cell edges; no ghost cells",'
+      if(cfg%output_format=='slf') then
+        write(u,'(A)') '  "coordinates": "sinh mapping from bounds/stretch in each NSEGRID1 SLF trailer",'
+      else
+        write(u,'(A)') '  "coordinates": "VTR cell edges; no ghost cells",'
+      end if
     end if
     write(u,'(A,A,A)') '  "precision": "', trim(cfg%precision_name), '",'
     write(u,'(A,A,A)') '  "format": "', trim(cfg%output_format), '",'
@@ -303,6 +312,7 @@ write(u,'(A)') '}'
     meta(5) = int(cfg%nz, int32)
     meta(6) = int(cfg%nghost, int32)
     meta(7) = int(nprocs, int32)
+    if(trim(cfg%grid_mapping)/='uniform') meta(8)=1_int32
 
     write(u) magic
     write(u) version
@@ -350,7 +360,7 @@ write(u,'(A)') '}'
     nvar = size(field,4)
 
     open(newunit=u, file=trim(fname), access='stream', form='unformatted', &
-         status='replace', action='write', iostat=ios)
+         status='replace', action='write', convert='little_endian', iostat=ios)
     if (ios /= 0) error stop 'ERROR: cannot open SLF file.'
 
     call write_header(u, cfg, step, time, nvar, shape3, rank, variable_names)
@@ -420,6 +430,7 @@ write(u,'(A)') '}'
     integer, intent(in), optional :: js, je, ks, ke
 
     character(len=32), allocatable :: names(:)
+    character(len=512) :: restart_path
     integer :: nvar, ivar
 
     nvar = size(q,4)
@@ -441,8 +452,13 @@ write(u,'(A)') '}'
         error stop 'VTR output requires local index ranges'
       call write_nse_vtr(cfg,step,time,q,names,js,je,ks,ke)
     else
-      if(trim(cfg%grid_mapping)/='uniform') error stop 'SLF cannot store nonuniform coordinates; use VTR'
       call write_field_real4_slf(cfg, step, time, q, names, rank, nse)
+      if(trim(cfg%grid_mapping)/='uniform') then
+        if(.not.(present(nse).and.present(js).and.present(je).and.present(ks).and.present(ke))) &
+          error stop 'Mapped SLF requires NSE parameters and local ranges'
+        call make_step_filename(cfg,step,rank,'slf',restart_path)
+        call append_checkpoint(restart_path,cfg,nse,step,time,js,je,ks,ke)
+      end if
     end if
     deallocate(names)
   end subroutine write_nse_conserved_slf

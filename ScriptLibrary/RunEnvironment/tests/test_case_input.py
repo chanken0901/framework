@@ -34,6 +34,15 @@ NSE_MANIFEST = FRAMEWORK_ROOT / "SolverLibrary" / "NSE" / "solver_manifest.yaml"
 
 
 class GridMappingTests(unittest.TestCase):
+    def test_mapped_slf_restart_render(self):
+        case = load_yaml(FRAMEWORK_ROOT / "SolverLibrary/NSE/examples/nonuniform_tgv.case.yaml")
+        case["output"]["format"] = "slf"
+        case["restart"] = {"file": "previous/field_000020_rank00000.slf"}
+        for profile in ("cpu_mpi", "cuda_single", "cuda_mpi"):
+            text = render_nse(case, load_yaml(NSE_MANIFEST), profile)
+            self.assertIn('output_format = "slf"', text)
+            self.assertIn('restart_file = "previous/field_000020_rank00000.slf"', text)
+
     def test_keep6_hybrid_mapped_render(self):
         case = load_yaml(FRAMEWORK_ROOT / "SolverLibrary/NSE/examples/nonuniform_tgv.case.yaml")
         case["numerics"]["hybrid"]["smooth_scheme"] = "keep6"
@@ -93,7 +102,7 @@ class GridMappingTests(unittest.TestCase):
             for viscous in ("none", "fv2"):
                 _validate_nonuniform_nse(common, dict(convective_scheme=scheme,
                     hybrid_smooth_scheme="keep2", viscous_scheme=viscous))
-        for updates in (dict(output_format="slf"), dict(restart_file="old.slf"),
+        for updates in (dict(output_format="unsupported"), dict(restart_file="old.vtr"),
                         dict(initial_condition="hit_spectral")):
             with self.subTest(updates=updates), self.assertRaises(CaseInputError):
                 _validate_nonuniform_nse(common | updates, dict(convective_scheme="keep2"))
@@ -1094,8 +1103,7 @@ class NseCaseInputTests(unittest.TestCase):
                 self.assertIn('viscous_scheme = "fv2"', text)
                 self.assertIn('output_format = "vtr"', text)
         case["output"]["format"] = "slf"
-        with self.assertRaisesRegex(CaseInputError, "output.format: vtr"):
-            render_nse(case, self.manifest, "cpu_mpi")
+        self.assertIn('output_format = "slf"', render_nse(case, self.manifest, "cpu_mpi"))
 
     def test_nonuniform_example(self):
         case = load_yaml(FRAMEWORK_ROOT / "SolverLibrary/NSE/examples/nonuniform_tgv.case.yaml")

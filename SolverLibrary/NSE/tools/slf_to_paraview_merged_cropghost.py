@@ -52,7 +52,7 @@ def _read_exact(f, nbytes: int) -> bytes:
     return b
 
 
-def read_slf(path: str | Path) -> SLFData:
+def read_slf(path: str | Path, *, allow_nonuniform: bool = False) -> SLFData:
     """単一SLFファイルの固定ヘッダー、変数名、float64配列を読み込む。"""
     path = Path(path)
     with path.open("rb") as f:
@@ -65,6 +65,9 @@ def read_slf(path: str | Path) -> SLFData:
         _ndim = struct.unpack("<i", _read_exact(f, 4))[0]
         shape_arr = np.frombuffer(_read_exact(f, 4 * 4), dtype="<i4").copy()
         meta = np.frombuffer(_read_exact(f, 8 * 4), dtype="<i4").copy()
+        if int(meta[7]) == 1 and not allow_nonuniform:
+            raise ValueError("Nonuniform SLF: this postprocessor/FFT requires uniform spacing. "
+                             "Use restart.file directly for restart, or output.format=vtr for visualization.")
         time = struct.unpack("<d", _read_exact(f, 8))[0]
         bounds = struct.unpack("<6d", _read_exact(f, 6 * 8))
         nvar = struct.unpack("<i", _read_exact(f, 4))[0]
@@ -84,6 +87,10 @@ def read_slf(path: str | Path) -> SLFData:
         raw_data = np.fromfile(f, dtype="<f8", count=count)
         if raw_data.size != count:
             raise EOFError(f"{path}: data size mismatch: expected {count}, got {raw_data.size}")
+        physics = f.read(80)
+        if physics.startswith(b"NSEPAR1\0") and f.read(8) == b"NSEGRID1" and not allow_nonuniform:
+            raise ValueError("Nonuniform SLF: uniform-grid postprocessing/FFT is not applicable. "
+                             "For solver restart use restart.file directly; for visualization select output.format=vtr.")
 
     data = raw_data.reshape((nx, ny, nz, nvar), order="F")
     return SLFData(path, version, dtype_code, (nx, ny, nz, nvar), meta, time, tuple(float(x) for x in bounds), names, data)

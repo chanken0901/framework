@@ -451,6 +451,7 @@ set(
   ${NSE_INIT_FFT_SOURCE}
   src/init/mod_nse_initial_conditions.f90
   src/io/mod_slf_output.f90
+  src/io/mod_nse_checkpoint.f90
   ${NSE_BOUNDARY_SOURCE}
 )
 if(NSE_GPU_BACKEND STREQUAL "cuda")
@@ -520,6 +521,10 @@ if("${NSE_CORE_SOURCES}" MATCHES "mod_grid_fvm[.]f90")
   list(APPEND NSE_CORE_SOURCES src/numerics/viscous/mod_viscous_fv2.f90)
 endif()
 list(REMOVE_DUPLICATES NSE_CORE_SOURCES)
+if("${NSE_CORE_SOURCES}" MATCHES "mod_slf_output[.]f90|mod_init_imported_turbulence[.]f90")
+  list(APPEND NSE_CORE_SOURCES src/io/mod_nse_checkpoint.f90)
+  list(REMOVE_DUPLICATES NSE_CORE_SOURCES)
+endif()
 add_library(nse_core STATIC ${NSE_CORE_SOURCES})
 add_library(NSE::core ALIAS nse_core)
 
