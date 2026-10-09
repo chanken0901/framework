@@ -14,7 +14,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 
-def read_output(directory, step, uniform_flow=False):
+def read_output(directory, step, uniform_flow=False, mapped_keep6=False, boundary="periodic"):
     master = ET.parse(directory / f"field_{step:06d}.pvtr").getroot()
     field = [None] * 12**3
     volumes = [None] * len(field)
@@ -28,6 +28,7 @@ def read_output(directory, step, uniform_flow=False):
         coords = [list(map(float, a.text.split())) for a in piece.findall("Coordinates/DataArray")]
         data = {a.attrib["Name"]: list(map(float, a.text.split()))
                 for a in piece.findall("CellData/DataArray")}
+        assert ("integration_weight" in data) == mapped_keep6
         values = list(zip(*(data[name] for name in ("rho", "rho_u", "rho_v", "rho_w", "rho_E"))))
         n = 0
         for axis, beta in enumerate((0.4, 1.0, 1.5)):
@@ -48,6 +49,25 @@ def read_output(directory, step, uniform_flow=False):
                     field[idx] = q
                     volumes[idx] = math.prod(coords[a][p-ext[2*a]+1]-coords[a][p-ext[2*a]]
                                               for a, p in enumerate((i,j,k)))
+                    if mapped_keep6:
+                        def metric(axis, p):
+                            beta = (0.4, 1.0, 1.5)[axis]
+                            edges = [math.pi*(1+math.sinh(beta*(2*m/12-1))/math.sinh(beta))
+                                     for m in range(13)]
+                            centers = [(a+b)/2 for a,b in zip(edges, edges[1:])]
+                            def center(m):
+                                if axis != 0 or boundary == "periodic":
+                                    return centers[m % 12] + (m//12)*2*math.pi
+                                if m < 0:
+                                    return -centers[-m-1]
+                                if m >= 12:
+                                    return 4*math.pi-centers[23-m]
+                                return centers[m]
+                            return sum(c*(center(p+s)-center(p-s))
+                                       for s,c in enumerate((.75,-.15,1/60),1))
+                        weight = math.prod(metric(a,p) for a,p in enumerate((i,j,k)))
+                        assert weight > 0 and abs(data["integration_weight"][n]-weight) < 2e-14
+                        volumes[idx] = weight
                     if uniform_flow:
                         expected_q = (1.2, 1.2*.13, -1.2*.04, 1.2*.02,
                                       .9/.4 + .5*1.2*(.13**2+.04**2+.02**2))
@@ -106,14 +126,18 @@ def main():
     env = dict(os.environ, OMP_NUM_THREADS="2")
     if args.shared_gpu:
         env["NSE_CUDA_DEVICE_POLICY"] = "fixed"
-    for scheme in ("keep2", "weno5z_roe", "hybrid"):
-        for viscous in ("none", "fv2"):
+    for scheme in ("keep2", "keep6", "weno5z_roe", "hybrid", "hybrid6"):
+        mapped_norm = scheme in {"keep6", "hybrid6"}
+        for viscous in (("none", "fv2", "central6") if mapped_norm else ("none", "fv2")):
             for boundary in ("periodic", "mixed"):
                 reference = None
                 for backend, command in commands.items():
                     run = work / f"{scheme}-{viscous}-{boundary}-{backend}"
                     run.mkdir()
                     text = template.replace("convective_scheme='keep2'", f"convective_scheme='{scheme}'")
+                    if scheme == "hybrid6":
+                        text = text.replace("convective_scheme='hybrid6'", "convective_scheme='hybrid'")
+                        text = text.replace("hybrid_smooth_scheme='keep2'", "hybrid_smooth_scheme='keep6'")
                     text = text.replace("viscous_scheme='fv2'", f"viscous_scheme='{viscous}'")
                     # Exercise adaptive dt as well as fixed dt with CPU/GPU/MPI parity.
                     if boundary == "mixed":
@@ -143,9 +167,11 @@ def main():
                     out = run / "nonuniform-output"
                     meta = json.loads((out / "meta.json").read_text())
                     assert meta["spacing"] is None and meta["format"] == "vtr"
+                    if mapped_norm:
+                        assert meta["state_representation"] == "mapped_grid_point_values"
                     assert not list(out.glob("*.slf"))
-                    initial, volume, _ = read_output(out, 0, args.uniform_flow)
-                    final, _, time = read_output(out, args.steps, args.uniform_flow)
+                    initial, volume, _ = read_output(out, 0, args.uniform_flow, mapped_norm, boundary)
+                    final, _, time = read_output(out, args.steps, args.uniform_flow, mapped_norm, boundary)
                     assert time > 0
                     if boundary == "periodic":
                         for v in range(5):
@@ -174,7 +200,7 @@ def main():
         print("PASS end-time", backend, flush=True)
     # Direct namelist callers also receive explicit rejection before any output.
     rejections = [("output_format='vtr'", "output_format='slf'"),
-                     ("convective_scheme='keep2'", "convective_scheme='keep6'"),
+                     ("hybrid_smooth_scheme='keep2'", "hybrid_smooth_scheme='unsupported', convective_scheme='hybrid'"),
                      ("viscous_scheme='fv2'", "viscous_scheme='central6'")]
     if args.uniform_flow:
         rejections += [("uniform_state=1.2,0.13,-0.04,0.02,0.9", state) for state in
@@ -186,7 +212,7 @@ def main():
         result = subprocess.run(commands["cpu"]+[str(inp)], cwd=run, env=env,
                                 text=True, capture_output=True, timeout=30)
         message = result.stderr + result.stdout
-        assert result.returncode != 0 and ("Nonuniform" in message or "uniform_state" in message)
+        assert result.returncode != 0 and any(s in message for s in ("Nonuniform", "Mapped CENTRAL6", "uniform_state"))
         assert not (run / "nonuniform-output").exists()
     print("All nonuniform production checks passed.", flush=True)
 

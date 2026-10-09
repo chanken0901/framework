@@ -1868,11 +1868,14 @@ def _validate_nonuniform_nse(common: dict[str, Any], nse: dict[str, Any]) -> Non
     scheme = nse.get("convective_scheme", "keep6")
     if scheme not in {"keep2", "keep6", "weno5z_roe", "hybrid"}:
         raise CaseInputError("Nonuniform production supports KEEP2, KEEP6, WENO5Z_ROE or KEEP2/WENO HYBRID")
-    if scheme == "hybrid" and (nse.get("hybrid_smooth_scheme", "keep6") != "keep2"
+    if scheme == "hybrid" and (nse.get("hybrid_smooth_scheme", "keep6") not in {"keep2", "keep6"}
                               or nse.get("hybrid_shock_scheme", "weno5z_roe") != "weno5z_roe"):
-        raise CaseInputError("Nonuniform HYBRID requires smooth_scheme: KEEP2 and shock_scheme: WENO5Z_ROE")
-    if nse.get("viscous_scheme", "none") not in {"none", "fv2"}:
-        raise CaseInputError("Nonuniform production requires numerics.viscous_scheme: FV2 or NONE")
+        raise CaseInputError("Nonuniform HYBRID requires smooth_scheme: KEEP2/KEEP6 and shock_scheme: WENO5Z_ROE")
+    if nse.get("viscous_scheme", "none") not in {"none", "fv2", "central6"}:
+        raise CaseInputError("Unsupported nonuniform viscous scheme")
+    if nse.get("viscous_scheme") == "central6" and not (scheme == "keep6" or
+            (scheme == "hybrid" and nse.get("hybrid_smooth_scheme", "keep6") == "keep6")):
+        raise CaseInputError("Mapped CENTRAL6 requires KEEP6 or KEEP6/WENO HYBRID")
 
 
 def render_nse(

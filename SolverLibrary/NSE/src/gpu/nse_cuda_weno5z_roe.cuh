@@ -320,6 +320,28 @@ __device__ inline bool limit_roe_state_cuda(const double center[5],
   return true;
 }
 
+__device__ inline double reconstruct_nonuniform_cuda(const double value[5],const double* c,bool reverse) {
+  double v[5],scale=0;
+  for(int i=0;i<5;++i) { v[i]=value[reverse?4-i:i]-value[2];scale=fmax(scale,fabs(v[i])); }
+  if(scale==0) return value[2];
+  for(int i=0;i<5;++i) v[i]/=scale;
+  double candidate[3],beta[3],la[3];
+  for(int r=0;r<3;++r) {
+    double a[3]={0,0,0};
+    for(int j=0;j<3;++j) for(int k=0;k<3;++k) a[k]+=c[k+3*j+9*r]*v[r+j];
+    candidate[r]=a[0];beta[r]=(a[1]-a[2])*(a[1]-a[2])+(13.0/3.0)*a[2]*a[2];
+  }
+  const double eps=exp(fmax(-708.3964185322641,fmin(707.782712893384,log(1.e-20)-2*log(scale))));
+  const double tau=fabs(beta[0]-beta[2]);
+  for(int r=0;r<3;++r) {
+    const double den=beta[r]+eps,hi=fmax(den,tau),lo=fmin(den,tau);
+    la[r]=log(c[27+r])+2*(log(hi)-log(den))+log(1+(lo/hi)*(lo/hi));
+  }
+  const double largest=fmax(la[0],fmax(la[1],la[2]));double sum=0,result=0;
+  for(int r=0;r<3;++r) {const double a=exp(la[r]-largest);sum+=a;result+=a*candidate[r];}
+  return value[2]+scale*result/sum;
+}
+
 __device__ inline void weno5z_roe_face_flux_cuda(
     const double* q,
     const GridView& grid,
@@ -356,6 +378,11 @@ __device__ inline void weno5z_roe_face_flux_cuda(
     }
     left_characteristic[characteristic] =
         reconstruct_weno5z_left_cuda(characteristic_stencil);
+    if(grid.axis_weno[direction]) {
+      const int face=(direction==0?i:(direction==1?j:k))-grid.nghost+1;
+      left_characteristic[characteristic]=reconstruct_nonuniform_cuda(characteristic_stencil,
+          grid.axis_weno[direction]+60*face,false);
+    }
     for (int point = 0; point < 5; ++point) {
       load_normal_state_cuda(
           q, grid, i, j, k, direction, point - 1, stencil_state);
@@ -367,6 +394,11 @@ __device__ inline void weno5z_roe_face_flux_cuda(
     }
     right_characteristic[characteristic] =
         reconstruct_weno5z_right_cuda(characteristic_stencil);
+    if(grid.axis_weno[direction]) {
+      const int face=(direction==0?i:(direction==1?j:k))-grid.nghost+1;
+      right_characteristic[characteristic]=reconstruct_nonuniform_cuda(characteristic_stencil,
+          grid.axis_weno[direction]+60*face+30,true);
+    }
   }
 
   for (int variable = 0; variable < 5; ++variable) {
@@ -435,7 +467,9 @@ __global__ void rhs_weno5z_roe_kernel(
         q, grid, i, j, k, direction,
         gamma, small_rho, small_p, plus_flux);
     for (int variable = 0; variable < 5; ++variable) {
-      result[variable] -= inverse_spacing[direction]
+      const int coordinate=direction==0?i:(direction==1?j:k);
+      const double inverse=grid.axis_width[direction]?1.0/grid.axis_width[direction][coordinate]:inverse_spacing[direction];
+      result[variable] -= inverse
           * (plus_flux[variable] - minus_flux[variable]);
     }
   }

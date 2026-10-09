@@ -50,7 +50,7 @@ contains
         do i = 1, sim%nx
           flux_divergence = (area_x(i,j,k)*fface(i,j,k,:) - &
             area_x(i-1,j,k)*fface(i-1,j,k,:)) / vol(i,j,k)
-          if(sim%grid_mapping=='sinh'.and.nse%convective_scheme=='keep6') &
+          if(sim%mapped_keep6) &
             flux_divergence=(fface(i,j,k,:)-fface(i-1,j,k,:))*keep6_inverse_metric(i,j,k,1)
           rhs(i,j,k,:) = rhs(i,j,k,:) - flux_divergence
         end do
@@ -65,7 +65,7 @@ contains
         do i = 1, sim%nx
           flux_divergence = (area_y(i,j,k)*fface(i,j,k,:) - &
             area_y(i,j-1,k)*fface(i,j-1,k,:)) / vol(i,j,k)
-          if(sim%grid_mapping=='sinh'.and.nse%convective_scheme=='keep6') &
+          if(sim%mapped_keep6) &
             flux_divergence=(fface(i,j,k,:)-fface(i,j-1,k,:))*keep6_inverse_metric(i,j,k,2)
           rhs(i,j,k,:) = rhs(i,j,k,:) - flux_divergence
         end do
@@ -80,7 +80,7 @@ contains
         do i = 1, sim%nx
           flux_divergence = (area_z(i,j,k)*fface(i,j,k,:) - &
             area_z(i,j,k-1)*fface(i,j,k-1,:)) / vol(i,j,k)
-          if(sim%grid_mapping=='sinh'.and.nse%convective_scheme=='keep6') &
+          if(sim%mapped_keep6) &
             flux_divergence=(fface(i,j,k,:)-fface(i,j,k-1,:))*keep6_inverse_metric(i,j,k,3)
           rhs(i,j,k,:) = rhs(i,j,k,:) - flux_divergence
         end do

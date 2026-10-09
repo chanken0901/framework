@@ -1301,8 +1301,7 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "none")
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
   nse_apply_fortran_options(nse_test_nonuniform_keep)
   add_test(NAME nse_nonuniform_keep COMMAND $<TARGET_FILE:nse_test_nonuniform_keep>)
-  add_test(NAME nse_nonuniform_keep6_rejected COMMAND $<TARGET_FILE:nse_test_nonuniform_keep> reject_keep6)
-  set_tests_properties(nse_nonuniform_keep6_rejected PROPERTIES WILL_FAIL TRUE)
+  add_test(NAME nse_nonuniform_keep6_hybrid_leaf COMMAND $<TARGET_FILE:nse_test_nonuniform_keep> hybrid_leaf)
   add_test(NAME nse_mapped_keep6_accuracy COMMAND $<TARGET_FILE:nse_test_keep6_accuracy> mapped)
   add_test(NAME nse_mapped_keep6_conservation COMMAND $<TARGET_FILE:nse_test_nonuniform_keep> mapped)
   set_target_properties(
@@ -1403,6 +1402,12 @@ endif()
 if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "none" AND
    NSE_VISCOUS_SCHEME STREQUAL "central6")
   add_executable(nse_test_viscous_central6 tests/test_viscous_central6.f90)
+  add_executable(nse_test_mapped_viscous tests/test_mapped_viscous.f90)
+  target_link_libraries(nse_test_mapped_viscous PRIVATE NSE::core)
+  set_target_properties(nse_test_mapped_viscous PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+  nse_apply_fortran_options(nse_test_mapped_viscous)
+  add_test(NAME nse_mapped_viscous COMMAND $<TARGET_FILE:nse_test_mapped_viscous>)
+  set_tests_properties(nse_mapped_viscous PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=2")
   set_target_properties(
     nse_test_viscous_central6
     PROPERTIES
@@ -1738,6 +1743,10 @@ if(BUILD_TESTING AND NSE_GPU_BACKEND STREQUAL "cuda" AND NOT NSE_USE_MPI)
     COMMAND $<TARGET_FILE:nse_test_cuda_keep_compare> 7)
   add_test(NAME nse_cuda_hybrid_shock_compare
     COMMAND $<TARGET_FILE:nse_test_cuda_keep_compare> 7 shock)
+  add_test(NAME nse_cuda_mapped_hybrid_shock
+    COMMAND $<TARGET_FILE:nse_test_cuda_keep_compare> 7 mapped_shock)
+  add_test(NAME nse_cuda_mapped_hybrid_blend
+    COMMAND $<TARGET_FILE:nse_test_cuda_keep_compare> 7 mapped_blend)
   set_tests_properties(
     nse_cuda_hybrid_compare
     PROPERTIES PASS_REGULAR_EXPRESSION "CUDA convective comparison passed"

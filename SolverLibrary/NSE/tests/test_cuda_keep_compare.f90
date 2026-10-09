@@ -4,6 +4,9 @@ program test_cuda_keep_compare
   use mod_common_config, only : simulation_config, init_simulation_config
   use mod_model_config, only : nse_config, init_nse_config
   use mod_convective_scheme, only : compute_convective_flux
+  use mod_grid_fvm, only: build_uniform_grid
+  use mod_convective_keep, only: keep6_inverse_metric
+  use mod_convective_hybrid, only: hybrid_face_weight
   use mod_nse_gpu, only : nse_gpu_context, nse_gpu_initialize, &
     nse_gpu_upload, nse_gpu_download, nse_gpu_compute_dt, &
     nse_gpu_advance_ssprk3, nse_gpu_synchronize, nse_gpu_finalize
@@ -18,7 +21,9 @@ program test_cuda_keep_compare
   real(dp) :: gpu_dt, cpu_dt, field_error, comparison_tolerance
   integer :: i, j, k, scheme_code, step, steps
   real(dp) :: step_dt
-  logical :: shock_test
+  logical :: shock_test, mapped_test
+  integer :: zero_weights,blend_weights,full_weights
+  real(dp) :: alpha
   character(len=16) :: scheme_argument, profile_argument
 
   call init_simulation_config(sim)
@@ -27,7 +32,8 @@ program test_cuda_keep_compare
   call get_command_argument(1, scheme_argument)
   if (len_trim(scheme_argument) > 0) read(scheme_argument,*) scheme_code
   call get_command_argument(2, profile_argument)
-  shock_test = trim(profile_argument) == 'shock'
+  mapped_test = index(trim(profile_argument),'mapped')==1
+  shock_test = trim(profile_argument) == 'shock'.or.mapped_test
   if (scheme_code /= 2 .and. scheme_code /= 5 .and. &
       scheme_code /= 6 .and. scheme_code /= 7) then
     error stop 'CUDA comparison scheme code must be 2, 5, 6, or 7'
@@ -71,6 +77,12 @@ program test_cuda_keep_compare
     step_dt = 0.002_dp
     steps = 5
   end if
+  if(mapped_test) then
+    sim%nx=32;sim%ny=12;sim%nz=12
+    sim%grid_mapping='sinh';sim%mapped_keep6=.true.;sim%grid_stretch=[.4_dp,1._dp,1.5_dp]
+    call build_uniform_grid(sim,1,sim%ny,1,sim%nz,[.true.,.true.,.true.])
+    if(trim(profile_argument)=='mapped_blend') nse%hybrid_sensor_full=.9_dp
+  end if
 
   allocate(q_cpu(1-sim%nghost:sim%nx+sim%nghost, &
     1-sim%nghost:sim%ny+sim%nghost, &
@@ -104,6 +116,7 @@ program test_cuda_keep_compare
           w = 0.0_dp
           pressure = 1.0_dp/nse%gamma
           if (i <= sim%nx/2) pressure = 5.0_dp/nse%gamma
+          if(mapped_test) u=merge(.1_dp,-.1_dp,i<=sim%nx/2)
         end if
         q_cpu(i,j,k,1) = rho
         q_cpu(i,j,k,2) = rho*u
@@ -115,6 +128,22 @@ program test_cuda_keep_compare
     end do
   end do
   call apply_periodic(q_cpu, sim)
+  if(mapped_test) then
+    zero_weights=0;blend_weights=0;full_weights=0
+    do i=0,sim%nx
+      alpha=hybrid_face_weight(q_cpu,i,1,1,1,sim,nse,1,1)
+      if(alpha<=0) zero_weights=zero_weights+1
+      if(alpha>0.and.alpha<1) blend_weights=blend_weights+1
+      if(alpha>=1) full_weights=full_weights+1
+    end do
+    print *, 'Hybrid zero/blended/full face weights:',zero_weights,blend_weights,full_weights
+    if(zero_weights==0) error stop 'Mapped hybrid smooth branch not exercised'
+    if(trim(profile_argument)=='mapped_blend') then
+      if(blend_weights==0) error stop 'Mapped hybrid blend branch not exercised'
+    else
+      if(full_weights==0) error stop 'Mapped hybrid WENO branch not exercised'
+    end if
+  end if
   q_gpu = q_cpu
 
   call nse_gpu_initialize(gpu, sim, nse)
@@ -195,6 +224,7 @@ contains
       end do
     end do
     dt = nse%cfl*min(sim%dx,sim%dy,sim%dz)/max_speed
+    if(sim%mapped_keep6) dt=nse%cfl/(max_speed*(1/sim%dx+1/sim%dy+1/sim%dz))
   end subroutine reference_dt
 
   subroutine reference_ssprk3(q, q0, rhs, fface, dt, sim, nse)
@@ -243,6 +273,8 @@ contains
         do i = 1, sim%nx
           rhs(i,j,k,:) = rhs(i,j,k,:) - &
             (fface(i,j,k,:)-fface(i-1,j,k,:))/sim%dx
+          if(sim%mapped_keep6) rhs(i,j,k,:)= &
+            -(fface(i,j,k,:)-fface(i-1,j,k,:))*keep6_inverse_metric(i,j,k,1)
         end do
       end do
     end do
@@ -254,6 +286,8 @@ contains
         do i = 1, sim%nx
           rhs(i,j,k,:) = rhs(i,j,k,:) - &
             (fface(i,j,k,:)-fface(i,j-1,k,:))/sim%dy
+          if(sim%mapped_keep6) rhs(i,j,k,:)=rhs(i,j,k,:)+ &
+            (fface(i,j,k,:)-fface(i,j-1,k,:))*(1._dp/sim%dy-keep6_inverse_metric(i,j,k,2))
         end do
       end do
     end do
@@ -265,6 +299,8 @@ contains
         do i = 1, sim%nx
           rhs(i,j,k,:) = rhs(i,j,k,:) - &
             (fface(i,j,k,:)-fface(i,j,k-1,:))/sim%dz
+          if(sim%mapped_keep6) rhs(i,j,k,:)=rhs(i,j,k,:)+ &
+            (fface(i,j,k,:)-fface(i,j,k-1,:))*(1._dp/sim%dz-keep6_inverse_metric(i,j,k,3))
         end do
       end do
     end do

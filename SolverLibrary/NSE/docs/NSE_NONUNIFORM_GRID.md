@@ -1,6 +1,6 @@
 # 単成分NSEの不等間隔格子：実装状況と接続方針
 
-## 本計算の接続（2026-10-07・最新）
+## 本計算の接続（2026-10-09・最新）
 
 限定した組合せで、格子生成→初期化→時間発展→座標付き出力を実行可能にした。
 **全機能の不等間隔対応や、噴流の本番条件の検証が完了したという意味ではない。**
@@ -11,17 +11,129 @@
 |---|---|
 | 格子 | 直交・方向分離 `sinh`、各方向のstrength=0ならその方向は等間隔 |
 | 初期条件 | `taylor_green`（物理セル中心の座標で評価）、`uniform_flow`（2026-10-08追加） |
-| 対流 | `keep2`、`weno5z_roe`、`hybrid`（KEEP2＋WENO5Z_Roe） |
-| 粘性・熱伝導 | `fv2`、または `none`。FV2にはRe>0、Pr>0が必要 |
+| 対流 | `keep2`、`keep6`（写像差分・専用積分重み）、`weno5z_roe`、`hybrid`（KEEP2またはKEEP6＋WENO5Z_Roe） |
+| 粘性・熱伝導 | `fv2`、`none`。KEEP6単独／KEEP6ハイブリッドには写像`central6`も選択可能。粘性にはRe>0、Pr>0が必要 |
 | 時間積分 | 既存SSPRK3、固定dt／CFL自動dt |
 | 境界 | 各面の周期・特性緩和無反射・鏡像・固定値。周期は方向ごとの両端ペア |
 | 実行構成 | CPU/OpenMP、MPI、CUDA、MPI＋CUDA。従来の環境・実行窓口を使用 |
 | 出力 | `vtr`。各rankのVTRと全rankを参照するPVTR。保存量5変数、物理セル辺座標、ghost除外 |
 
-KEEP6は計量重みとFV物理体積の整合が未解決のため、本計算では引き続き拒否する。
-CENTRAL6、HIT、読み込み乱流、restart、forcing、揺らぎもこの不等間隔モードでは
+KEEP6単独の写像差分を本計算へ接続した。保存量の積分重みは物理セル体積とは
+異なるため、下記の `integration_weight` を使用する。KEEP6＋WENO hybridも同じ重みを使用する。
+HIT、読み込み乱流、restart、forcing、揺らぎはこの不等間隔モードでは
 未対応として拒否する。これらは**等間隔では従来どおり**。別スキームへの自動変更はしない。
 WENOという名前だけで全体5次精度を保証しない。粘性FV2は滑らかな格子で2次を意図する方式。
+
+### KEEP6ハイブリッド＋高次粘性（2026-10-09）
+
+既存の環境生成・実行窓口、CPU/OpenMP・MPI・CUDA・MPI＋CUDAの選択は変更しない。
+不等間隔例のnumerics節を次のように設定する（等間隔の場合の既存処理は変更なし）。
+
+```yaml
+numerics:
+  convective_scheme: hybrid
+  hybrid:
+    smooth_scheme: keep6
+    shock_scheme: weno5z_roe
+    sensor: ducros_pressure
+    sensor_onset: 0.01
+    sensor_full: 0.10
+  viscous_scheme: central6
+  time_integrator: ssprk3
+```
+
+単独KEEP6なら `convective_scheme: keep6` としhybrid節を省略する。
+KEEP2単独・WENO単独・KEEP2ハイブリッドの粘性は従来のFV2/NONEを選択する。
+これらにCENTRAL6を指定すると、保存の重みが異なるため明示的に拒否する。
+
+ハイブリッドは面ごとに `F=(1-alpha)*F_KEEP6+alpha*F_WENO` とし、
+**ブレンド後の流束差全体**を `h_d=D6(x_d)` で割る。センサー値によって
+セルの重みを切り替えない。周期領域で保存する量は `sum(Q*h_x*h_y*h_z)`。
+WENOは衝撃波側の散逸を担う。既存の不等間隔WENO再構築を使用し、
+WENOが有効な領域まで点値の6次精度・5次精度を保証するものではない。
+
+写像CENTRAL6は `G_d f = D6(f)/h_d` を用い、
+`tau_ab = (G_b u_a + G_a u_b - (2/3)*delta_ab*sum_d G_d u_d)/Re`、
+`F_E,d = sum_a u_a*tau_ad + gamma/((gamma-1)*Re*Pr)*G_d(p/rho)`、
+運動量・全エネルギーの粘性RHSをそれぞれ `sum_d G_d(tau_ad)`、`sum_d G_d(F_E,d)`
+として評価する。密度の粘性RHSは0。滑らかな周期写像で6次収束、運動量・
+全エネルギーの保存、粘性による運動エネルギー散逸を確認する。
+二重の中心微分であり、Nyquistの交互モードを粘性だけで減衰させる保証はない。
+
+必要な状態ハローは6層。入力読み込み時に `nghost` を少なくとも6へ引き上げる。
+各方向の全セル数と各MPI Y/Z局所ブロックに6セル以上を確保する。
+CPUでは拡張領域の応力を再計算し、CUDAでは追加の応力・熱流束作業配列をGPUに常駐させる。
+GPU追加作業配列はゴーストを含む局所セル当たり12倍精度値（96 byte）。
+6層化による状態配列・MPI通信量の増加もある。CUDA-aware／host-stagedの既存選択は維持する。
+通常の等間隔CENTRAL6は従来の3層演算のままである。
+
+非周期境界やsinhの周期接続部を含む全体6次精度は保証しない。
+時間積分はSSPRK3の3次、衝撃波付近ではハイブリッド散逸が働く。
+実複数GPU、長時間DNS、噴流入口分布の検証は別途必要。
+
+新しいFrameWorkから環境を生成・再ビルドして使う。既存ResearchRunsのコピーは自動更新されない。
+
+検証プログラム:
+
+- `nse_mapped_viscous`: 滑らかな周期写像32/64/128点、解析解誤差比49.32/59.97、保存と散逸。
+- `nse_cuda_mapped_hybrid_shock` / `nse_cuda_mapped_hybrid_blend`: 非等間隔圧力ジャンプ、
+  alpha=0・0<alpha<1・alpha=1の分岐を検査しCPU/GPUの5ステップを比較。
+- `check_nonuniform_production.py`: 5対流構成、許可される粘性、周期／入口出口、
+  4実行構成の96実行。一様流とTaylor–Greenを別々に検査。
+
+2026-10-09の結果：一様流96実行・Taylor–Green96実行が成功。
+CPU CTest 36件、CUDA対流／粘性／ハイブリッド回帰9件、入力生成122件が成功。
+Compute Sanitizerは写像CENTRAL6併用と写像ハイブリッド圧力ジャンプでともに0エラー。
+圧力ジャンプ5ステップのCPU/GPU最大絶対差は3.56e-15未満。
+MPI＋CUDAは4 rank／1GPU共有、host-staged通信の検証であり、実複数GPUや
+CUDA-aware通信での今回の6層ハローの動作・性能を確認したものではない。
+
+以下には過去の作業履歴を残している。「未実装」「拒否」はその日付時点の記録であり、
+現在の対応範囲は冒頭の表とこの節を優先する。
+
+### KEEP6の選択と保存量の集計
+
+既存の不等間隔例 `examples/nonuniform_tgv.case.yaml` のnumericsを以下へ変更する。
+hybrid節は不要。環境生成／実行の窓口、MPI・OpenMP・CUDAの選択方法は従来どおり。
+
+```yaml
+numerics:
+  convective_scheme: keep6
+  viscous_scheme: fv2   # 非粘性なら none
+  time_integrator: ssprk3
+```
+
+KEEP6の状態はセル中心に配置した**点値**であり、FVのセル平均ではない。
+直交分離写像で各方向の離散計量を `h=D6(x)` とし、保存量は
+`sum(Q(i,j,k)*h_x(i)*h_y(j)*h_z(k))` として集計する。
+VTR/PVTRのCellDataに `integration_weight=h_x*h_y*h_z` を出力し、
+meta.jsonの `state_representation` に `mapped_grid_point_values` を記録する。
+VTRのセル辺は可視化用の実座標のままであり、ParaViewの幾何体積による積分と
+この離散保存量は同一ではない。従来のKEEP2／WENO出力の意味は変更しない。
+
+FV2との併用では各方向の粘性流束差も同じhで割り、対流項と保存の重みをそろえる。
+面勾配・熱流束の評価は従来のFV2であり、6次粘性へ変更したわけではない。
+自動dtには物理幅と計量の両方の最小値を使い、非正・非有限計量は初期化時に拒否する。
+等間隔KEEP6の流束・粘性・出力経路は変更しない。
+
+6次の確認範囲は滑らかな写像上の対流空間演算。滑らかな周期写像の収束次数は
+5.61276、5.89596、sinh内部固定物理区間の誤差比は61.8499（32→64点）。
+SSPRK3は時間3次、FV2は空間2次。非周期境界のゴースト閉包と周期sinh接続部で
+6次精度を保証しない。KEEP6単独に衝撃波捕獲能力を付加したわけではない。
+非等間隔KEEP6のFH／forcing／restart等の未対応組合せは
+黙って別方式へ変更せず拒否する。これらの等間隔での従来仕様は維持する。
+
+2026-10-08の接続検証:
+
+- Taylor–Green・一様流それぞれ4対流×2粘性×2境界×4実行構成、計128実行が成功。
+- 5保存量の周期積分（KEEP6は計量重み）、CPU／GPU／MPIの場と時刻、
+  一様流保持、VTRの重みと独立計算した計量の一致を確認。
+- 従来のKEEP2・WENO・hybridの48条件は、変更前後の出力の保存量と時刻が一致。
+- CPU CTest 35件、CUDA対流／positivity回帰7件、入力生成120件が成功。
+- Compute Sanitizer memcheckは不等間隔KEEP6＋FV2および等間隔hybrid衝撃波で0件。
+- MPI＋CUDAは4 rank／1GPU共有、host-staged通信での検証。実複数GPUの再検証と
+  長時間DNS・非周期境界の全体6次収束は未実施。
+- ResearchRunsへの配布・更新はしていない。新しいソースで環境を生成／再ビルドする。
 
 ### 実行方法
 
@@ -56,7 +168,8 @@ Fortranの直接入力では `initial_condition='uniform_flow'` と
 保持（全保存量の各セル絶対差2e-11未満）を検査する。3対流×2粘性×
 周期／固定値入口＋無反射出口×CPU・4 MPI・CUDA・4 MPI＋CUDAの48実行が成功。
 MPI＋CUDAは1GPU共有の試験であり、実際の複数GPU通信の確認ではない。
-既存のCUDA hybrid衝撃波回帰試験も維持する。今回CUDAカーネルの変更はない。
+一様流初期条件の追加時にはCUDAカーネルを変更していない。
+その後のKEEP6接続ではFV2カーネルへ計量分母の選択を追加した（冒頭参照）。
 従来のTaylor–Greenについても同じ4構成・48実行を再確認した。
 CPU CTest 35件、CUDAの対流／衝撃波／positivity試験7件、入力生成119件が成功。
 今回の更新はFrameWork内のみで、既存ResearchRuns環境には自動反映しない。
@@ -112,9 +225,9 @@ VTRに未対応なので、この出力には使用しない。非等間隔デ�
 
 ### 自動検証
 
-`tests/check_nonuniform_production.py` は12³、20ステップで、各3対流方式×2粘性方式×
+`tests/check_nonuniform_production.py` は12³、20ステップで、各4対流方式×2粘性方式×
 全周期／x無反射・yz周期を実行する。後者は自動dt、前者は固定dt。
-正の密度・圧力、5保存量の物理体積積分（周期）、実座標・MPI領域被覆・初期場、
+正の密度・圧力、5保存量の積分（周期：KEEP6は計量、それ以外は物理体積）、実座標・MPI領域被覆・初期場、
 CPU/MPI/CUDA間の場と時刻の一致を検査する。実行にはPython標準ライブラリのみ使用する。
 例（FrameWorkルート、実行ファイルの場所は環境に合わせる）:
 
@@ -244,7 +357,7 @@ boundary:
 入口速度・密度・温度の分布指定が別途必要。横方向を周期にすると、
 孤立した無限遠の噴流ではなく周期配列の計算になる。
 
-## 2026-10-07：写像KEEP6空間演算
+## 開発履歴 2026-10-07：写像KEEP6空間演算（本計算接続前）
 
 **KEEP6単独の非粘性空間演算をCPU/CUDAへ接続した。本計算の共通停止ガードは維持する。**
 対象は滑らかな直交分離写像 x(i), y(j), z(k)。一般の曲がった格子ではない。

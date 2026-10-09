@@ -18,6 +18,7 @@ program test_imported_turbulence
   real(dp), allocatable :: q(:,:,:,:)
   real(dp) :: expected(5), background_test(5)
   integer :: unit, ios, first_i, last_i
+  character(len=32) :: restart_test_mode
 
   call write_source_slf(source_file)
   call init_simulation_config(sim)
@@ -243,6 +244,33 @@ program test_imported_turbulence
     'blend interior weight')
 
   deallocate(q)
+  sim%nx=4
+  sim%x_max=4.0_dp
+  sim%restart_file=source_file
+  sim%t_max=2.0_dp
+  sim%nsteps=100
+  sim%output_dir='test_restart_unused_output'
+  call update_derived_config(sim)
+  allocate(q(-2:7,-1:5,-1:5,5))
+  q=-999.0_dp
+  ! Retain shock-tube settings and nonzero offsets: restart must bypass both.
+  nse%imported_turbulence_velocity_offset_x=99.0_dp
+  call get_command_argument(1,restart_test_mode)
+  select case(trim(restart_test_mode))
+  case('restart_grid_mismatch')
+    sim%x_min=-1.0_dp
+  case('restart_step_limit')
+    sim%nsteps=37
+  case('restart_time_limit')
+    sim%t_max=0.25_dp
+  end select
+  call initialize_nse_state(q,sim,nse,2,2,2,2)
+  call assert_true(sim%step==37,'restart saved step')
+  call assert_close(sim%t,0.25_dp,'restart saved time')
+  call primitive_to_conserved(2.0_dp,4.0_dp,0.2_dp,0.4_dp,3.0_dp,nse%gamma,expected)
+  call assert_vector_close(q(4,2,2,:),expected,'restart local slab without transformations')
+  call assert_close(q(0,2,2,1),-999.0_dp,'restart leaves ghosts for boundary exchange')
+  deallocate(q)
   open(newunit=unit, file=source_file, status='old', iostat=ios)
   if (ios == 0) close(unit, status='delete')
   write(*,'(A)') 'Imported turbulence initialization tests passed'
@@ -274,9 +302,9 @@ contains
     dtype_code = 2_int32
     ndim = 4_int32
     shape4 = [4_int32, 2_int32, 2_int32, 5_int32]
-    metadata = [0_int32, 0_int32, 4_int32, 2_int32, 2_int32, &
+    metadata = [37_int32, 0_int32, 4_int32, 2_int32, 2_int32, &
       0_int32, 1_int32, 0_int32]
-    time = 0.0_dp
+    time = 0.25_dp
     bounds = [0.0_dp, 4.0_dp, 0.0_dp, 2.0_dp, 0.0_dp, 2.0_dp]
     nvar = 5_int32
     names = [character(len=32) :: &

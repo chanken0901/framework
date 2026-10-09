@@ -1,0 +1,66 @@
+# Standalone example; or merge these settings into a generated case.yaml.
+case_id: nonuniform_tgv
+physics:
+  model: nse
+  nse:
+    nv: 5
+    gamma: 1.4
+    rho0: 1.0
+    mach_number: 0.1
+    reynolds_number: 100.0
+    prandtl_number: 0.72
+flow:
+  type: taylor_green
+forcing:
+  type: none
+grid:
+  mapping:
+    type: sinh
+    strength: [0.4, 1.0, 1.5]
+  nx: 32
+  ny: 32
+  nz: 32
+  nghost: 3
+  x_min: 0.0
+  x_max: 6.283185307179586
+  y_min: 0.0
+  y_max: 6.283185307179586
+  z_min: 0.0
+  z_max: 6.283185307179586
+boundary:
+  faces:
+    x_min: {type: periodic}
+    x_max: {type: periodic}
+    y_min: {type: periodic}
+    y_max: {type: periodic}
+    z_min: {type: periodic}
+    z_max: {type: periodic}
+time:
+  cfl: 0.15
+  dt: 0.001
+  t_max: 1.0
+  nsteps: 1000
+  output_frequency: 100
+  use_fixed_dt: false
+solver:
+  type: nse_fvm
+  mpi_processes: 4
+  omp_threads: 2
+numerics:
+  # For mapped high order: hybrid.smooth_scheme=keep6 and viscous_scheme=central6.
+  # CENTRAL6 then automatically uses six halo layers (>=6 cells per MPI Y/Z block).
+  convective_scheme: hybrid
+  hybrid:
+    smooth_scheme: keep2
+    shock_scheme: weno5z_roe
+    sensor: ducros_pressure
+    sensor_onset: 0.01
+    sensor_full: 0.10
+  viscous_scheme: fv2
+  time_integrator: ssprk3
+output:
+  directory: output_nonuniform
+  format: vtr
+  precision: float64
+  write_initial: true
+  write_meta: true

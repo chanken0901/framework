@@ -101,6 +101,9 @@ contains
       do j=js,je
         do i=1,sim%nx
           p=[i,j,k];width=[axis_x%width(i),axis_y%width(j),axis_z%width(k)]
+          ! Use the same diagonal integration norm as mapped KEEP6 convection.
+          ! The face gradient remains FV2 (not sixth-order diffusion).
+          if(sim%mapped_keep6) width=[axis_x%keep6_metric(i),axis_y%keep6_metric(j),axis_z%keep6_metric(k)]
           do a=1,3
             pm=p;pm(a)=pm(a)-1
             call face_flux(q,p,a,sim,nse,js,ks,plus)

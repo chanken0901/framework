@@ -118,9 +118,6 @@ contains
     integer :: separation, offset, maximum_separation
     integer :: im, jm, km, ip, jp, kp
 
-    if (sim%grid_mapping /= 'uniform' .and. order == 6 .and. &
-        trim(nse%convective_scheme) == 'hybrid') &
-      error stop 'Nonuniform KEEP6 hybrid requires a common mapped norm for both leaves'
     ! KEEP2 retains the arithmetic symmetric pair flux on stretched grids.
     ! Distance-weighting velocity would destroy the kinetic-energy identity.
     ! The shared spatial operator uses physical face areas and cell volumes.

@@ -46,6 +46,10 @@ contains
     end do
 
     dt = nse%cfl * min(sim%dx/max_speed, sim%dy/max_speed, sim%dz/max_speed)
+    ! Multidimensional conservative bound using global minimum physical widths.
+    ! Leave the historical uniform-grid CFL convention unchanged.
+    if (trim(sim%grid_mapping)/='uniform') &
+      dt = nse%cfl / (max_speed*(1/sim%dx+1/sim%dy+1/sim%dz))
     call viscous_dt_limit(q, diffusion_dt, sim, nse, js, je, ks, ke)
     dt = min(dt, diffusion_dt)
     call mp_barrier

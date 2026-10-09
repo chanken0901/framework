@@ -1,4 +1,5 @@
 module mod_grid_fvm
+  use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
   use mod_precision,     only : dp
   use mod_common_config, only : simulation_config
   use mod_grid_axis, only: grid_axis,build_sinh_axis,prepare_axis_weno
@@ -156,6 +157,25 @@ contains
       end do
     end do
     dx_min=axis_x%minimum_width;dy_min=axis_y%minimum_width;dz_min=axis_z%minimum_width
+    if(sim%mapped_keep6) then
+      if(sim%nghost==6) then
+        if(.not.all(ieee_is_finite(axis_x%keep6_metric(-2:sim%nx+3))).or. &
+           .not.all(ieee_is_finite(axis_y%keep6_metric(-2:sim%ny+3))).or. &
+           .not.all(ieee_is_finite(axis_z%keep6_metric(-2:sim%nz+3)))) &
+          error stop 'Nonfinite viscous mapping metric'
+        if(minval(axis_x%keep6_metric(-2:sim%nx+3))<=0.or. &
+           minval(axis_y%keep6_metric(-2:sim%ny+3))<=0.or. &
+           minval(axis_z%keep6_metric(-2:sim%nz+3))<=0) error stop 'Nonpositive viscous mapping metric'
+      end if
+      if (.not.all(ieee_is_finite(axis_x%keep6_metric(1:sim%nx))).or. &
+          .not.all(ieee_is_finite(axis_y%keep6_metric(1:sim%ny))).or. &
+          .not.all(ieee_is_finite(axis_z%keep6_metric(1:sim%nz)))) &
+        error stop 'Nonfinite KEEP6 mapping metric'
+      dx_min=min(dx_min,minval(axis_x%keep6_metric(1:sim%nx)))
+      dy_min=min(dy_min,minval(axis_y%keep6_metric(1:sim%ny)))
+      dz_min=min(dz_min,minval(axis_z%keep6_metric(1:sim%nz)))
+      if(min(dx_min,dy_min,dz_min)<=0) error stop 'Nonpositive KEEP6 mapping metric'
+    end if
     sim%dx=dx_min;sim%dy=dy_min;sim%dz=dz_min
   end subroutine
 

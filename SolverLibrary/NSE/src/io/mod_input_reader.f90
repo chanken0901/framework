@@ -611,10 +611,14 @@ contains
   end subroutine read_all_inputs
 
   subroutine validate_mapped_run(sim, nse)
-    type(simulation_config), intent(in) :: sim
+    type(simulation_config), intent(inout) :: sim
     type(nse_config), intent(in) :: nse
     integer :: f
+    sim%mapped_keep6=.false.
     if (trim(sim%grid_mapping)=='uniform') return
+    sim%mapped_keep6=trim(nse%convective_scheme)=='keep6'
+    if(trim(nse%convective_scheme)=='hybrid') &
+      sim%mapped_keep6=trim(nse%hybrid_smooth_scheme)=='keep6'
     if (nse%nv/=5) error stop 'Nonuniform production supports single-component NSE only'
     if (trim(sim%initial_condition)/='taylor_green'.and.trim(sim%initial_condition)/='uniform_flow') &
       error stop 'Nonuniform production requires initial_condition=taylor_green or uniform_flow'
@@ -623,15 +627,20 @@ contains
     if (nse%fh_enabled.or.trim(nse%forcing_scheme)/='none') &
       error stop 'Nonuniform forcing and fluctuating hydrodynamics are not supported yet'
     select case(trim(nse%convective_scheme))
-    case('keep2','weno5z_roe')
+    case('keep2','keep6','weno5z_roe')
     case('hybrid')
-      if (trim(nse%hybrid_smooth_scheme)/='keep2'.or.trim(nse%hybrid_shock_scheme)/='weno5z_roe') &
-        error stop 'Nonuniform hybrid requires smooth=keep2 and shock=weno5z_roe'
+      if ((trim(nse%hybrid_smooth_scheme)/='keep2'.and.trim(nse%hybrid_smooth_scheme)/='keep6') &
+          .or.trim(nse%hybrid_shock_scheme)/='weno5z_roe') &
+        error stop 'Nonuniform hybrid requires smooth=keep2/keep6 and shock=weno5z_roe'
     case default
-      error stop 'Nonuniform production supports KEEP2, WENO5Z_Roe or their hybrid; mapped KEEP6 remains experimental'
+      error stop 'Nonuniform production supports KEEP2, KEEP6, WENO5Z_Roe or KEEP2/WENO hybrid'
     end select
-    if (trim(nse%viscous_scheme)/='none'.and.trim(nse%viscous_scheme)/='fv2') &
-      error stop 'Nonuniform production requires viscous_scheme=none or fv2'
+    if (trim(nse%viscous_scheme)/='none'.and.trim(nse%viscous_scheme)/='fv2'.and. &
+        trim(nse%viscous_scheme)/='central6') error stop 'Unsupported nonuniform viscosity'
+    if(trim(nse%viscous_scheme)=='central6') then
+      if(.not.sim%mapped_keep6) error stop 'Mapped CENTRAL6 requires KEEP6 or KEEP6/WENO hybrid'
+      sim%nghost=max(6,sim%nghost)
+    end if
     do f=1,6
       select case(trim(nse%boundary_face_type(f)))
       case('periodic','non_reflecting','dirichlet','reflective')

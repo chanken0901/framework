@@ -39,7 +39,7 @@ CPU MPI/OpenMPおよびGPU常駐CUDA／MPI＋CUDA・全周期境界・固定dt�
 | CPU並列 | MPIによるy-z分割＋OpenMP |
 | GPU | 単一NVIDIA GPU、またはMPI＋複数NVIDIA GPU、CUDA、float64 |
 | 出力 | rank別SLF保存変数、JSONメタデータ |
-| 再スタート | 時刻・stepを継続する再スタートは未実装。保存済み乱流場の初期条件読込みは対応 |
+| 再スタート | `restart.file`で保存量・時刻・stepを復元。等間隔・単成分NSE。手順は[NSE_RESTART.md](NSE_RESTART.md) |
 
 ## 3. 支配方程式
 
@@ -863,7 +863,7 @@ Reynolds応力、等方性誤差、積分スケール、散逸率、Taylor長、
 - 計算精度はfloat64固定で、`output.precision`は実質的にメタデータである。
 - CPU版は現状 `output.write_meta`にかかわらず `meta.json`を書き出す。
 - 最終stepは無条件保存されない。
-- 時刻とstepを継続する再スタート読込みは未実装。保存済み乱流をstep 0の初期条件として読む機能とは区別する。
+- `restart.file`で時刻・stepを継続する再スタートに対応。保存済み乱流をstep 0の初期条件として読む機能とは区別する。適用条件は[NSE_RESTART.md](NSE_RESTART.md)を参照。
 - Linuxで出力先が未作成の場合は、実行前にディレクトリを作成するのが安全である。
 
 ### 15.4 数値・物理モデル上の制約

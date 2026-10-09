@@ -15,7 +15,7 @@ program test_nonuniform_keep
   call get_command_argument(1,mode)
   pi=acos(-1._dp);order=2
   if(mode=='mapped') order=6
-  if(mode=='reject_keep6') then
+  if(mode=='hybrid_leaf') then
     order=6
     nse%convective_scheme='hybrid'
   end if

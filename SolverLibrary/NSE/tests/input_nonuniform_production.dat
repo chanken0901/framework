@@ -1,0 +1,15 @@
+&simulation
+ equation='NSE', initial_condition='taylor_green'
+ nx=12, ny=12, nz=12, nghost=3
+ grid_mapping='sinh', grid_stretch=0.4,1.0,1.5
+ x_max=6.283185307179586, y_max=6.283185307179586, z_max=6.283185307179586
+ dt=0.001, t_max=10.0, nsteps=20, cfl=0.15, use_fixed_dt=.true.
+ output_dir='nonuniform-output', output_format='vtr', output_frequency=20
+ write_initial=.true., write_meta=.true.
+/
+&nse
+ nv=5, nghost=3, gamma=1.4, rho0=1.0, mach=0.1, reynolds=100.0, prandtl=0.72
+ convective_scheme='keep2', viscous_scheme='fv2', time_integrator='ssprk3'
+ boundary_condition='periodic'
+ hybrid_smooth_scheme='keep2', hybrid_shock_scheme='weno5z_roe'
+/

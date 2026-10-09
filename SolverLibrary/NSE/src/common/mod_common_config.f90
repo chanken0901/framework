@@ -15,6 +15,7 @@ module mod_common_config
     character(len=256) :: case_name = 'case0001'
     character(len=256) :: input_file = 'input.dat'
     character(len=64)  :: initial_condition = 'default'
+    character(len=1024) :: restart_file = ''
 
     ! --- grid ---
     integer :: nx = 64
@@ -23,6 +24,8 @@ module mod_common_config
     integer :: nghost = 3
     character(len=16) :: grid_mapping = 'uniform'
     real(dp) :: grid_stretch(3) = 0.0_dp
+    ! Derived by the NSE reader; not a user-selectable second scheme switch.
+    logical :: mapped_keep6 = .false.
 
     real(dp) :: x_min = 0.0_dp
     real(dp) :: x_max = 1.0_dp
@@ -100,6 +103,10 @@ contains
       flag = cfg%write_initial
     else if (cfg%output_frequency > 0) then
       flag = (mod(step, cfg%output_frequency) == 0)
+      ! Mapped runs must not lose the final state when t_max or nsteps is
+      ! reached between regular output intervals. Frequency zero stays off.
+      if (trim(cfg%grid_mapping)/='uniform') &
+        flag = flag.or.step>=cfg%nsteps.or.cfg%t>=cfg%t_max
     else
       flag = .false.
     end if

@@ -300,8 +300,9 @@ __global__ void rhs_hybrid_kernel(
         plus_flux);
     for (int variable = 0; variable < 5; ++variable) {
       const int coordinate=direction==0?i:(direction==1?j:k);
-      const double inverse_width=grid.axis_width[direction]?
-          1.0/grid.axis_width[direction][coordinate]:inverse_spacing[direction];
+      const double* metric=smooth_scheme==convective_keep6?
+          grid.axis_keep6_metric[direction]:grid.axis_width[direction];
+      const double inverse_width=metric?1.0/metric[coordinate]:inverse_spacing[direction];
       result[variable] -= inverse_width
           * (plus_flux[variable] - minus_flux[variable]);
     }

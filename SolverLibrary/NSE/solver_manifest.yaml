@@ -150,6 +150,8 @@ components:
 
   runtime_tools:
     files:
+      - docs/NSE_NONUNIFORM_GRID.md
+      - examples/nonuniform_tgv.case.yaml
       - tools/slf_to_paraview_merged_cropghost.py
       - tools/nse_turbulence_statistics.py
       - tools/nse_shock_analysis.py
@@ -267,6 +269,7 @@ components:
       - tests/input_tgv_hybrid_small.dat
       - tests/input_tgv_weno5z_roe_small.dat
       - tests/test_viscous_central6.f90
+      - tests/test_mapped_viscous.f90
       - tests/test_boundary_periodic.f90
       - tests/test_boundary_non_reflecting.f90
       - tests/test_boundary_reflective.f90

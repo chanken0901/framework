@@ -144,9 +144,10 @@ forcing:
     report_interval: 100
 
 grid:
-  # Optional orthogonal nonuniform production: TGV/uniform_flow, KEEP2/KEEP6/WENO5Z_ROE/HYBRID(KEEP2+WENO),
-  # viscous_scheme FV2/NONE and output.format vtr. Standalone KEEP6 uses mapped integration weights.
-  # KEEP6 hybrid/FH/forcing/restart are not yet supported on stretched grids.
+  # Optional orthogonal nonuniform production: TGV/uniform_flow, KEEP2/KEEP6/WENO5Z_ROE/HYBRID.
+  # HYBRID smooth=KEEP2 or KEEP6, shock=WENO5Z_ROE. KEEP6 paths use mapped integration weights.
+  # Viscosity FV2/NONE; CENTRAL6 for KEEP6 or KEEP6 hybrid (six ghosts set automatically). Output vtr.
+  # FH/forcing/restart are not yet supported on stretched grids.
   # Omit mapping for the existing uniform calculation.
   # mapping:
   #   type: sinh

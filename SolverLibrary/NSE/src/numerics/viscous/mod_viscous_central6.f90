@@ -2,6 +2,8 @@ module mod_viscous_scheme
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config
+  use mod_viscous_fv2, only: add_viscous_fv2_rhs
+  use mod_grid_fvm, only: axis_x,axis_y,axis_z
   implicit none
   private
 
@@ -10,6 +12,7 @@ module mod_viscous_scheme
   real(dp), parameter :: d2_spectral_radius = 272.0_dp / 45.0_dp
   real(dp), parameter :: diffusion_stability_radius = 2.0_dp
   real(dp), allocatable, save :: primitive(:,:,:,:)
+  real(dp), allocatable, save :: mapped_flux(:,:,:,:,:)
 
   public :: add_viscous_rhs
   public :: validate_viscous_scheme
@@ -35,6 +38,10 @@ contains
     real(dp) :: lap_temperature, inverse_reynolds, heat_coefficient
 
     if (.not. viscosity_is_enabled(nse)) return
+    if(trim(nse%viscous_scheme)=='fv2') then
+      call add_viscous_fv2_rhs(q,rhs,sim,nse,js,je,ks,ke)
+      return
+    end if
 
     !$OMP MASKED
     call ensure_primitive_workspace(sim, js, je, ks, ke)
@@ -59,6 +66,11 @@ contains
       end do
     end do
     !$OMP END DO
+
+    if(sim%grid_mapping/='uniform') then
+      call add_mapped_central6(rhs,sim,nse,js,je,ks,ke)
+      return
+    end if
 
     inverse_reynolds = 1.0_dp / nse%reynolds
     heat_coefficient = nse%gamma / &
@@ -107,6 +119,75 @@ contains
     end do
     !$OMP END DO
   end subroutine add_viscous_rhs
+
+  subroutine add_mapped_central6(rhs,sim,nse,js,je,ks,ke)
+    type(simulation_config), intent(in) :: sim
+    type(nse_config), intent(in) :: nse
+    integer, intent(in) :: js,je,ks,ke
+    real(dp), intent(inout) :: rhs(1-sim%nghost:,js-sim%nghost:,ks-sim%nghost:,:)
+    real(dp) :: gradient(4,3),stress(3,3),metric(3),trace,heat,mu
+    integer :: i,j,k,d,r,p(3),m(3),a,b
+    if(sim%nghost<6.or..not.sim%mapped_keep6) error stop 'Mapped CENTRAL6 requires mapped norm and six ghosts'
+    mu=1._dp/nse%reynolds
+    heat=nse%gamma/((nse%gamma-1)*nse%prandtl)
+    !$OMP MASKED
+    if(minval(axis_x%keep6_metric(-2:sim%nx+3))<=0.or. &
+       minval(axis_y%keep6_metric(js-3:je+3))<=0.or. &
+       minval(axis_z%keep6_metric(ks-3:ke+3))<=0) error stop 'Nonpositive viscous mapping metric'
+    if(allocated(mapped_flux)) then
+      if(any(shape(mapped_flux)/=[sim%nx+6,je-js+7,ke-ks+7,4,3]).or. &
+         lbound(mapped_flux,2)/=js-3.or.lbound(mapped_flux,3)/=ks-3) deallocate(mapped_flux)
+    end if
+    if(.not.allocated(mapped_flux)) allocate(mapped_flux(-2:sim%nx+3,js-3:je+3,ks-3:ke+3,4,3))
+    !$OMP END MASKED
+    !$OMP BARRIER
+    ! D6/h on primitive point values, then the same conservative D6/h on flux.
+    ! Extended stresses are recomputed from the six-layer state halo: no extra MPI exchange.
+    !$OMP DO collapse(2) schedule(static)
+    do k=ks-3,ke+3
+      do j=js-3,je+3
+        do i=-2,sim%nx+3
+          metric=[axis_x%keep6_metric(i),axis_y%keep6_metric(j),axis_z%keep6_metric(k)]
+          gradient=0
+          do d=1,3
+            do r=1,3
+              p=[i,j,k];m=p;p(d)=p(d)+r;m(d)=m(d)-r
+              gradient(:,d)=gradient(:,d)+d1_positive(r)* &
+                (primitive(p(1),p(2),p(3),:)-primitive(m(1),m(2),m(3),:))/metric(d)
+            end do
+          end do
+          trace=gradient(1,1)+gradient(2,2)+gradient(3,3)
+          do a=1,3
+            do b=1,3
+              stress(a,b)=mu*(gradient(a,b)+gradient(b,a))
+              if(a==b) stress(a,b)=stress(a,b)-mu*(2._dp/3)*trace
+            end do
+          end do
+          do a=1,3
+            mapped_flux(i,j,k,1:3,a)=stress(:,a)
+            mapped_flux(i,j,k,4,a)=dot_product(primitive(i,j,k,1:3),stress(:,a))+mu*heat*gradient(4,a)
+          end do
+        end do
+      end do
+    end do
+    !$OMP END DO
+    !$OMP DO collapse(2) schedule(static)
+    do k=ks,ke
+      do j=js,je
+        do i=1,sim%nx
+          metric=[axis_x%keep6_metric(i),axis_y%keep6_metric(j),axis_z%keep6_metric(k)]
+          do d=1,3
+            do r=1,3
+              p=[i,j,k];m=p;p(d)=p(d)+r;m(d)=m(d)-r
+              rhs(i,j,k,2:5)=rhs(i,j,k,2:5)+d1_positive(r)* &
+                (mapped_flux(p(1),p(2),p(3),:,d)-mapped_flux(m(1),m(2),m(3),:,d))/metric(d)
+            end do
+          end do
+        end do
+      end do
+    end do
+    !$OMP END DO
+  end subroutine
 
   pure real(dp) function energy_quadratic(p,axis) result(value)
     integer, intent(in) :: p(3), axis
@@ -193,12 +274,12 @@ contains
     character(len=32) :: requested
 
     requested = trim(adjustl(nse%viscous_scheme))
-    if (requested /= 'none' .and. requested /= viscous_scheme_name()) then
+    if (requested /= 'none' .and. requested /= 'fv2' .and. requested /= viscous_scheme_name()) then
       write(*,'(A,A,A)') 'ERROR: unsupported viscous scheme "', &
-        trim(requested), '"; available schemes: none, central6'
+        trim(requested), '"; available schemes: none, central6, fv2'
       error stop
     end if
-    if (requested == viscous_scheme_name()) then
+    if (requested == viscous_scheme_name().or.requested=='fv2') then
       if (nse%reynolds <= 0.0_dp) then
         error stop 'central6 viscosity requires reynolds > 0'
       end if
@@ -222,7 +303,7 @@ contains
 
   pure logical function viscosity_is_enabled(nse) result(enabled)
     type(nse_config), intent(in) :: nse
-    enabled = trim(adjustl(nse%viscous_scheme)) == viscous_scheme_name()
+    enabled = trim(adjustl(nse%viscous_scheme)) == viscous_scheme_name().or.trim(nse%viscous_scheme)=='fv2'
   end function viscosity_is_enabled
 
   subroutine ensure_primitive_workspace(sim, js, je, ks, ke)

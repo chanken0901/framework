@@ -375,7 +375,21 @@ python .\tools\postprocess_case.py --task statistics
 `Re_L`、`Re_lambda`、乱流Mach数、散逸率、Reynolds応力と等方性誤差を含みます。
 `gamma`と基準Reynolds数は`case.yaml`の`physics.nse`から自動取得します。
 
-ParaView変換と乱流統計を続けて実行する場合は次の形です。
+FFT解析も共通入口から実行できます（単成分NSE、postprocess_case 2.1.0以降）。
+生成環境のルートでWindowsは`python`、Linuxは`python3`を使います。
+
+```text
+python tools/postprocess_case.py --task fft --fft-field rho --save-fft
+python tools/postprocess_case.py --task fft --fft-field p --steps 0:1000:100
+```
+
+入力・meta.json・比熱比はケース設定から自動参照し、既定の出力は`cases/<case_id>/fft`です。
+`--fft-output`、`--fft-window hann`、`--fft-keep-mean`も指定できます。
+既存FFT出力を置換する場合だけ`--fft-overwrite`を指定します。
+FFTは既定latestで、可視化用の`--fields`や`--stride`は適用しません。
+詳しくは[FFT手順書](../../SolverLibrary/NSE/docs/NSE_SLF_FFT.md)を参照してください。
+
+ParaView変換・乱流統計・FFTの3処理を続けて実行する場合は次の形です。
 
 ```powershell
 python .\tools\postprocess_case.py --task all

@@ -58,6 +58,10 @@ contains
     !$OMP BARRIER
 
     !$OMP MASKED
+    if(sim%nghost==6) then
+      call exchange_wide_halo(q,sim,js,je,ks,ke)
+      call exchange_wide_halo(q,sim,js,je,ks,ke)
+    else
     call mp_send_recv_pre_r8_Vec(q, sim%nghost, &
       1-sim%nghost, sim%nx+sim%nghost, &
       js-sim%nghost, je+sim%nghost, ks-sim%nghost, ke+sim%nghost)
@@ -69,9 +73,70 @@ contains
         1-sim%nghost, sim%nx+sim%nghost, &
         js-sim%nghost, je+sim%nghost, ks-sim%nghost, ke+sim%nghost)
     end if
+    end if
     !$OMP END MASKED
     !$OMP BARRIER
   end subroutine apply_nse_boundary
+
+  subroutine exchange_wide_halo(q,sim,js,je,ks,ke)
+    ! Six-layer exchange for mapped D6(D6). Preserve the legacy three-layer MPI path.
+    type(simulation_config), intent(in) :: sim
+    integer, intent(in) :: js,je,ks,ke
+    real(dp), intent(inout) :: q(1-sim%nghost:,js-sim%nghost:,ks-sim%nghost:,:)
+    real(dp), allocatable :: sendbuf(:),recvbuf(:)
+    integer :: row,col,r,c,phase,partner,count,ierr,lo,hi,jlo,jhi,klo,khi
+    integer :: status(MPI_STATUS_SIZE)
+    row=0;col=0
+    do r=0,ndiv_ny-1
+      if(jjsta(r)==js) row=r
+    end do
+    do c=0,ndiv_nz-1
+      if(kksta(c)==ks) col=c
+    end do
+    lo=1-6;hi=sim%nx+6;jlo=js-6;jhi=je+6;klo=ks-6;khi=ke+6
+    count=(hi-lo+1)*6*(khi-klo+1)*5
+    allocate(sendbuf(count),recvbuf(count))
+    ! Two disjoint edge colours: exchange all independent neighbours together.
+    do phase=0,1
+      r=row
+      if(modulo(row,2)/=phase) r=row-1
+      if(r<0.or.r>=ndiv_ny-1) cycle
+      if(row==r) then
+        partner=itable(r+1,col);sendbuf=reshape(q(:,je-5:je,:,:),[count])
+      else
+        partner=itable(r,col);sendbuf=reshape(q(:,js:js+5,:,:),[count])
+      end if
+      call mp_sendrecv_r8(sendbuf(1),count,MPI_DOUBLE_PRECISION,partner,71, &
+        recvbuf(1),count,MPI_DOUBLE_PRECISION,partner,71,MPI_COMM_WORLD,status,ierr)
+      if(ierr/=0) error stop 'Six-layer Y halo exchange failed'
+      if(row==r) then
+        q(:,je+1:je+6,:,:)=reshape(recvbuf,[hi-lo+1,6,khi-klo+1,5])
+      else
+        q(:,js-6:js-1,:,:)=reshape(recvbuf,[hi-lo+1,6,khi-klo+1,5])
+      end if
+    end do
+    deallocate(sendbuf,recvbuf)
+    count=(hi-lo+1)*(jhi-jlo+1)*6*5
+    allocate(sendbuf(count),recvbuf(count))
+    do phase=0,1
+      c=col
+      if(modulo(col,2)/=phase) c=col-1
+      if(c<0.or.c>=ndiv_nz-1) cycle
+      if(col==c) then
+        partner=itable(row,c+1);sendbuf=reshape(q(:,:,ke-5:ke,:),[count])
+      else
+        partner=itable(row,c);sendbuf=reshape(q(:,:,ks:ks+5,:),[count])
+      end if
+      call mp_sendrecv_r8(sendbuf(1),count,MPI_DOUBLE_PRECISION,partner,72, &
+        recvbuf(1),count,MPI_DOUBLE_PRECISION,partner,72,MPI_COMM_WORLD,status,ierr)
+      if(ierr/=0) error stop 'Six-layer Z halo exchange failed'
+      if(col==c) then
+        q(:,:,ke+1:ke+6,:)=reshape(recvbuf,[hi-lo+1,jhi-jlo+1,6,5])
+      else
+        q(:,:,ks-6:ks-1,:)=reshape(recvbuf,[hi-lo+1,jhi-jlo+1,6,5])
+      end if
+    end do
+  end subroutine
 
   subroutine apply_boundary_x(q, sim, nse, js, je, ks, ke)
     type(simulation_config), intent(in) :: sim
@@ -589,8 +654,9 @@ contains
     integer :: face
     logical :: all_periodic
 
-    if (sim%nghost /= boundary_required_ghost_cells()) then
-      error stop 'MPI halo exchange currently requires exactly three ghost cells'
+    if (sim%nghost /= boundary_required_ghost_cells().and. &
+        .not.(sim%mapped_keep6.and.sim%nghost==6.and.nse%viscous_scheme=='central6')) then
+      error stop 'Use three ghosts, or six for mapped CENTRAL6'
     end if
     if (nse%nv /= 5) then
       error stop 'MPI halo exchange currently requires five conserved variables'

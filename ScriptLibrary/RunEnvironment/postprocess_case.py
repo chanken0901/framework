@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run ParaView conversion or NSE turbulence statistics for a generated case."""
+"""Common entry point for ParaView, NSE turbulence statistics and spatial FFT."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from case_input import CaseInputError, derive_nse_hit_transport
 from yaml_support import YamlFormatError, load_yaml
 
 
-TOOL_VERSION = "2.0.0"
+TOOL_VERSION = "2.1.0"
 
 
 class PostprocessError(RuntimeError):
@@ -171,7 +171,7 @@ def _case_context(args: argparse.Namespace) -> dict:
     if gamma is None:
         gamma = float(_nested(case_config, "physics.nse.gamma", 1.4))
     reynolds = args.reynolds
-    if reynolds is None and model == "nse":
+    if reynolds is None and model == "nse" and getattr(args, "task", "statistics") in {"statistics", "all"}:
         reynolds = _resolved_nse_reynolds(case_config)
     return {
         "root": root,
@@ -260,6 +260,27 @@ def build_statistics_command(args: argparse.Namespace) -> tuple[Path, list[str]]
     return output, command
 
 
+def build_fft_command(args: argparse.Namespace) -> tuple[Path, list[str]]:
+    context = _case_context(args)
+    if context["model"] != "nse":
+        raise PostprocessError("FFT postprocessing is currently available only for single-component NSE")
+    tool = context["root"] / "SolverLibrary" / "NSE" / "tools" / "slf_fft.py"
+    if not tool.is_file():
+        raise PostprocessError("FFT tool is missing; update the execution environment from the current FrameWork")
+    output = _resolve(context["root"], args.fft_output, context["case_root"] / "fft")
+    command = [sys.executable, str(tool), str(context["input_dir"]),
+               "--output-dir", str(output), "--meta", str(context["meta"]),
+               "--field", args.fft_field, "--gamma", str(context["gamma"]),
+               "--steps", args.steps or "latest", "--layout", args.layout,
+               "--window", args.fft_window]
+    for enabled, option in ((args.fft_keep_mean, "--keep-mean"),
+                            (args.save_fft, "--save-fft"),
+                            (args.fft_overwrite, "--overwrite")):
+        if enabled:
+            command.append(option)
+    return output, command
+
+
 def build_commands(args: argparse.Namespace) -> list[tuple[str, Path, list[str]]]:
     commands: list[tuple[str, Path, list[str]]] = []
     if args.task in {"paraview", "all"}:
@@ -268,22 +289,25 @@ def build_commands(args: argparse.Namespace) -> list[tuple[str, Path, list[str]]
     if args.task in {"statistics", "all"}:
         output, command = build_statistics_command(args)
         commands.append(("Turbulence statistics", output, command))
+    if args.task in {"fft", "all"}:
+        output, command = build_fft_command(args)
+        commands.append(("FFT", output, command))
     return commands
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Run ParaView conversion and NSE turbulence-statistics "
+            "Run ParaView conversion, NSE turbulence statistics and spatial FFT "
             "postprocessing for the current generated case."
         )
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {TOOL_VERSION}")
     parser.add_argument(
         "--task",
-        choices=["paraview", "statistics", "all"],
+        choices=["paraview", "statistics", "fft", "all"],
         default="paraview",
-        help="Postprocessing task. Default: paraview",
+        help="Default: paraview. all runs ParaView, statistics and FFT (NSE)",
     )
     parser.add_argument("--case-directory", help="Case directory relative to the run root")
     parser.add_argument("--input-dir", help="SLF directory; default: <case>/output")
@@ -293,12 +317,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Statistics CSV path; default: <case>/statistics/turbulence_statistics.csv",
     )
     parser.add_argument("--meta", help="meta.json path; default: <input-dir>/meta.json")
+    parser.add_argument("--fft-field", default="rho", help="One FFT field: stored variable or u,v,w,p; default rho")
+    parser.add_argument("--fft-output", help="FFT directory; default: <case>/fft")
+    parser.add_argument("--fft-window", choices=["none", "hann"], default="none")
+    parser.add_argument("--fft-keep-mean", action="store_true")
+    parser.add_argument("--save-fft", action="store_true", help="Save complex FFT coefficients as NPZ")
+    parser.add_argument("--fft-overwrite", action="store_true", help="Explicitly overwrite existing FFT outputs")
     parser.add_argument(
         "--steps",
         default=None,
         help=(
             "all, latest, comma-separated steps, or inclusive start:stop:stride. "
-            "Defaults: latest for ParaView and all for statistics"
+            "Defaults: latest for ParaView/FFT and all for statistics"
         ),
     )
     parser.add_argument(

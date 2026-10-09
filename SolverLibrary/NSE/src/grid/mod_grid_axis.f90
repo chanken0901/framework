@@ -1,5 +1,5 @@
 module mod_grid_axis
-  ! Backend-neutral axis geometry. Not yet wired to production NSE operators.
+  ! Backend-neutral axis geometry shared by the supported nonuniform NSE operators.
   use mod_precision, only: dp
   use mod_reconstruction_nonuniform, only: weno_face_geometry,build_weno_geometry
   use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
@@ -115,7 +115,7 @@ contains
     axis%minimum_width=minval(axis%width(1:n))
     allocate(axis%keep6_metric(1-ng:n+ng))
     axis%keep6_metric=axis%width
-    do i=1,n
+    do i=4-ng,n+ng-3
       axis%keep6_metric(i)=.75_dp*(axis%center(i+1)-axis%center(i-1)) &
         -.15_dp*(axis%center(i+2)-axis%center(i-2)) &
         +(axis%center(i+3)-axis%center(i-3))/60._dp

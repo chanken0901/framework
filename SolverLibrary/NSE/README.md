@@ -1,5 +1,9 @@
 # NSE SolverLibrary
 
+2026-10-06：[不等間隔格子の共通基盤](docs/NSE_NONUNIFORM_GRID.md)を追加。
+現在は座標・微分係数生成のみで、NSE本計算への接続は未完了です。
+既存の等間隔計算とCPU/MPI/CUDA/MPI+CUDAの選択機能は維持します。
+
 > Windows（PowerShell）とLinux（bash）の共通コマンド対応は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 > 多成分・反応流の追加開発は、現行単成分NSEと分離した
@@ -28,6 +32,7 @@ Navier-Stokesソルバーです。全backendの面別周期／特性無反射／
 
 ## 最初に読む文書
 
+- SLFのFFT解析（密度・圧力・速度）: [手順と正規化](docs/NSE_SLF_FFT.md)
 - ソルバー全体仕様・無次元化: [`docs/NSE_SOLVER_SPECIFICATION.md`](docs/NSE_SOLVER_SPECIFICATION.md)
 - 境界条件（全backendの面別周期／無反射／鏡像）: [`docs/NSE_BOUNDARY_CONDITIONS.md`](docs/NSE_BOUNDARY_CONDITIONS.md)
 - 生成・ビルド・実行: [`docs/NSE_BUILD_AND_RUN.md`](docs/NSE_BUILD_AND_RUN.md)

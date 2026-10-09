@@ -1,0 +1,24 @@
+schema_version: 1
+environment_id: nse_multicomponent_cuda
+option_catalogs: []
+select:
+  source: framework_relative
+  destination: windows_research_runs
+  model: nse_multicomponent
+  target: windows_gnu_msmpi
+  case: nse_multicomponent_nozzle
+  execution: release
+  scheduler: disabled
+  archive: none
+parallel:
+  use_mpi: false
+  use_openmp: false
+  use_cuda: true
+case:
+  id: case0001
+  label: reactive_nozzle_cuda
+  description: Stage-10 GPU-resident reactive planar nozzle
+  project_name: NSEMulticomponentResearch
+solver:
+  profile: cuda_single_reactive
+  include_tests: true

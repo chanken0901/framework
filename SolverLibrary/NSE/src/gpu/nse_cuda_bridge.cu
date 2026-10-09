@@ -125,6 +125,7 @@ struct NseCudaContext {
   double* q0 = nullptr;
   double* rhs = nullptr;
   double* primitive = nullptr;
+  double* mapped_viscous_flux = nullptr;
   double* speed = nullptr;
   double* max_speed = nullptr;
   double* halo_buffer = nullptr;
@@ -241,6 +242,7 @@ void release_context(NseCudaContext* context) {
   cudaFree(context->max_speed);
   cudaFree(context->speed);
   cudaFree(context->primitive);
+  cudaFree(context->mapped_viscous_flux);
   cudaFree(context->fh_flux);
   cudaFree(context->fh_noise);
   cudaFree(context->rhs);
@@ -1015,6 +1017,50 @@ __device__ inline double viscous_energy_work_cuda(
     }
   }
   return value;
+}
+
+// Mapped conservative D6/h stress and heat flux. Six state halo layers supply
+// three stress halo layers, also across MPI partitions; all work stays on GPU.
+__global__ void mapped_stress_kernel(const double* primitive,double* flux,GridView g,
+    double mu,double heat) {
+  const std::size_t linear=static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+  if(linear>=g.cell_count) return;
+  const int sx=g.nx+2*g.nghost, sy=g.ny+2*g.nghost, sz=g.nz+2*g.nghost;
+  const int i=linear%sx,j=(linear/sx)%sy,k=linear/(static_cast<std::size_t>(sx)*sy);
+  if(i<3||j<3||k<3||i>=sx-3||j>=sy-3||k>=sz-3) return;
+  const double c[3]={.75,-.15,1.0/60};
+  const int xyz[3]={i,j,k};
+  double grad[4][3]{};
+  for(int d=0;d<3;++d) for(int r=1;r<=3;++r) {
+    int p[3]={i,j,k},m[3]={i,j,k};p[d]+=r;m[d]-=r;
+    const auto ip=cell_index(g,p[0],p[1],p[2]),im=cell_index(g,m[0],m[1],m[2]);
+    for(int v=0;v<4;++v) grad[v][d]+=c[r-1]*(primitive[ip+v*g.cell_count]-primitive[im+v*g.cell_count])
+        /g.axis_keep6_metric[d][xyz[d]];
+  }
+  const double trace=grad[0][0]+grad[1][1]+grad[2][2];
+  for(int d=0;d<3;++d) {
+    double energy=mu*heat*grad[3][d];
+    for(int v=0;v<3;++v) {
+      const double stress=mu*(grad[v][d]+grad[d][v]-(v==d?2.0*trace/3:0));
+      flux[linear+(v+4*d)*g.cell_count]=stress;
+      energy+=primitive[linear+v*g.cell_count]*stress;
+    }
+    flux[linear+(3+4*d)*g.cell_count]=energy;
+  }
+}
+
+__global__ void mapped_viscous_rhs_kernel(const double* flux,double* rhs,GridView g,std::size_t count) {
+  const std::size_t linear=static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+  if(linear>=count) return;
+  const int i=linear%g.nx+g.nghost,j=(linear/g.nx)%g.ny+g.nghost,k=linear/(g.nx*g.ny)+g.nghost;
+  const int xyz[3]={i,j,k};const auto cell=cell_index(g,i,j,k);
+  const double c[3]={.75,-.15,1.0/60};
+  for(int d=0;d<3;++d) for(int r=1;r<=3;++r) {
+    int p[3]={i,j,k},m[3]={i,j,k};p[d]+=r;m[d]-=r;
+    const auto ip=cell_index(g,p[0],p[1],p[2]),im=cell_index(g,m[0],m[1],m[2]);
+    for(int v=0;v<4;++v) rhs[cell+(v+1)*g.cell_count]+=c[r-1]*
+        (flux[ip+(v+4*d)*g.cell_count]-flux[im+(v+4*d)*g.cell_count])/g.axis_keep6_metric[d][xyz[d]];
+  }
 }
 
 __global__ void viscous_central6_kernel(
@@ -2125,7 +2171,15 @@ bool launch_rhs(NseCudaContext* context) {
       }
       viscous_fv2_kernel<<<block_count(context->physical_count),256>>>(context->primitive,context->rhs,
           context->grid,1.0/context->reynolds,context->gamma/((context->gamma-1)*context->prandtl),
-          context->physical_count);
+          context->physical_count,context->convective_scheme==convective_keep6 ||
+          (context->convective_scheme==convective_hybrid && context->hybrid_smooth_scheme==convective_keep6));
+    } else if(context->mapped_viscous_flux) {
+      mapped_stress_kernel<<<block_count(context->grid.cell_count),256>>>(context->primitive,
+          context->mapped_viscous_flux,context->grid,1.0/context->reynolds,
+          context->gamma/((context->gamma-1)*context->prandtl));
+      if(!check_cuda(cudaGetLastError(),"mapped stress kernel")) return false;
+      mapped_viscous_rhs_kernel<<<block_count(context->physical_count),256>>>(context->mapped_viscous_flux,
+          context->rhs,context->grid,context->physical_count);
     } else {
     viscous_central6_kernel<<<block_count(context->physical_count), 256>>>(
         context->primitive,
@@ -3273,13 +3327,19 @@ NSE_CUDA_EXPORT int nse_cuda_upload_axis(void* handle, int axis, int n,
     set_error("invalid axis geometry upload"); return 1;
   }
   const int expected[3]={c->grid.nx,c->grid.ny,c->grid.nz};
-  // The FV WENO leaf and mapped KEEP6 use different integration norms.
-  // Do not mix them until the hybrid operator has a common mapped norm.
+  if(!check_cuda(cudaSetDevice(c->device),"select axis upload device")) return 1;
+  const bool mapped_norm=c->convective_scheme==convective_keep6 ||
+      (c->convective_scheme==convective_hybrid && c->hybrid_smooth_scheme==convective_keep6);
   if(c->grid.nghost<3) {set_error("mapped geometry requires three ghost cells");return 1;}
-  if(c->convective_scheme==convective_hybrid &&
-      (c->hybrid_smooth_scheme==convective_keep6 || c->hybrid_shock_scheme==convective_keep6)) {
-    set_error("nonuniform KEEP6 hybrid requires a common mapped norm for both leaves");
-    return 1;
+  if(c->viscous_enabled && !c->viscous_fv2) {
+    if(!mapped_norm || c->grid.nghost<6) {
+      set_error("mapped CENTRAL6 requires KEEP6 norm and six ghosts");return 1;
+    }
+    if(c->grid.cell_count>std::numeric_limits<std::size_t>::max()/(12*sizeof(double))) {
+      set_error("mapped viscous allocation overflow");return 1;
+    }
+    if(!c->mapped_viscous_flux && !check_cuda(cudaMalloc(reinterpret_cast<void**>(&c->mapped_viscous_flux),
+        12*c->grid.cell_count*sizeof(double)),"allocate mapped viscous flux")) return 1;
   }
   if(n!=expected[axis] || c->axis_storage[axis]) {
     set_error("axis size mismatch or geometry already uploaded"); return 1;
@@ -3299,10 +3359,10 @@ NSE_CUDA_EXPORT int nse_cuda_upload_axis(void* handle, int axis, int n,
     set_error("nonfinite axis reconstruction coefficients"); return 1;
   }
   std::vector<double> metric(widths,widths+count);
-  for(int i=c->grid.nghost;i<c->grid.nghost+n;++i) {
+  for(int i=3;i<static_cast<int>(count)-3;++i) {
     metric[i]=.75*(centers[i+1]-centers[i-1])-.15*(centers[i+2]-centers[i-2])
         +(centers[i+3]-centers[i-3])/60.0;
-    if(c->convective_scheme==convective_keep6 && (!std::isfinite(metric[i]) || metric[i]<=0)) {
+    if(mapped_norm && (!std::isfinite(metric[i]) || metric[i]<=0)) {
       set_error("nonpositive KEEP6 mapping metric");return 1;
     }
   }

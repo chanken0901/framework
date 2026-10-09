@@ -34,12 +34,23 @@ NSE_MANIFEST = FRAMEWORK_ROOT / "SolverLibrary" / "NSE" / "solver_manifest.yaml"
 
 
 class GridMappingTests(unittest.TestCase):
+    def test_keep6_hybrid_mapped_render(self):
+        case = load_yaml(FRAMEWORK_ROOT / "SolverLibrary/NSE/examples/nonuniform_tgv.case.yaml")
+        case["numerics"]["hybrid"]["smooth_scheme"] = "keep6"
+        manifest = load_yaml(NSE_MANIFEST)
+        for profile in ("cpu_mpi", "cuda_single", "cuda_mpi"):
+            for viscous in ("none", "fv2", "central6"):
+                case["numerics"]["viscous_scheme"] = viscous
+                text = render_nse(case, manifest, profile)
+                self.assertIn('hybrid_smooth_scheme = "keep6"', text)
+                self.assertIn(f'viscous_scheme = "{viscous}"', text)
+
     def test_keep6_mapped_render(self):
         case = load_yaml(FRAMEWORK_ROOT / "SolverLibrary/NSE/examples/nonuniform_tgv.case.yaml")
         manifest = load_yaml(NSE_MANIFEST)
         case["numerics"]["convective_scheme"] = "keep6"
         for profile in ("cpu_mpi", "cuda_single", "cuda_mpi"):
-            for viscous in ("none", "fv2"):
+            for viscous in ("none", "fv2", "central6"):
                 case["numerics"]["viscous_scheme"] = viscous
                 text = render_nse(case, manifest, profile)
                 self.assertIn('convective_scheme = "keep6"', text)
@@ -88,7 +99,7 @@ class GridMappingTests(unittest.TestCase):
                 _validate_nonuniform_nse(common | updates, dict(convective_scheme="keep2"))
         for updates in (dict(convective_scheme="unsupported"), dict(viscous_scheme="central6"),
                         dict(fh_enabled=True), dict(forcing_scheme="petersen_livescu"),
-                        dict(convective_scheme="hybrid", hybrid_smooth_scheme="keep6")):
+                        dict(convective_scheme="hybrid", hybrid_smooth_scheme="unsupported")):
             with self.subTest(updates=updates), self.assertRaises(CaseInputError):
                 _validate_nonuniform_nse(common, dict(convective_scheme="keep2") | updates)
 
