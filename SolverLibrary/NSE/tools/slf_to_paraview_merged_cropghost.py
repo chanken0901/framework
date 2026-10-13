@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 
 
-TOOL_VERSION = "2.0.0"
+TOOL_VERSION = "2.1.0"
 
 
 @dataclass
@@ -43,6 +43,8 @@ class SLFData:
     bounds: tuple[float, float, float, float, float, float]
     names: list[str]
     data: np.ndarray
+    grid_header: tuple[int, ...] | None = None
+    grid_values: tuple[float, ...] | None = None
 
 
 def _read_exact(f, nbytes: int) -> bytes:
@@ -67,12 +69,14 @@ def read_slf(path: str | Path, *, allow_nonuniform: bool = False) -> SLFData:
         meta = np.frombuffer(_read_exact(f, 8 * 4), dtype="<i4").copy()
         if int(meta[7]) == 1 and not allow_nonuniform:
             raise ValueError("Nonuniform SLF: this postprocessor/FFT requires uniform spacing. "
-                             "Use restart.file directly for restart, or output.format=vtr for visualization.")
+                             "Use the ParaView converter for mapped visualization; standard FFT remains unsupported.")
         time = struct.unpack("<d", _read_exact(f, 8))[0]
         bounds = struct.unpack("<6d", _read_exact(f, 6 * 8))
         nvar = struct.unpack("<i", _read_exact(f, 4))[0]
 
         nx, ny, nz, nvar_shape = map(int, shape_arr)
+        if min(nx, ny, nz, nvar_shape) <= 0:
+            raise ValueError(f'{path}: invalid SLF shape')
         if nvar != nvar_shape:
             raise ValueError(f"{path}: nvar mismatch: header nvar={nvar}, shape nvar={nvar_shape}")
         if dtype_code != 2:
@@ -84,16 +88,151 @@ def read_slf(path: str | Path, *, allow_nonuniform: bool = False) -> SLFData:
             names.append(raw.split(b"\x00", 1)[0].decode("ascii", errors="ignore").strip())
 
         count = nx * ny * nz * nvar
+        if path.stat().st_size - f.tell() < count * 8:
+            raise EOFError(f'{path}: truncated SLF field payload')
         raw_data = np.fromfile(f, dtype="<f8", count=count)
         if raw_data.size != count:
             raise EOFError(f"{path}: data size mismatch: expected {count}, got {raw_data.size}")
         physics = f.read(80)
-        if physics.startswith(b"NSEPAR1\0") and f.read(8) == b"NSEGRID1" and not allow_nonuniform:
-            raise ValueError("Nonuniform SLF: uniform-grid postprocessing/FFT is not applicable. "
-                             "For solver restart use restart.file directly; for visualization select output.format=vtr.")
+        marker = f.read(8)
+        grid_header = grid_values = None
+        if marker == b"NSEGRID1" or int(meta[7]) == 1:
+            if not allow_nonuniform:
+                raise ValueError("Nonuniform SLF: uniform-grid postprocessing/FFT is not applicable")
+            if marker != b"NSEGRID1" or not physics.startswith(b"NSEPAR1\0"):
+                raise ValueError("Nonuniform SLF lacks grid/physical metadata")
+            grid_header = struct.unpack("<15i", _read_exact(f, 60))
+            grid_values = struct.unpack("<15d", _read_exact(f, 120))
+            if _read_exact(f, 8) != b"NSREND1\0" or f.read(1):
+                raise ValueError("Invalid mapped SLF end marker/length")
 
     data = raw_data.reshape((nx, ny, nz, nvar), order="F")
-    return SLFData(path, version, dtype_code, (nx, ny, nz, nvar), meta, time, tuple(float(x) for x in bounds), names, data)
+    result = SLFData(path, version, dtype_code, (nx, ny, nz, nvar), meta, time, tuple(float(x) for x in bounds), names, data, grid_header, grid_values)
+    if grid_header is not None:
+        validate_mapped_header(result, physics)
+    return result
+
+
+def validate_mapped_header(slf: SLFData, physics: bytes) -> None:
+    h, r = slf.grid_header, slf.grid_values
+    ng = int(slf.meta[5])
+    valid = (h[0] == 1 and h[1] >= 0 and min(h[2:5]) >= 3 and
+             1 <= h[5] <= h[6] <= h[3] and 1 <= h[7] <= h[8] <= h[4] and
+             h[9] in (0, 1) and h[10] in (0, 1, 2) and h[11] == 1 and
+             all(v in (0, 1) for v in h[12:15]) and 0 <= ng <= min(h[2:5]) and
+             0 <= slf.meta[1] < slf.meta[6] <= 100000 and
+             slf.version == 1 and slf.meta[7] == 1 and slf.shape[3] == 5 and
+             [n.lower() for n in slf.names] == ['rho', 'rho_u', 'rho_v', 'rho_w', 'rho_e'])
+    valid = valid and (slf.shape[:3] == (h[2]+2*ng, h[6]-h[5]+1+2*ng, h[8]-h[7]+1+2*ng))
+    valid = valid and (tuple(slf.meta[2:5]) == h[2:5] and slf.meta[0] == h[1] and
+                      slf.time == r[0] and slf.bounds == r[6:12] and
+                      struct.unpack('<5d', physics[8:48]) == r[1:6])
+    valid = valid and (np.all(np.isfinite(r)) and r[0] >= 0 and r[1] > 1 and
+                      r[2] >= 0 and min(r[3:5]) > 0 and r[5] >= 0 and
+                      all(r[i+1] > r[i] for i in (6, 8, 10)) and
+                      all(0 <= v <= 20 for v in r[12:15]))
+    if valid:
+        viscosity = physics[48:80].split(b'\0', 1)[0].decode('ascii').strip()
+        valid = viscosity == ('none', 'fv2', 'central6')[h[10]] and (h[10] == 0 or r[2] > 0)
+    if not valid:
+        raise ValueError(f'{slf.path}: invalid/inconsistent mapped SLF metadata')
+
+
+def mapped_axes(slf: SLFData):
+    """Physical edges, volumes and solver quadrature, matching mod_grid_axis."""
+    h, r = slf.grid_header, slf.grid_values
+    edges, widths, metrics = [], [], []
+    for a, n in enumerate(h[2:5]):
+        lower, upper = r[6+2*a:8+2*a]
+        beta = r[12+a]
+        s = np.arange(n+1, dtype=float)/n
+        fraction = s if beta < np.sqrt(np.finfo(float).eps) else .5*(1+np.sinh(beta*(2*s-1))/np.sinh(beta))
+        e = lower+(upper-lower)*fraction
+        e[0], e[-1] = lower, upper
+        d = np.diff(e)
+        extended = np.empty(n+7)
+        extended[3:n+4] = e
+        for j in range(1, 4):
+            extended[3-j] = extended[4-j] - (d[n-j] if h[12+a] else d[j-1])
+            extended[n+3+j] = extended[n+2+j] + (d[j-1] if h[12+a] else d[n-j])
+        c = extended[:-1]+np.diff(extended)/2
+        i = np.arange(n)+3
+        metric = .75*(c[i+1]-c[i-1])-.15*(c[i+2]-c[i-2])+(c[i+3]-c[i-3])/60
+        if np.any(d <= 0) or (h[9] and np.any(metric <= 0)):
+            raise ValueError('Nonpositive mapped grid width/metric')
+        edges.append(e); widths.append(d); metrics.append(metric if h[9] else d)
+    product = lambda v: v[0][:, None, None]*v[1][None, :, None]*v[2][None, None, :]
+    return edges, product(widths), product(metrics)
+
+
+def merge_mapped(files: list[Path]):
+    """Strict rank merge using SLF metadata, without relying on meta.json."""
+    first = read_slf(files[0], allow_nonuniform=True)
+    if first.grid_header is None:
+        raise ValueError('Expected mapped SLF')
+    h = first.grid_header
+    if len(files) != first.meta[6]:
+        raise ValueError('Missing mapped SLF rank files')
+    result = np.empty((*h[2:5], 5))
+    filled = np.zeros(h[3:5], dtype=bool)
+    ranks = set()
+    common = (0, 1, 2, 3, 4, 9, 10, 11, 12, 13, 14)
+    for index, path in enumerate(files):
+        slf = first if index == 0 else read_slf(path, allow_nonuniform=True)
+        p = slf.grid_header
+        if (p is None or tuple(p[i] for i in common) != tuple(h[i] for i in common) or
+                slf.grid_values != first.grid_values or slf.meta[6] != first.meta[6]):
+            raise ValueError('Mixed grid, step or physical parameters in mapped SLF ranks')
+        rank = int(slf.meta[1])
+        ys, zs = slice(p[5]-1, p[6]), slice(p[7]-1, p[8])
+        if rank in ranks or np.any(filled[ys, zs]):
+            raise ValueError('Duplicate/overlapping mapped SLF ranks')
+        ranks.add(rank)
+        local = crop_center_to_shape(slf.data, (h[2], p[6]-p[5]+1, p[8]-p[7]+1), path)
+        if not np.all(np.isfinite(local)):
+            raise ValueError('Nonfinite mapped SLF state')
+        result[:, ys, zs, :] = local
+        filled[ys, zs] = True
+    if not np.all(filled):
+        raise ValueError('Missing mapped SLF domain coverage')
+    return first, result
+
+
+def write_mapped_vtr(path: Path, first: SLFData, data: np.ndarray, mode: str,
+                     requested: list[str] | None, stride: int) -> None:
+    if stride != 1:
+        raise ValueError('Nonuniform SLF currently requires --stride 1 (no implicit resampling)')
+    edges, volume, weight = mapped_axes(first)
+    names, data = select_variables(first.names, data, mode, requested, gamma=first.grid_values[1])
+    extent = ' '.join(f'0 {n}' for n in first.grid_header[2:5])
+    vtk = ET.Element('VTKFile', type='RectilinearGrid', version='1.0', byte_order='LittleEndian', header_type='UInt64')
+    grid = ET.SubElement(vtk, 'RectilinearGrid', WholeExtent=extent)
+    field = ET.SubElement(grid, 'FieldData')
+    ET.SubElement(field, 'DataArray', type='Float64', Name='TimeValue', NumberOfTuples='1', format='ascii').text = format(first.time, '.17g')
+    ET.SubElement(field, 'DataArray', type='Int32', Name='Step', NumberOfTuples='1', format='ascii').text = str(first.grid_header[1])
+    piece = ET.SubElement(grid, 'Piece', Extent=extent)
+    cell = ET.SubElement(piece, 'CellData')
+    ET.SubElement(piece, 'PointData')
+    arrays = [data[..., i] for i in range(len(names))]+[volume, weight]
+    labels = names+['cell_volume', 'integration_weight']
+    offset = 0
+    for label, array in zip(labels, arrays):
+        ET.SubElement(cell, 'DataArray', type='Float64', Name=label, format='appended', offset=str(offset))
+        offset += 8+array.size*8
+    coordinates = ET.SubElement(piece, 'Coordinates')
+    for a, e in enumerate(edges):
+        ET.SubElement(coordinates, 'DataArray', type='Float64', Name='xyz'[a], format='appended', offset=str(offset))
+        offset += 8+e.size*8
+    ET.SubElement(vtk, 'AppendedData', encoding='raw').text = '_'
+    xml = ET.tostring(vtk, encoding='utf-8', xml_declaration=True, short_empty_elements=False)
+    prefix, suffix = xml.split(b'_</AppendedData>', 1)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('wb') as f:
+        f.write(prefix+b'_')
+        for array in arrays+edges:
+            raw = np.asarray(array, dtype='<f8').ravel(order='F').tobytes()
+            f.write(struct.pack('<Q', len(raw))); f.write(raw)
+        f.write(b'</AppendedData>'+suffix)
 
 
 def parse_step_rank(path: Path, slf: SLFData | None = None) -> tuple[int, int | None]:
@@ -161,6 +300,8 @@ def build_rank_range_lookup(meta: dict) -> dict[int, dict]:
 
 
 def get_global_grid(meta: dict, first: SLFData) -> tuple[int, int, int]:
+    if first.grid_header is not None:
+        return first.grid_header[2:5]
     grid = meta.get("grid")
     if isinstance(grid, list) and len(grid) >= 3:
         return int(grid[0]), int(grid[1]), int(grid[2])
@@ -683,21 +824,23 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Looked for {case_name}_field_*.slf, then *.slf", file=sys.stderr)
         return 1
     try:
-        first = read_slf(files[0])
+        first = read_slf(files[0], allow_nonuniform=True)
     except (OSError, EOFError, ValueError) as exc:
         parser.error(str(exc))
     derive_mode = infer_derive_mode(args.derive, meta, first)
     rank_lookup = build_rank_range_lookup(meta)
 
     rank_wise = any(parse_step_rank(path)[1] is not None for path in files)
-    if rank_wise and not rank_lookup:
+    if first.grid_header is not None and args.stride != 1:
+        parser.error('Nonuniform SLF requires --stride 1')
+    if rank_wise and not rank_lookup and first.grid_header is None:
         parser.error(
             "Rank-wise SLF conversion requires meta.json with parallel.rank_ranges. "
             "Pass --meta <output/meta.json>."
         )
 
     all_groups = group_by_step(files)
-    groups = complete_step_groups(all_groups, meta)
+    groups = all_groups if first.grid_header is not None else complete_step_groups(all_groups, meta)
     if not groups:
         parser.error(
             "No complete time steps are available. The simulation may still be writing rank files, "
@@ -720,12 +863,29 @@ def main(argv: list[str] | None = None) -> int:
         args.layout,
     )
     if args.inspect_only:
+        if first.grid_header is not None:
+            try:
+                for step_files in groups.values():
+                    snapshot, _ = merge_mapped(step_files)
+                    mapped_axes(snapshot)
+            except (ValueError, EOFError, OSError) as exc:
+                parser.error(str(exc))
         print("[OK] Inspection completed; no VTI/PVD files were written.")
         return 0
     out_dir = Path(args.output_dir)
     datasets: list[tuple[float, Path]] = []
 
     for step, step_files in groups.items():
+        if first.grid_header is not None:
+            try:
+                snapshot, data = merge_mapped(step_files)
+                out = out_dir / f'field_{snapshot.grid_header[1]:06d}.vtr'
+                write_mapped_vtr(out, snapshot, data, derive_mode, requested_fields, args.stride)
+            except (ValueError, EOFError, OSError) as exc:
+                parser.error(str(exc))
+            datasets.append((snapshot.time, out.relative_to(out_dir)))
+            print(f'Wrote mapped-grid VTR: {out}')
+            continue
         step_i, time, names, data, origin, spacing = merge_step(
             step_files,
             meta,

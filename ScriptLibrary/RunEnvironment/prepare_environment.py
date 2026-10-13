@@ -848,6 +848,13 @@ written below `cases/{case_id}/paraview`; open `collection.pvd`. Incomplete MPI
 steps are skipped. A generated environment is a copy and does not automatically
 follow later FrameWork updates; regenerate it when the reported version is older.
 
+For mapped/nonuniform NSE SLF, the same command writes coordinate-aware VTR/PVD.
+The default stride is 1 (larger strides are rejected), and missing or inconsistent
+rank files are rejected. Statistics use physical-cell-volume weights and also
+report solver-weighted conserved integrals. Spectral quantities are NaN.
+`--task all` skips uniform FFT for mapped SLF; explicit `--task fft` is rejected.
+See `SolverLibrary/NSE/docs/NSE_NONUNIFORM_POSTPROCESS.md`.
+
 ## NSE turbulence statistics
 
 Compute a CSV time series from every complete NSE SLF step. Gamma and the

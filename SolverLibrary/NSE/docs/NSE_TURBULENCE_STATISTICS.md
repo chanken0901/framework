@@ -1,5 +1,9 @@
 # NSE乱流統計後処理
 
+不等間隔SLFにも同じ実行窓口で対応する。ただし下記のスペクトル統計は等間隔専用。
+不等間隔では体積重み付き平均・RMS・保存量積分を計算し、散逸率・スペクトル由来の量は
+`nan`とする。詳細は[不等間隔SLF後処理](NSE_NONUNIFORM_POSTPROCESS.md)を参照。
+
 > Windows（PowerShell）とLinux（bash）の後処理コマンドを併記します。共通の読み替えは[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 ## 目的

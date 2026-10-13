@@ -18,6 +18,36 @@ import postprocess_case  # noqa: E402
 
 
 class PostprocessStatisticsTests(unittest.TestCase):
+    def test_default_stride_preserves_uniform_and_supports_mapped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tool = root/'SolverLibrary/NSE/tools/slf_to_paraview_merged_cropghost.py'
+            tool.parent.mkdir(parents=True)
+            tool.touch()
+            context = dict(root=root, model='nse', case_root=root/'case',
+                           input_dir=root/'input', meta=root/'input/meta.json', gamma=1.4)
+            for mapped, expected in ((False, '2'), (True, '1')):
+                context['mapped_grid'] = mapped
+                with patch.object(postprocess_case, '_case_context', return_value=context), \
+                     patch.object(postprocess_case.subprocess, 'run') as run:
+                    run.return_value.returncode = 0
+                    self.assertEqual(postprocess_case.main(['--task', 'paraview']), 0)
+                command = run.call_args.args[0]
+                self.assertEqual(command[command.index('--stride')+1], expected)
+
+    def test_all_skips_fft_for_mapped_slf(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root/'field_000000.slf').write_bytes(b'SLF1'+bytes(60)+struct.pack('<i', 1))
+            context = dict(input_dir=root)
+            with patch.object(postprocess_case, '_case_context', return_value=context), \
+                 patch.object(postprocess_case, 'build_command', return_value=(root, ['pv'])), \
+                 patch.object(postprocess_case, 'build_statistics_command', return_value=(root, ['stats'])), \
+                 patch.object(postprocess_case, 'build_fft_command') as fft:
+                result = postprocess_case.build_commands(argparse.Namespace(task='all'))
+            self.assertEqual([entry[0] for entry in result], ['ParaView', 'Turbulence statistics'])
+            fft.assert_not_called()
+
     def test_fft_entrypoint_executes_and_dry_run_is_read_only(self):
         import numpy as np
         with tempfile.TemporaryDirectory() as temporary:

@@ -24,11 +24,13 @@ physics:
     # Thermal diffusion is coupled through 1 / (Re * Pr).
     prandtl_number: 0.72
 
-# Optional restart from a ghost-free global conserved SLF. Keep the original
+# Optional restart directly from saved rank SLF (uniform or mapped), or a legacy
+# ghost-free global SLF. Keep all same-step rank files and meta.json together.
+# No nse_prepare_imported_turbulence conversion is required for restart. Keep original
 # physics/flow settings; initial field construction is bypassed on restart.
 # time.nsteps and time.t_max remain TOTAL end limits. Use a NEW output directory.
 # restart:
-#   file: initial_data/restart.slf
+#   file: output_run1/field_001000_rank00000.slf
 # Nonuniform: use a new-format field_STEP_rank00000.slf directly; keep all ranks
 # of that step together. No merge/conversion is needed. Save with output.format: slf.
 

@@ -79,53 +79,7 @@ contains
     type(nse_config), intent(in) :: nse
     integer, intent(in) :: js, je, ks, ke
     real(dp), intent(inout) :: q(1-sim%nghost:,js-sim%nghost:,ks-sim%nghost:,:)
-    type(slf_header) :: header
-    integer :: unit, ios, map(5), j, k, v, i
-    integer(int64) :: offset
-    real(dp) :: dx, dy, dz
-    logical :: exists
-    if (sim%rank == 0) then
-      inquire(file=trim(sim%output_dir)//'/meta.json',exist=exists)
-      if (exists) error stop 'restart requires a new output directory (existing meta.json found)'
-    end if
-    if(sim%grid_mapping/='uniform') then
-      call load_checkpoint(q,sim,nse,js,je,ks,ke)
-      return
-    end if
-    if (nse%nv /= 5 .or. sim%grid_mapping /= 'uniform') &
-      error stop 'restart currently requires single-component uniform-grid NSE'
-    open(newunit=unit,file=trim(sim%restart_file),access='stream',form='unformatted', &
-      status='old',action='read',convert='little_endian',iostat=ios)
-    if (ios /= 0) error stop 'cannot open restart SLF'
-    call read_slf_header(unit,header)
-    call validate_slf_header(header,sim,nse,map,dx,dy,dz)
-    if (header%nx /= sim%nx .or. header%nvar /= 5 .or. &
-        .not.nearly_equal(header%bounds(1),sim%x_min) .or. &
-        .not.nearly_equal(header%bounds(2),sim%x_max)) error stop 'restart grid mismatch'
-    if (.not.ieee_is_finite(header%time)) error stop 'nonfinite restart time'
-    if (header%time < 0 .or. header%step < 0) error stop 'invalid restart time/step'
-    if (sim%nsteps <= header%step .or. sim%t_max <= header%time) &
-      error stop 'restart requires nsteps and t_max greater than saved step and time'
-    do v=1,5
-      do k=ks,ke
-        do j=js,je
-          offset = ((int(map(v)-1,int64)*header%nz+k-1)*header%ny+j-1)*header%nx
-          read(unit,pos=header%data_position+8_int64*offset,iostat=ios) q(1:sim%nx,j,k,v)
-          if (ios /= 0) error stop 'truncated restart SLF'
-        end do
-      end do
-    end do
-    close(unit)
-    do k=ks,ke
-      do j=js,je
-        do i=1,sim%nx
-          call require_admissible(q(i,j,k,1:5),nse,'restart state')
-        end do
-      end do
-    end do
-    sim%t=header%time
-    sim%step=header%step
-    if (sim%rank == 0) write(*,'(A,I0,A,ES24.16)') 'Restart loaded: step=',sim%step,', time=',sim%t
+    call load_checkpoint(q,sim,nse,js,je,ks,ke)
   end subroutine initialize_restart
 
   subroutine initialize_imported_turbulence(q, sim, nse, js, je, ks, ke, &

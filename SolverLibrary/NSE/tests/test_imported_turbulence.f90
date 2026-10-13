@@ -280,7 +280,7 @@ contains
   subroutine write_source_slf(path)
     character(len=*), intent(in) :: path
     character(len=8) :: magic
-    character(len=32) :: names(5)
+    character(len=32) :: names(5), viscosity
     integer(int32) :: version, dtype_code, ndim, shape4(4), metadata(8)
     integer(int32) :: nvar
     real(dp) :: field(4,2,2,5), bounds(6), time
@@ -326,6 +326,9 @@ contains
       write(output_unit) names(i)
     end do
     write(output_unit) field
+    ! Production restart sources include their physical-parameter trailer.
+    viscosity='central6'
+    write(output_unit) 'NSEPAR1'//achar(0),[1.4_dp,100._dp,0.72_dp,1._dp,0.1_dp],viscosity
     close(output_unit)
   end subroutine write_source_slf
 

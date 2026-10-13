@@ -152,6 +152,7 @@ components:
   runtime_tools:
     files:
       - docs/NSE_NONUNIFORM_GRID.md
+      - docs/NSE_NONUNIFORM_POSTPROCESS.md
       - examples/nonuniform_tgv.case.yaml
       - tools/slf_to_paraview_merged_cropghost.py
       - tools/nse_turbulence_statistics.py
@@ -272,6 +273,7 @@ components:
       - tests/test_viscous_central6.f90
       - tests/test_mapped_viscous.f90
       - tests/check_nonuniform_restart.py
+      - tests/test_mapped_slf_postprocess.py
       - tests/input_nonuniform_production.dat
       - tests/test_boundary_periodic.f90
       - tests/test_boundary_non_reflecting.f90

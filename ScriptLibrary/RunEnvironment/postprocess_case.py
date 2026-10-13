@@ -16,7 +16,7 @@ from case_input import CaseInputError, derive_nse_hit_transport
 from yaml_support import YamlFormatError, load_yaml
 
 
-TOOL_VERSION = "2.1.0"
+TOOL_VERSION = "2.2.0"
 
 
 class PostprocessError(RuntimeError):
@@ -181,7 +181,18 @@ def _case_context(args: argparse.Namespace) -> dict:
         "meta": meta,
         "gamma": gamma,
         "reynolds": reynolds,
+        "mapped_grid": _nested(case_config, 'grid.mapping.type', 'uniform') != 'uniform',
     }
+
+
+def _mapped_input(context: dict) -> bool:
+    source = context['input_dir']
+    samples = sorted(source.glob('*.slf')) if source.is_dir() else [source]
+    if samples and samples[0].is_file():
+        with samples[0].open('rb') as handle:
+            header = handle.read(68)
+        return header[:4] == b'SLF1' and header[64:68] == b'\x01\x00\x00\x00'
+    return context.get('mapped_grid', False)
 
 
 def build_command(args: argparse.Namespace) -> tuple[Path, list[str]]:
@@ -206,7 +217,7 @@ def build_command(args: argparse.Namespace) -> tuple[Path, list[str]]:
         "--fields",
         fields,
         "--stride",
-        str(args.stride),
+        str(args.stride if args.stride is not None else (1 if _mapped_input(context) else 2)),
         "--steps",
         args.steps or "latest",
         "--gamma",
@@ -290,6 +301,11 @@ def build_commands(args: argparse.Namespace) -> list[tuple[str, Path, list[str]]
         output, command = build_statistics_command(args)
         commands.append(("Turbulence statistics", output, command))
     if args.task in {"fft", "all"}:
+        if args.task == 'all':
+            context = _case_context(args)
+            if _mapped_input(context):
+                print('[INFO] Nonuniform SLF: all runs visualization/statistics; uniform FFT is skipped.')
+                return commands
         output, command = build_fft_command(args)
         commands.append(("FFT", output, command))
     return commands
@@ -341,8 +357,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--stride",
         type=int,
-        default=2,
-        help="Spatial preview stride. Default: 2; use 1 for full resolution",
+        default=None,
+        help="Spatial preview stride. Default: 2 for uniform grids, 1 for mapped grids",
     )
     parser.add_argument(
         "--derive",
@@ -376,11 +392,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show the child command only; do not read SLF files or write output",
+        help="Show the child command only; may inspect SLF headers, but do not read field arrays or write output",
     )
     args = parser.parse_args(argv)
 
-    if args.stride < 1:
+    if args.stride is not None and args.stride < 1:
         parser.error("--stride must be at least 1")
     if args.inspect_only and args.task != "paraview":
         parser.error("--inspect-only can be used only with --task paraview")

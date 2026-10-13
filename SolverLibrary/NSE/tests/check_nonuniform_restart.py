@@ -1,5 +1,6 @@
 """Mapped SLF restart matrix; creates isolated test runs, never modifies research runs."""
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
@@ -20,11 +21,12 @@ def assemble(directory, step):
     time = None
     for path in sorted(directory.glob(f"field_{step:06d}*.slf")):
         slf = read_slf(path, allow_nonuniform=True)
-        with path.open("rb") as f:
-            f.seek(288 + 8*int(np.prod(slf.shape)) + 80)
-            mark, *values = struct.unpack("<8s15i15d8s", f.read(196))
-        assert mark == b"NSEGRID1" and values[-1] == b"NSREND1\0"
-        h = values[:15]
+        if int(slf.meta[7]) == 0:
+            meta = json.loads((directory/'meta.json').read_text())
+            rr = next(r for r in meta['parallel']['rank_ranges'] if r['rank'] == int(slf.meta[1]))
+            h = [1, step, 12, 12, 12, rr['j_start'], rr['j_end'], rr['k_start'], rr['k_end']]
+        else:
+            h = slf.grid_header
         assert h[1] == step
         ys = slice(h[5]-1, h[6]); zs = slice(h[7]-1, h[8]); g = int(slf.meta[5])
         assert not covered[ys, zs].any()
@@ -39,6 +41,7 @@ def assemble(directory, step):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cpu", type=Path, required=True)
+    parser.add_argument('--uniform', action='store_true', help='Test direct historical uniform rank SLFs')
     parser.add_argument("--cuda", type=Path)
     parser.add_argument("--mpi", type=Path)
     parser.add_argument("--mpi-cuda", type=Path)
@@ -61,6 +64,8 @@ def main():
     template = template.replace("convective_scheme='keep2'", "convective_scheme='hybrid'")
     template = template.replace("hybrid_smooth_scheme='keep2'", "hybrid_smooth_scheme='keep6'")
     template = template.replace("viscous_scheme='fv2'", "viscous_scheme='central6'")
+    if args.uniform:
+        template = template.replace("grid_mapping='sinh', grid_stretch=0.4,1.0,1.5", "grid_mapping='uniform'")
 
     def run(name, command, text, error=None):
         folder = work / name
@@ -102,6 +107,29 @@ def main():
                 assert resumed_time == time and "Restart loaded: step=2" in log
                 assert not list((folder / "nonuniform-output").glob("field_000000*"))
                 print("PASS", boundary, source, "->", destination, flush=True)
+        if args.uniform:
+            if boundary == 'periodic':
+                snapshot = next(sources['cpu'].glob('field_000002*.slf'))
+                restart = text.replace('&simulation', f"&simulation\n restart_file='{snapshot.as_posix()}'")
+                run('reject-end-step', commands['cpu'], restart.replace('nsteps=4', 'nsteps=2'), 'greater than saved')
+                run('reject-grid', commands['cpu'], restart.replace('nx=12', 'nx=13'), 'grid size mismatch')
+                if 'mpi' in sources:
+                    pieces = work/'incomplete'; pieces.mkdir()
+                    for src in sources['mpi'].glob('field_000002*.slf'):
+                        shutil.copyfile(src, pieces/src.name)
+                    selected = pieces/'field_000002_rank00000.slf'
+                    attempt = restart.replace(snapshot.as_posix(), selected.as_posix())
+                    run('reject-meta', commands['cpu'], attempt, 'requires adjacent meta.json')
+                    metadata = json.loads((sources['mpi']/'meta.json').read_text())
+                    metadata['parallel']['rank_ranges'].append(metadata['parallel']['rank_ranges'][0])
+                    (pieces/'meta.json').write_text(json.dumps(metadata))
+                    run('reject-duplicate-range', commands['cpu'], attempt, 'duplicate restart rank range')
+                    metadata['parallel']['rank_ranges'].pop()
+                    (pieces/'meta.json').write_text(json.dumps(metadata))
+                    # Removing only a disposable test copy.
+                    (pieces/'field_000002_rank00003.slf').unlink()
+                    run('reject-piece', commands['cpu'], attempt, 'Missing NSE checkpoint piece')
+            continue
         if boundary == "periodic":
             snapshot = next(sources["cpu"].glob("field_000002*.slf"))
             restart = text.replace("&simulation", f"&simulation\n restart_file='{snapshot.as_posix()}'")
@@ -149,7 +177,7 @@ def main():
                 assert "Nonuniform SLF" in str(exc)
             else:
                 raise AssertionError("uniform-grid postprocessing must reject mapped data")
-    print("All mapped SLF restart checks passed.", flush=True)
+    print("All SLF restart checks passed.", flush=True)
 
 
 if __name__ == "__main__":

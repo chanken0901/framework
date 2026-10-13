@@ -65,9 +65,10 @@ contains
     if(ios/=0) error stop 'Missing NSE checkpoint piece'
     read(u,iostat=ios) mark,version,dtype,ndim,shp,meta,time,bounds,nv
     if(ios/=0) error stop 'Truncated restart SLF header'
-    if(mark/='SLF1'//repeat(achar(0),4).or.version/=1.or.dtype/=2.or.ndim/=4.or.nv/=5.or.shp(4)/=5) &
+    if(mark/='SLF1'//repeat(achar(0),4).or.version/=1.or.dtype/=2.or. &
+       (ndim/=3.and.ndim/=4).or.nv/=5.or.shp(4)/=5) &
       error stop 'Restart requires five-variable float64 SLF1'
-    if(minval(shp)<1.or.meta(6)<0.or.meta(7)<1.or.meta(7)>100000.or.meta(8)/=1) &
+    if(minval(shp)<1.or.meta(6)<0.or.meta(7)<1.or.meta(7)>100000.or.meta(8)<0.or.meta(8)>1) &
       error stop 'Invalid mapped restart SLF header'
     do i=1,5
       read(u,iostat=ios) name
@@ -78,6 +79,13 @@ contains
     trailer=data_pos+40*cells*shp(3)
     read(u,pos=trailer,iostat=ios) mark,physics,viscous
     if(ios/=0.or.mark/='NSEPAR1'//achar(0)) error stop 'Restart SLF lacks physical metadata'
+    if(meta(8)==0) then
+      inquire(unit=u,size=bytes)
+      close(u)
+      if(bytes/=trailer-1+80) error stop 'Uniform restart SLF size mismatch'
+      call uniform_header(path,shp,meta,time,bounds,physics,viscous,p)
+      return
+    end if
     read(u,iostat=ios) mark,p%h,p%r
     if(ios/=0) error stop 'Truncated NSE checkpoint header'
     if(mark/=magic.or.p%h(1)/=1) error stop 'Invalid NSE checkpoint format/version'
@@ -109,6 +117,85 @@ contains
     close(u)
     if(ios/=0.or.mark/=ending) error stop 'Incomplete NSE checkpoint piece'
   end subroutine
+
+  subroutine uniform_header(path,shp,meta,time,bounds,physics,viscous,p)
+    character(*), intent(in) :: path,viscous
+    integer(int32), intent(in) :: shp(4),meta(8)
+    real(dp), intent(in) :: time,bounds(6),physics(5)
+    type(piece_header), intent(out) :: p
+    character(:), allocatable :: json,object,meta_path
+    integer :: u,ios,bytes,start,finish,rank,found,slash,code
+    if(minval(meta(3:5))<1.or.meta(2)<0.or.meta(2)>=meta(7).or.meta(1)<0) &
+      error stop 'Invalid uniform restart SLF header'
+    select case(trim(viscous))
+    case('none');code=0
+    case('fv2');code=1
+    case('central6');code=2
+    case default;error stop 'Invalid restart viscosity'
+    end select
+    if(.not.all(ieee_is_finite([time,bounds,physics]))) error stop 'Nonfinite restart metadata'
+    if(time<0.or.physics(1)<=1.or.physics(2)<0.or.minval(physics(3:4))<=0.or.physics(5)<0.or. &
+       any(bounds([2,4,6])<=bounds([1,3,5]))) error stop 'Invalid restart physical metadata'
+    if(code/=0.and.physics(2)<=0) error stop 'Invalid restart Reynolds number'
+    p%shape4=shp;p%ghost=meta(6);p%nparts=meta(7);p%rank=meta(2)
+    p%h=[1,meta(1),meta(3:5),1,meta(4),1,meta(5),0,code,0,0,0,0]
+    p%r=[time,physics,bounds,0._dp,0._dp,0._dp]
+    if(p%nparts>1) then
+      ! Historical uniform SLFs store local ranges in the adjacent meta.json.
+      slash=max(index(trim(path),'/',back=.true.),index(trim(path),achar(92),back=.true.))
+      meta_path=path(:slash)//'meta.json'
+      open(newunit=u,file=meta_path,status='old',access='stream',form='unformatted',action='read',iostat=ios)
+      if(ios/=0) error stop 'Uniform multi-rank restart requires adjacent meta.json with rank_ranges'
+      inquire(unit=u,size=bytes)
+      allocate(character(bytes)::json)
+      read(u,iostat=ios) json
+      close(u)
+      if(ios/=0) error stop 'Cannot read restart meta.json'
+      start=index(json,'"rank_ranges"')
+      if(start==0) error stop 'Restart meta.json lacks rank_ranges'
+      json=json(start:)
+      finish=index(json,']')
+      if(finish==0) error stop 'Invalid restart rank_ranges'
+      json=json(:finish)
+      found=0
+      do
+        start=index(json,'{');if(start==0) exit
+        finish=index(json(start:),'}')+start-1
+        if(finish<start) error stop 'Invalid restart rank object'
+        object=json(start:finish)
+        rank=json_integer(object,'rank')
+        if(rank==p%rank) then
+          found=found+1
+          if(json_integer(object,'i_start')/=1.or.json_integer(object,'i_end')/=meta(3)) &
+            error stop 'Restart requires full x extent per rank'
+          p%h(6)=json_integer(object,'j_start');p%h(7)=json_integer(object,'j_end')
+          p%h(8)=json_integer(object,'k_start');p%h(9)=json_integer(object,'k_end')
+        end if
+        json=json(finish+1:)
+      end do
+      if(found/=1) error stop 'Missing or duplicate restart rank range'
+    end if
+    if(p%h(6)<1.or.p%h(7)>meta(4).or.p%h(8)<1.or.p%h(9)>meta(5).or. &
+       p%h(7)<p%h(6).or.p%h(9)<p%h(8)) error stop 'Invalid restart rank extent'
+    if(p%ghost>minval(meta(3:5))) error stop 'Invalid restart ghost count'
+    if(any(shp(:3)/=[meta(3)+2*p%ghost,p%h(7)-p%h(6)+1+2*p%ghost,p%h(9)-p%h(8)+1+2*p%ghost])) &
+      error stop 'Uniform restart shape/rank range mismatch'
+  end subroutine
+
+  integer function json_integer(object,key) result(value)
+    character(*), intent(in) :: object,key
+    integer :: first,last,ios
+    first=index(object,'"'//key//'"')
+    if(first==0) error stop 'Missing restart rank metadata key'
+    first=first+len(key)+2
+    last=index(object(first:),':')
+    if(last==0) error stop 'Invalid restart rank metadata key'
+    first=first+last
+    last=scan(object(first:),',}')+first-2
+    if(last<first) error stop 'Invalid restart rank integer'
+    read(object(first:last),*,iostat=ios) value
+    if(ios/=0) error stop 'Invalid restart rank integer'
+  end function
 
   subroutine read_index(path,paths,headers)
     character(*), intent(in) :: path
@@ -162,14 +249,18 @@ contains
     integer :: a,u,ios,i,j,k,v
     integer(int64) :: offset
     inquire(file=trim(sim%output_dir)//'/.',exist=output_exists)
-    if(output_exists) error stop 'Mapped restart requires a new output directory'
+    if(output_exists) error stop 'Restart requires a new output directory'
     call read_index(sim%restart_file,paths,p)
-    if(sim%grid_mapping/='sinh'.or.nse%nv/=5) error stop 'Mapped SLF restart requires single-component NSE'
+    if(nse%nv/=5) error stop 'SLF restart requires single-component NSE'
+    if((sim%grid_mapping=='uniform').neqv.(p(1)%h(12)==0)) error stop 'Restart grid mapping mismatch'
     if(any(p(1)%h(3:5)/=[sim%nx,sim%ny,sim%nz])) error stop 'Restart grid size mismatch'
-    if(p(1)%h(10)/=merge(1,0,sim%mapped_keep6)) error stop 'Restart integration norm mismatch'
-    if(any(p(1)%h(13:15)/=merge(1,0,nse%boundary_face_type([1,3,5])=='periodic'))) &
-      error stop 'Restart grid periodicity mismatch'
+    if(p(1)%h(12)/=0) then
+      if(p(1)%h(10)/=merge(1,0,sim%mapped_keep6)) error stop 'Restart integration norm mismatch'
+      if(any(p(1)%h(13:15)/=merge(1,0,nse%boundary_face_type([1,3,5])=='periodic'))) &
+        error stop 'Restart grid periodicity mismatch'
+    end if
     geom=[sim%x_min,sim%x_max,sim%y_min,sim%y_max,sim%z_min,sim%z_max,sim%grid_stretch]
+    if(sim%grid_mapping=='uniform') geom(7:9)=0
     if(any(abs(geom-p(1)%r(7:15))>64*epsilon(1._dp)*max(1._dp,abs(geom),abs(p(1)%r(7:15))))) &
       error stop 'Restart grid bounds/stretch mismatch'
     if(sim%nsteps<=p(1)%h(2).or.sim%t_max<=p(1)%r(1)) &

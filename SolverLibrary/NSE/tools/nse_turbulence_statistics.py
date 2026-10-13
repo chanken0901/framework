@@ -25,6 +25,8 @@ from slf_to_paraview_merged_cropghost import (
     rank_slices,
     read_slf,
     select_step_groups,
+    merge_mapped,
+    mapped_axes,
 )
 
 
@@ -368,10 +370,48 @@ def calculate_statistics(
     }
 
 
+def mapped_statistics(files, density_floor, pressure_floor):
+    """Physical-volume moments, distinct from the solver's mapped quadrature."""
+    first, q = merge_mapped(files)
+    _, volume, weight = mapped_axes(first)
+    gamma = first.grid_values[1]
+    rho = q[..., 0]
+    if np.min(rho) <= density_floor:
+        raise ValueError('Mapped statistics: nonpositive/below-floor density')
+    velocity = q[..., 1:4]/rho[..., None]
+    pressure = (gamma-1)*(q[..., 4]-.5*rho*np.sum(velocity**2, axis=-1))
+    if np.min(pressure) <= pressure_floor or not np.all(np.isfinite(pressure)):
+        raise ValueError('Mapped statistics: nonpositive/below-floor pressure')
+    total_volume = float(np.sum(volume))
+    mean = lambda a: float(np.sum(a*volume)/total_volume)
+    means = np.array([mean(velocity[..., a]) for a in range(3)])
+    fluct = velocity-means
+    stress = np.array([[mean(fluct[..., a]*fluct[..., b]) for b in range(3)] for a in range(3)])
+    rms = np.sqrt(np.maximum(np.diag(stress), 0))
+    speed = float(np.sqrt(np.trace(stress)))
+    sound = mean(np.sqrt(gamma*pressure/rho))
+    record = {key: math.nan for key in CSV_COLUMNS}
+    record.update(step=first.grid_header[1], time=first.time,
+                  mean_density=mean(rho), mean_pressure=mean(pressure), mean_sound_speed=sound,
+                  mean_u=means[0], mean_v=means[1], mean_w=means[2],
+                  rms_u_fluctuation=rms[0], rms_v_fluctuation=rms[1], rms_w_fluctuation=rms[2],
+                  rms_velocity_fluctuation=speed, turbulent_kinetic_energy=.5*speed**2,
+                  reynolds_stress_uv=stress[0, 1], reynolds_stress_uw=stress[0, 2],
+                  reynolds_stress_vw=stress[1, 2], isotropy_error=_isotropy_error(stress),
+                  turbulent_mach_number=speed/sound)
+    record['physical_volume'] = total_volume
+    record['solver_weight_sum'] = float(np.sum(weight))
+    for a, name in enumerate(('mass', 'momentum_x', 'momentum_y', 'momentum_z', 'total_energy')):
+        record['volume_integral_'+name] = float(np.sum(q[..., a]*volume))
+        record['solver_integral_'+name] = float(np.sum(q[..., a]*weight))
+    return record
+
+
 def _write_csv(path: Path, records: list[dict[str, float | int]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS)
+        columns = list(records[0]) if records else list(CSV_COLUMNS)
+        writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         for record in records:
             writer.writerow(
@@ -379,7 +419,7 @@ def _write_csv(path: Path, records: list[dict[str, float | int]]) -> None:
                     key: record[key]
                     if key == "step"
                     else format(float(record[key]), ".17g")
-                    for key in CSV_COLUMNS
+                    for key in columns
                 }
             )
 
@@ -391,6 +431,7 @@ def _write_metadata(
     gamma: float,
     reynolds_number: float,
     records: list[dict[str, float | int]],
+    mapped: bool = False,
 ) -> Path:
     metadata_path = csv_path.with_name(f"{csv_path.stem}_metadata.json")
     metadata = {
@@ -418,6 +459,17 @@ def _write_metadata(
         "columns": list(CSV_COLUMNS),
         "steps": [int(record["step"]) for record in records],
     }
+    if mapped:
+        metadata['parameters'] = {'source': 'NSEGRID1 SLF metadata; CLI gamma/Re not used'}
+        metadata['columns'] = list(records[0])
+        metadata['definitions'] = {
+            'means_and_stresses': 'sum(f * physical_cell_volume) / sum(physical_cell_volume); spatial fluctuations, not time/ensemble fluctuations or Favre statistics.',
+            'volume_integral_*': 'sum(Q * physical_cell_volume)',
+            'solver_integral_*': 'sum(Q * integration_weight); KEEP6 uses product D6(x), otherwise physical volume.',
+            'turbulent_mach_number': 'sqrt(sum(component variance)) / volume_mean(sqrt(gamma*p/rho))',
+            'unavailable_columns': 'Viscosity, dissipation, spectral length scales, Re scales and spectral error are NaN; no FFT or derivative approximation is performed.',
+            'geometry': 'sinh edges reconstructed from NSEGRID1; no interpolation',
+        }
     with metadata_path.open("w", encoding="utf-8") as handle:
         json.dump(metadata, handle, indent=2, ensure_ascii=True)
         handle.write("\n")
@@ -479,7 +531,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         if not files:
             raise ValueError(f"No SLF files found: {input_path}")
-        groups = complete_step_groups(group_by_step(files), meta)
+        mapped = read_slf(files[0], allow_nonuniform=True).grid_header is not None
+        groups = group_by_step(files) if mapped else complete_step_groups(group_by_step(files), meta)
         groups = select_step_groups(groups, args.steps)
         if not groups:
             raise ValueError("No complete SLF steps are available")
@@ -487,6 +540,11 @@ def main(argv: list[str] | None = None) -> int:
 
         records: list[dict[str, float | int]] = []
         for step, step_files in groups.items():
+            if mapped:
+                record = mapped_statistics(step_files, args.density_floor, args.pressure_floor)
+                records.append(record)
+                print(f"[OK] mapped step={record['step']} volume-weighted statistics (spectral quantities unavailable)")
+                continue
             (
                 step_read,
                 time,
@@ -531,6 +589,7 @@ def main(argv: list[str] | None = None) -> int:
             args.gamma,
             args.reynolds,
             records,
+            mapped=mapped,
         )
     except (OSError, ValueError, EOFError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
