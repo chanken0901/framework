@@ -2,16 +2,16 @@
 
 単成分・5保存変数の圧縮性NSEを扱います。資料は[用途別一覧](docs/README.md)から選んでください。
 
-- 不等間隔格子は本計算・SLF再スタート・後処理に接続済みです。[対応範囲](docs/NSE_NONUNIFORM_GRID.md)を確認してください。
-- Landau–Lifshitz揺らぎはNSEの任意拡張です。不等間隔にも対応しますが、現在は全周期境界に限ります。[仕様](docs/NSE_FLUCTUATING_HYDRODYNAMICS.md)
+- 不等間隔格子は本計算・SLF再スタート・後処理に接続済みです。[対応範囲](docs/numerics/NSE_NONUNIFORM_GRID.md)を確認してください。
+- Landau–Lifshitz揺らぎはNSEの任意拡張です。不等間隔にも対応しますが、現在は全周期境界に限ります。[仕様](docs/physics/NSE_FLUCTUATING_HYDRODYNAMICS.md)
 - 詳細反応機構の新規開発先は独立した[ReactingFlow](../ReactingFlow/README.md)です。
-- 既存の多成分Stage 0〜10は互換・比較用として維持しています。下記の多成分profile表はこの旧系列のものです。[旧系列の案内](docs/NSE_MULTICOMPONENT_ROADMAP.md)
+- 既存の多成分Stage 0〜10は互換・比較用として維持しています。下記の多成分profile表はこの旧系列のものです。[旧系列の案内](docs/legacy-multicomponent/NSE_MULTICOMPONENT_ROADMAP.md)
 - Windows／Linuxの操作は[コマンド対応表](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
-以前の冒頭にあった段階別説明は[開発履歴](docs/DEVELOPMENT_HISTORY.md)へ移しました。
+以前の冒頭にあった段階別説明は[開発履歴](docs/history/DEVELOPMENT_HISTORY.md)へ移しました。
 
 MPI＋CUDAで分散HIT初期化またはPetersen–Livescu forcingを使う場合は、
-[`docs/NSE_CUFFTMP.md`](docs/NSE_CUFFTMP.md)の`cuda_mpi_cufftmp`手順を参照してください。
+[`docs/parallel/NSE_CUFFTMP.md`](docs/parallel/NSE_CUFFTMP.md)の`cuda_mpi_cufftmp`手順を参照してください。
 
 MPI/OpenMP、単一GPU CUDA、またはMPI＋CUDAマルチGPUで実行する、5保存変数の三次元圧縮性
 Navier-Stokesソルバーです。全backendの面別周期／特性無反射／鏡像境界、SSPRK3、KEEP/WENO系の対流流束、
@@ -19,21 +19,21 @@ Navier-Stokesソルバーです。全backendの面別周期／特性無反射／
 
 ## 最初に読む文書
 
-- SLFのFFT解析（密度・圧力・速度）: [手順と正規化](docs/NSE_SLF_FFT.md)
-- ソルバー全体仕様・無次元化: [`docs/NSE_SOLVER_SPECIFICATION.md`](docs/NSE_SOLVER_SPECIFICATION.md)
-- 境界条件（全backendの面別周期／無反射／鏡像）: [`docs/NSE_BOUNDARY_CONDITIONS.md`](docs/NSE_BOUNDARY_CONDITIONS.md)
-- 生成・ビルド・実行: [`docs/NSE_BUILD_AND_RUN.md`](docs/NSE_BUILD_AND_RUN.md)
-- 対流ハイブリッド: [`docs/NSE_HYBRID_FLUX.md`](docs/NSE_HYBRID_FLUX.md)
-- CUDA対応範囲: [`docs/NSE_CUDA.md`](docs/NSE_CUDA.md)
-- モジュール設計と拡張: [`docs/NSE_MODULE_DESIGN.md`](docs/NSE_MODULE_DESIGN.md)
-- WENO5-Z/Roe: [`docs/NSE_WENO5Z_ROE.md`](docs/NSE_WENO5Z_ROE.md)
-- HITと分散FFT: [`docs/NSE_HIT_DISTRIBUTED_FFT.md`](docs/NSE_HIT_DISTRIBUTED_FFT.md)
-- Forcing: [`docs/NSE_FORCING.md`](docs/NSE_FORCING.md)
-- 乱流統計: [`docs/NSE_TURBULENCE_STATISTICS.md`](docs/NSE_TURBULENCE_STATISTICS.md)
-- 保存済み乱流場の配置: [`docs/NSE_IMPORTED_TURBULENCE.md`](docs/NSE_IMPORTED_TURBULENCE.md)
-- 平面衝撃波と保存乱流の干渉: [`docs/NSE_SHOCK_TURBULENCE_INTERACTION.md`](docs/NSE_SHOCK_TURBULENCE_INTERACTION.md)
-- 有限高圧室の衝撃波管と保存乱流の干渉: [`docs/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md`](docs/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md)
-- 多成分反応流の面別境界と出力（Stage 7）: [`docs/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md`](docs/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md)
+- SLFのFFT解析（密度・圧力・速度）: [手順と正規化](docs/postprocess/NSE_SLF_FFT.md)
+- ソルバー全体仕様・無次元化: [`docs/overview/NSE_SOLVER_SPECIFICATION.md`](docs/overview/NSE_SOLVER_SPECIFICATION.md)
+- 境界条件（全backendの面別周期／無反射／鏡像）: [`docs/numerics/NSE_BOUNDARY_CONDITIONS.md`](docs/numerics/NSE_BOUNDARY_CONDITIONS.md)
+- 生成・ビルド・実行: [`docs/usage/NSE_BUILD_AND_RUN.md`](docs/usage/NSE_BUILD_AND_RUN.md)
+- 対流ハイブリッド: [`docs/numerics/NSE_HYBRID_FLUX.md`](docs/numerics/NSE_HYBRID_FLUX.md)
+- CUDA対応範囲: [`docs/parallel/NSE_CUDA.md`](docs/parallel/NSE_CUDA.md)
+- モジュール設計と拡張: [`docs/overview/NSE_MODULE_DESIGN.md`](docs/overview/NSE_MODULE_DESIGN.md)
+- WENO5-Z/Roe: [`docs/numerics/NSE_WENO5Z_ROE.md`](docs/numerics/NSE_WENO5Z_ROE.md)
+- HITと分散FFT: [`docs/physics/NSE_HIT_DISTRIBUTED_FFT.md`](docs/physics/NSE_HIT_DISTRIBUTED_FFT.md)
+- Forcing: [`docs/physics/NSE_FORCING.md`](docs/physics/NSE_FORCING.md)
+- 乱流統計: [`docs/postprocess/NSE_TURBULENCE_STATISTICS.md`](docs/postprocess/NSE_TURBULENCE_STATISTICS.md)
+- 保存済み乱流場の配置: [`docs/physics/NSE_IMPORTED_TURBULENCE.md`](docs/physics/NSE_IMPORTED_TURBULENCE.md)
+- 平面衝撃波と保存乱流の干渉: [`docs/physics/NSE_SHOCK_TURBULENCE_INTERACTION.md`](docs/physics/NSE_SHOCK_TURBULENCE_INTERACTION.md)
+- 有限高圧室の衝撃波管と保存乱流の干渉: [`docs/physics/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md`](docs/physics/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md)
+- 多成分反応流の面別境界と出力（Stage 7）: [`docs/legacy-multicomponent/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md`](docs/legacy-multicomponent/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md)
 
 ## 対応プロファイル
 

@@ -218,11 +218,36 @@ components:
 
   foundation_docs:
     files:
-      - docs/NSE_MULTICOMPONENT_ROADMAP.md
-      - docs/NSE_MULTICOMPONENT_PARALLEL.md
-      - docs/NSE_MULTICOMPONENT_GEOMETRY.md
-      - docs/NSE_MULTICOMPONENT_CUDA.md
-      - docs/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md
+      - docs/README.md
+      - docs/history/DEVELOPMENT_HISTORY.md
+      - docs/numerics/NSE_BOUNDARY_CONDITIONS.md
+      - docs/numerics/NSE_HYBRID_FLUX.md
+      - docs/numerics/NSE_NONUNIFORM_GRID.md
+      - docs/numerics/NSE_POSITIVITY.md
+      - docs/numerics/NSE_WENO5Z_ROE.md
+      - docs/overview/NSE_MODULE_DESIGN.md
+      - docs/overview/NSE_SOLVER_SPECIFICATION.md
+      - docs/parallel/NSE_CUDA_AWARE_MPI.md
+      - docs/parallel/NSE_CUDA.md
+      - docs/parallel/NSE_CUFFTMP.md
+      - docs/physics/NSE_FLUCTUATING_HYDRODYNAMICS.md
+      - docs/physics/NSE_FORCING_TARGET.md
+      - docs/physics/NSE_FORCING.md
+      - docs/physics/NSE_HIT_DISTRIBUTED_FFT.md
+      - docs/physics/NSE_IMPORTED_TURBULENCE.md
+      - docs/physics/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md
+      - docs/physics/NSE_SHOCK_TURBULENCE_INTERACTION.md
+      - docs/postprocess/NSE_NONUNIFORM_POSTPROCESS.md
+      - docs/postprocess/NSE_SHOCK_ANALYSIS.md
+      - docs/postprocess/NSE_SLF_FFT.md
+      - docs/postprocess/NSE_TURBULENCE_STATISTICS.md
+      - docs/usage/NSE_BUILD_AND_RUN.md
+      - docs/usage/NSE_RESTART.md
+      - docs/legacy-multicomponent/NSE_MULTICOMPONENT_ROADMAP.md
+      - docs/legacy-multicomponent/NSE_MULTICOMPONENT_PARALLEL.md
+      - docs/legacy-multicomponent/NSE_MULTICOMPONENT_GEOMETRY.md
+      - docs/legacy-multicomponent/NSE_MULTICOMPONENT_CUDA.md
+      - docs/legacy-multicomponent/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md
 
 profiles:
   cpu_serial_foundation:

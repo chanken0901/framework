@@ -1,5 +1,9 @@
 # 資料一覧
 
+全体構成とライブラリ選択は[FrameWork README](../README.md)を参照する。
+NSE／ReactingFlowの仕様本文は、各ライブラリ内で内容別フォルダに整理している。
+この一覧は共通運用資料とソルバー別索引をつなぐ入口であり、仕様本文を重複して置かない。
+
 ## 普段参照する手順書
 
 - [ライブラリ構成・保存場所の整理方針](development/REPOSITORY_LAYOUT.md)
@@ -10,7 +14,7 @@
 - [実行環境の生成・ビルド・実行](guides/外部実行環境_生成・ビルド・実行手順書.md)
 - [ParaView後処理](guides/後処理_ParaView可視化手順書.md)
 - [Windows／Linuxコマンド対応](WINDOWS_LINUX_COMMANDS.md)
-- [NSE仕様書](../SolverLibrary/NSE/docs/NSE_SOLVER_SPECIFICATION.md)
+- [NSE仕様書](../SolverLibrary/NSE/docs/overview/NSE_SOLVER_SPECIFICATION.md)
 - [GPE仕様書](guides/GPE_GP3Dコード全体仕様書.md)
 - [実行環境の選択肢管理](../ScriptLibrary/RunEnvironment/ENVIRONMENT_OPTIONS.md)
 
@@ -22,6 +26,10 @@
 - ソルバー固有の詳細仕様・検証手順は各ソルバーの`docs/`に保持する。
 
 ## 2026-09-11 配置整理
+
+以下は以前の整理記録。2026-10-14には追加でNSE／ReactingFlowの57文書を
+内容別サブフォルダへ移動し、リンク・manifest・生成時の案内を更新した。
+ファイル名と本文の仕様は維持し、移動前の場所に重複コピーは残していない。
 
 ファイル削除・機能削除は行っていない。ルートのMarkdown手順書は`guides/`、
 Word版は`office/`、Excel資料は`tables/`へ移動した。Markdownの関連リンクを更新した。

@@ -25,7 +25,7 @@ ReactingFlowは専用CMake・実行入口を使用し、現段階で共通環境
 4. 確定した実装だけをローカル`FrameWork`とGitへ反映する。
 
 NSEの最短手順、プロファイル、直接ビルドは
-[`NSE/docs/NSE_BUILD_AND_RUN.md`](NSE/docs/NSE_BUILD_AND_RUN.md)を参照してください。
+[`NSE/docs/usage/NSE_BUILD_AND_RUN.md`](NSE/docs/usage/NSE_BUILD_AND_RUN.md)を参照してください。
 
 ## 原則
 

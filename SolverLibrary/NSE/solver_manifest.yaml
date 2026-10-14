@@ -151,30 +151,42 @@ components:
 
   runtime_tools:
     files:
-      - docs/NSE_NONUNIFORM_GRID.md
-      - docs/NSE_NONUNIFORM_POSTPROCESS.md
+      - docs/README.md
+      - docs/history/DEVELOPMENT_HISTORY.md
+      - docs/legacy-multicomponent/NSE_MULTICOMPONENT_CUDA.md
+      - docs/legacy-multicomponent/NSE_MULTICOMPONENT_GEOMETRY.md
+      - docs/legacy-multicomponent/NSE_MULTICOMPONENT_PARALLEL.md
+      - docs/legacy-multicomponent/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md
+      - docs/legacy-multicomponent/NSE_MULTICOMPONENT_ROADMAP.md
+      - docs/numerics/NSE_BOUNDARY_CONDITIONS.md
+      - docs/numerics/NSE_POSITIVITY.md
+      - docs/parallel/NSE_CUDA_AWARE_MPI.md
+      - docs/physics/NSE_FORCING_TARGET.md
+      - docs/usage/NSE_RESTART.md
+      - docs/numerics/NSE_NONUNIFORM_GRID.md
+      - docs/postprocess/NSE_NONUNIFORM_POSTPROCESS.md
       - examples/nonuniform_tgv.case.yaml
       - tools/slf_to_paraview_merged_cropghost.py
       - tools/nse_turbulence_statistics.py
       - tools/nse_shock_analysis.py
-      - docs/NSE_SHOCK_ANALYSIS.md
+      - docs/postprocess/NSE_SHOCK_ANALYSIS.md
       - tools/slf_fft.py
-      - docs/NSE_SLF_FFT.md
+      - docs/postprocess/NSE_SLF_FFT.md
       - tools/nse_prepare_imported_turbulence.py
-      - docs/NSE_SOLVER_SPECIFICATION.md
-      - docs/NSE_BUILD_AND_RUN.md
-      - docs/NSE_CUDA.md
-      - docs/NSE_CUFFTMP.md
-      - docs/NSE_FORCING.md
-      - docs/NSE_FLUCTUATING_HYDRODYNAMICS.md
-      - docs/NSE_HIT_DISTRIBUTED_FFT.md
-      - docs/NSE_MODULE_DESIGN.md
-      - docs/NSE_WENO5Z_ROE.md
-      - docs/NSE_HYBRID_FLUX.md
-      - docs/NSE_TURBULENCE_STATISTICS.md
-      - docs/NSE_IMPORTED_TURBULENCE.md
-      - docs/NSE_SHOCK_TURBULENCE_INTERACTION.md
-      - docs/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md
+      - docs/overview/NSE_SOLVER_SPECIFICATION.md
+      - docs/usage/NSE_BUILD_AND_RUN.md
+      - docs/parallel/NSE_CUDA.md
+      - docs/parallel/NSE_CUFFTMP.md
+      - docs/physics/NSE_FORCING.md
+      - docs/physics/NSE_FLUCTUATING_HYDRODYNAMICS.md
+      - docs/physics/NSE_HIT_DISTRIBUTED_FFT.md
+      - docs/overview/NSE_MODULE_DESIGN.md
+      - docs/numerics/NSE_WENO5Z_ROE.md
+      - docs/numerics/NSE_HYBRID_FLUX.md
+      - docs/postprocess/NSE_TURBULENCE_STATISTICS.md
+      - docs/physics/NSE_IMPORTED_TURBULENCE.md
+      - docs/physics/NSE_SHOCK_TURBULENCE_INTERACTION.md
+      - docs/physics/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md
 
   cuda_backend:
     cmake_role: library

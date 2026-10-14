@@ -2,7 +2,7 @@
 
 多成分Stage 8には`cpu_openmp_reactive`と`cpu_mpi_reactive_pencil`を追加した。
 後者はy・z方向のペンシル分割とOpenMP併用を提供する。
-[設定・実行手順](../../SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_PARALLEL.md)を参照。
+[設定・実行手順](../../SolverLibrary/NSE/docs/legacy-multicomponent/NSE_MULTICOMPONENT_PARALLEL.md)を参照。
 
 > Windows（PowerShell）とLinux（bash）のコマンド対応は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。本書のGit/CMakeオプションは、OS固有のパスを除いて両環境で共通です。
 

@@ -154,7 +154,7 @@ test -f ./SolverLibrary/GPE/gp3d/CMakeLists.txt && echo "GPE: OK"
 
 - `外部実行環境_生成・ビルド・実行手順書.md`
 - `ScriptLibrary/BuildSolver/README.md`
-- `SolverLibrary/NSE/docs/NSE_BUILD_AND_RUN.md`
+- `SolverLibrary/NSE/docs/usage/NSE_BUILD_AND_RUN.md`
 - `SolverLibrary/GPE/gp3d/README.md`
 
 ## 6. 開発参加者: forkしてクローンする（推奨）

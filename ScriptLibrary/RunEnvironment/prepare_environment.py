@@ -853,7 +853,7 @@ The default stride is 1 (larger strides are rejected), and missing or inconsiste
 rank files are rejected. Statistics use physical-cell-volume weights and also
 report solver-weighted conserved integrals. Spectral quantities are NaN.
 `--task all` skips uniform FFT for mapped SLF; explicit `--task fft` is rejected.
-See `SolverLibrary/NSE/docs/NSE_NONUNIFORM_POSTPROCESS.md`.
+See `SolverLibrary/NSE/docs/postprocess/NSE_NONUNIFORM_POSTPROCESS.md`.
 
 ## NSE turbulence statistics
 

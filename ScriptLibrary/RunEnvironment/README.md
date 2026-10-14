@@ -4,15 +4,15 @@
 必要なケースだけ`config/fluctuating_hydrodynamics.yaml`を生成する。
 揺らぎ用ケースは通常NSEテンプレートを継承し、HIT・forcingなどの設定欄を保持する。
 `case_templates/nse_fluctuating.yaml`は生成時の差分定義で、生成後は自己完結した通常のcase.yamlになる。
-詳細は[揺らぎと既存機能の関係](../../SolverLibrary/NSE/docs/NSE_FLUCTUATING_HYDRODYNAMICS.md)を参照。
+詳細は[揺らぎと既存機能の関係](../../SolverLibrary/NSE/docs/physics/NSE_FLUCTUATING_HYDRODYNAMICS.md)を参照。
 CPU MPI/OpenMPおよびGPU常駐CUDA／MPI＋CUDA・全周期境界・固定dtに対応し、非周期境界は未対応。
 CUDA用設計書は`environment.nse_fluctuating.cuda.yaml`。`parallel.use_mpi: true`でMPI＋CUDAを選択する。
 有効時には専用の揺動散逸整合輸送演算子を使う（通常の六次精度粘性ではない）。
-物理量の設定と精度上の制約は[LLNS仕様書](../../SolverLibrary/NSE/docs/NSE_FLUCTUATING_HYDRODYNAMICS.md)を参照。
+物理量の設定と精度上の制約は[LLNS仕様書](../../SolverLibrary/NSE/docs/physics/NSE_FLUCTUATING_HYDRODYNAMICS.md)を参照。
 
 Stage 8の多成分MPIペンシル/OpenMP環境は`environment.nse_multicomponent.parallel.yaml`、
 OpenMP単独は`environment.nse_multicomponent.openmp.yaml`を使用する。
-設定とWindows/Linux手順は[多成分並列計算](../../SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_PARALLEL.md)を参照。
+設定とWindows/Linux手順は[多成分並列計算](../../SolverLibrary/NSE/docs/legacy-multicomponent/NSE_MULTICOMPONENT_PARALLEL.md)を参照。
 
 ケース設定の分割形式、従来形式との互換性、`resolved_case.yaml`については
 [`CASE_CONFIGURATION.md`](CASE_CONFIGURATION.md)を参照してください。新しい多成分ケースは
@@ -67,7 +67,7 @@ Stage 7の反応衝撃波管と面別物理境界には
 途中スナップショットと積分履歴を設定します。solver profileは
 `cpu_serial_reactive_boundaries`です。現在はCPU逐次、直交等間隔格子、一次Rusanov流束、
 Strang分割に限定されます。境界と出力の詳細は
-[`../../SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md`](../../SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md)
+[`../../SolverLibrary/NSE/docs/legacy-multicomponent/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md`](../../SolverLibrary/NSE/docs/legacy-multicomponent/NSE_MULTICOMPONENT_REACTIVE_BOUNDARIES.md)
 を参照してください。
 
 > OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通のパス、Python、CMake、MPIの対応表は[`../../docs/WINDOWS_LINUX_COMMANDS.md`](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
@@ -94,7 +94,7 @@ numerics:
 
 ## NSE CUDA（単一GPU／MPI＋マルチGPU）
 
-単成分NSEでは[CUDA-aware MPIによるGPU直接通信](../../SolverLibrary/NSE/docs/NSE_CUDA_AWARE_MPI.md)も選択できる。
+単成分NSEでは[CUDA-aware MPIによるGPU直接通信](../../SolverLibrary/NSE/docs/parallel/NSE_CUDA_AWARE_MPI.md)も選択できる。
 生成後のビルド設計書で`NSE_ENABLE_CUDA_AWARE_MPI: true`を追加し、実行時に
 `NSE_CUDA_MPI_TRANSPORT=device`を指定する。CUDA対応Open MPIが必要で、MS-MPIでは従来のstaged経路を使用する。
 
@@ -387,7 +387,7 @@ python tools/postprocess_case.py --task fft --fft-field p --steps 0:1000:100
 `--fft-output`、`--fft-window hann`、`--fft-keep-mean`も指定できます。
 既存FFT出力を置換する場合だけ`--fft-overwrite`を指定します。
 FFTは既定latestで、可視化用の`--fields`や`--stride`は適用しません。
-詳しくは[FFT手順書](../../SolverLibrary/NSE/docs/NSE_SLF_FFT.md)を参照してください。
+詳しくは[FFT手順書](../../SolverLibrary/NSE/docs/postprocess/NSE_SLF_FFT.md)を参照してください。
 
 ParaView変換・乱流統計・FFTの3処理を続けて実行する場合は次の形です。
 
@@ -661,14 +661,14 @@ flow:
 周期反復します。`periodic_embed`は`x_start`から`x_length`の区間内だけ周期反復し、
 外側を背景場にします。CPU/CUDA別のコピー可能なPowerShell手順、格子互換条件、
 正常終了の確認方法は
-[`NSE_IMPORTED_TURBULENCE.md`](../../SolverLibrary/NSE/docs/NSE_IMPORTED_TURBULENCE.md)
+[`NSE_IMPORTED_TURBULENCE.md`](../../SolverLibrary/NSE/docs/physics/NSE_IMPORTED_TURBULENCE.md)
 を参照してください。
 
 CPU/MPI/OpenMP、単一GPU CUDA、MPI＋CUDAの各版で、各物理面を`periodic`、
 `non_reflecting`、`reflective`から選べます。無反射面には`reference_state`を指定し、
 `boundary.reference_states`に密度、速度、圧力を定義します。鏡像面は基準状態を持たず、
 法線運動量だけを反転する自由滑り・断熱条件です。詳細は
-[`NSE_BOUNDARY_CONDITIONS.md`](../../SolverLibrary/NSE/docs/NSE_BOUNDARY_CONDITIONS.md)
+[`NSE_BOUNDARY_CONDITIONS.md`](../../SolverLibrary/NSE/docs/numerics/NSE_BOUNDARY_CONDITIONS.md)
 を参照してください。
 
 Forcingも流れ場と同様に`type`で選択し、方式固有の設定を同名のブロックへ
@@ -780,7 +780,7 @@ python "$tool\prepare_environment.py" $design `
 保存乱流の外側へ平面衝撃波を配置し、衝撃波背後状態をDirichlet境界から供給する
 NSEケースは`flow.type: shock_turbulence_interaction`で生成できます。設計書の完全な
 YAML例、衝撃波前後状態の定義、配置制約、実行手順は
-[`NSE_SHOCK_TURBULENCE_INTERACTION.md`](../../SolverLibrary/NSE/docs/NSE_SHOCK_TURBULENCE_INTERACTION.md)
+[`NSE_SHOCK_TURBULENCE_INTERACTION.md`](../../SolverLibrary/NSE/docs/physics/NSE_SHOCK_TURBULENCE_INTERACTION.md)
 を参照してください。`case.yaml`変更後は`python .\tools\run_case.py --prepare`を再実行します。
 
 ## NSEの有限高圧室–衝撃波–乱流干渉
@@ -788,11 +788,11 @@ YAML例、衝撃波前後状態の定義、配置制約、実行手順は
 鏡像閉端を持つ有限高圧室から衝撃波と膨張波を発生させ、局所乱流へ入射させる場合は
 `flow.type: shock_tube_turbulence_interaction`を使用します。高圧・低圧状態、隔膜位置、
 境界条件、実行手順は
-[`NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md`](../../SolverLibrary/NSE/docs/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md)
+[`NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md`](../../SolverLibrary/NSE/docs/physics/NSE_SHOCK_TUBE_TURBULENCE_INTERACTION.md)
 を参照してください。
 Stage 9の平面ノズルは `environment.nse_multicomponent.nozzle.yaml` を使用します。
 Stage 10のGPU常駐反応流は `environment.nse_multicomponent.cuda.yaml` を使用します。
 単一GPU／MPIペンシルの指定とWindows/Linux手順は
-[CUDA手順書](../../SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_CUDA.md) を参照してください。
+[CUDA手順書](../../SolverLibrary/NSE/docs/legacy-multicomponent/NSE_MULTICOMPONENT_CUDA.md) を参照してください。
 形状は `config/geometry.yaml` に分離されます。
-手順と制約は [一般座標手順書](../../SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_GEOMETRY.md) を参照してください。
+手順と制約は [一般座標手順書](../../SolverLibrary/NSE/docs/legacy-multicomponent/NSE_MULTICOMPONENT_GEOMETRY.md) を参照してください。

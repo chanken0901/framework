@@ -1,14 +1,14 @@
 # ReactingFlow：独立反応流ライブラリ
 
 詳細反応機構を扱う独立Fortranライブラリです。単成分NSEの任意拡張とは分けて開発しています。
-[用途別資料一覧](docs/README.md)と[残作業・判定基準](docs/R4_REMAINING.md)を入口にしてください。
+[用途別資料一覧](docs/README.md)と[残作業・判定基準](docs/development/R4_REMAINING.md)を入口にしてください。
 
 - 1D反応Euler、輸送、MUSCL、反応器、CJ/ZND参照計算などを実装しています。
 - 2D反応Euler・格子・初期条件の入口も追加済みですが、実行・物理検証は保留の項目があります。
 - **R4は未完了です。6 µs反応波試験も定常波保持の基準には未達です。**
 - 旧NSE多成分系列との自動切替や、既存環境の移行は行いません。
 
-日付順の追加記録は[開発履歴](docs/DEVELOPMENT_HISTORY.md)へ分離しました。
+日付順の追加記録は[開発履歴](docs/development/DEVELOPMENT_HISTORY.md)へ分離しました。
 以下の各機能の説明は、その機能の検証範囲と併せて参照してください。
 
 状態：**R1〜R3、R4aの1次元反応Euler、R4bの定係数輸送、R4cのMUSCL、R4dの再試行、R4eの種別定係数拡散をFortranで実装済み。R4全体は進行中。**
@@ -43,7 +43,7 @@ R1の外部入力は別の`import_cantera`を使用する。対応範囲は下�
 
 ## 実行・検証
 
-通常の計算は[Fortran版のビルド・実行手順](docs/REACTORS.md)を使用する。
+通常の計算は[Fortran版のビルド・実行手順](docs/physics/REACTORS.md)を使用する。
 以下は入力構造の検査のみ。以前のPython版は`reference/python/`へ移し、
 Fortran計算時には呼び出さない。旧`run_reactor.py`は比較専用の
 `run_reference_reactor.py`へ名称変更した。
@@ -68,53 +68,53 @@ python3 -m unittest discover -s SolverLibrary/ReactingFlow/tests
 既存のケースは従来の`nse_multicomponent`で実行する。
 新ライブラリの実行用manifestは、CFD入口を移植してから登録する。
 
-詳細は[移行順序](docs/MIGRATION.md)を参照。
+詳細は[移行順序](docs/development/MIGRATION.md)を参照。
 
 ## R1：外部入力・熱力学
 
-[R1仕様と実行手順](docs/THERMODYNAMICS.md)を追加した。
+[R1仕様と実行手順](docs/physics/THERMODYNAMICS.md)を追加した。
 NASA-7/9物性、混合気体EOS、温度復元、基準量変換はFortran実装。
 以前のPython版はオフライン照合用に残す。
 入力アダプターと照合テストにのみCantera 3.2.0を使用する。
-R2の反応速度評価は[速度仕様](docs/KINETICS.md)を参照。
-R3の定容・定圧断熱反応器、保存検査、着火比較は[反応器仕様と実行手順](docs/REACTORS.md)を参照。
-R4a〜eの[1次元流体・詳細反応・輸送・MUSCL・再試行の仕様と手順](docs/FLOW1D.md)を追加した。
+R2の反応速度評価は[速度仕様](docs/physics/KINETICS.md)を参照。
+R3の定容・定圧断熱反応器、保存検査、着火比較は[反応器仕様と実行手順](docs/physics/REACTORS.md)を参照。
+R4a〜eの[1次元流体・詳細反応・輸送・MUSCL・再試行の仕様と手順](docs/flow/FLOW1D.md)を追加した。
 温度・組成依存のテーブル輸送は実装済み（上記手順参照）。多次元・ノズル、
 長時間デトネーション検証、MPI・GPUは独立ライブラリでは未完了。
 > R4f update: fixed-state (Dirichlet) boundaries are implemented in the Fortran 1D solver,
-> including conservative convective and transport boundary fluxes. See [FLOW1D](docs/FLOW1D.md).
+> including conservative convective and transport boundary fluxes. See [FLOW1D](docs/flow/FLOW1D.md).
 > R4 remains in progress; nonreflecting boundaries, molecular transport and detonation validation remain.
 
 > R4g update: optional common-exponent power-law temperature scaling for transport is implemented.
 > Constant models remain available. This is a simplified model, not molecular mixture transport.
-> See [FLOW1D](docs/FLOW1D.md) and `examples/flow1d_h2_power_law.in`.
+> See [FLOW1D](docs/flow/FLOW1D.md) and `examples/flow1d_h2_power_law.in`.
 
 > R4h update: species Sutherland viscosity with Wilke mixture viscosity is available.
 > This adds composition-dependent shear viscosity, not a full molecular transport package.
-> Parameters are supplied explicitly; see [FLOW1D](docs/FLOW1D.md) and `examples/flow1d_h2_wilke.in`.
+> Parameters are supplied explicitly; see [FLOW1D](docs/flow/FLOW1D.md) and `examples/flow1d_h2_wilke.in`.
 
 > R4i update: optional original-Eucken species conductivity with WMS mixing, NASA7/9 heat capacity,
-> and conservative interval-based timestep bounds. See [FLOW1D](docs/FLOW1D.md).
+> and conservative interval-based timestep bounds. See [FLOW1D](docs/flow/FLOW1D.md).
 > This remains approximate transport, not validated detailed molecular heat/mass transport.
 
 > R4j: named-species transport files, SI mass checks and input-relative paths are supported.
-> See [remaining work](docs/R4_REMAINING.md) for R4 and subsequent R5-R7 scope.
+> See [remaining work](docs/development/R4_REMAINING.md) for R4 and subsequent R5-R7 scope.
 
 > R4k: composition-dependent mixture-averaged diffusion from prescribed constant binary coefficients.
-> See [input, equations and limitations](docs/MIXTURE_DIFFUSION.md). Detailed temperature/pressure-dependent
+> See [input, equations and limitations](docs/physics/MIXTURE_DIFFUSION.md). Detailed temperature/pressure-dependent
 > binary transport properties and full multicomponent diffusion remain future work.
 
 > R4l: named-species binary diffusion files are supported, with molar-mass checks and complete pair validation.
-> See [format and example](docs/MIXTURE_DIFFUSION.md) and `examples/flow1d_h2_binary_file.in`.
+> See [format and example](docs/physics/MIXTURE_DIFFUSION.md) and `examples/flow1d_h2_binary_file.in`.
 
 > R4m: optional binary diffusion T-power/p scaling, independent of viscosity and conductivity.
-> See [parameters and limitations](docs/MIXTURE_DIFFUSION.md). This is not a collision-integral model.
+> See [parameters and limitations](docs/physics/MIXTURE_DIFFUSION.md). This is not a collision-integral model.
 
 > R4n: named binary diffusion temperature tables, log interpolation and inverse-pressure correction.
 > Out-of-range temperatures are rejected. See the same diffusion guide for the file format.
 
 > R4o: recoverable cell-chemistry failures now reject the complete split step and halve dt.
-> See [retry scope and limits](docs/CHEMISTRY_RETRY.md). RHS/domain errors remain fatal.
+> See [retry scope and limits](docs/numerics/CHEMISTRY_RETRY.md). RHS/domain errors remain fatal.
 
 > R4 consolidation 1: local acoustic characteristic outlet and acoustic/conservation tests.
-> See [scope, limitations and example](docs/CHARACTERISTIC_OUTLET.md). R4 is not complete.
+> See [scope, limitations and example](docs/flow/CHARACTERISTIC_OUTLET.md). R4 is not complete.

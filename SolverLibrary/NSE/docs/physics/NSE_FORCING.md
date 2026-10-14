@@ -1,0 +1,106 @@
+# 統計的定常乱流のForcing
+
+負圧対策と外力を含む更新前の時間刻み検査は
+[`NSE_POSITIVITY.md`](../numerics/NSE_POSITIVITY.md)を参照。
+
+> Windows（PowerShell）とLinux（bash）のコマンド対応は[`../../../docs/WINDOWS_LINUX_COMMANDS.md`](../../../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。
+
+## 実装範囲
+
+Petersen and Livescu (2010) の線形Forcingを実装している。密度重み付き速度
+`w_i = sqrt(rho) u_i`をFFTし、波数空間のヘルムホルツ分解でソレノイダル成分と
+ダイラテーショナル成分へ分ける。
+
+Forcingは各SSPRK3段の運動量RHSへ加算される。論文の内部エネルギー補償
+`f_e = -f_i u_i`に対応して、保存全エネルギーのRHSへ直接のForcingは加えない。
+
+| 実行方式 | ヘルムホルツ分解 | 状態 |
+|---|---|---|
+| CPU + MPI/OpenMP | 2DECOMP&FFT + FFTW3 | 実装・動作確認済み |
+| 単一GPU | cuFFT | 実装・動作確認済み |
+| MPI + CUDA | cuFFTMp | 実装済み（LinuxマルチGPU環境で実機検証が必要） |
+
+CPU版はroot集約を行わず、既存のx-pencil分割と2DECOMPの転置を使う。単一GPU版は
+速度場、スペクトル、射影、逆FFT、RHS加算をGPU上で処理し、係数を求めるスカラー
+だけをホストへ転送する。
+
+MPI＋CUDA版もroot集約を行わない。局所状態とFFT記述子をGPU上に保持し、
+Helmholtz射影後の分母と圧力膨張相関だけを`MPI_Allreduce`する。詳細は
+[`NSE_CUFFTMP.md`](../parallel/NSE_CUFFTMP.md)を参照する。
+
+## case.yaml
+
+`case.yaml`へ次を追加する。
+
+```yaml
+forcing:
+  type: petersen_livescu
+  petersen_livescu:
+    spectrum: low_wavenumber
+    fft_backend: auto
+    k_cutoff: 2.5
+    target_dissipation: 0.1
+    dilatational_ratio: 0.0
+    denominator_floor: 1.0e-14
+    max_coefficient: 0.0
+    report_interval: 100
+```
+
+| 指定子 | 値・意味 |
+|---|---|
+| `type` | `none`または`petersen_livescu` |
+| `petersen_livescu.spectrum` | `full_spectrum`または`low_wavenumber` |
+| `petersen_livescu.fft_backend` | 通常は`auto`。明示時は`2decomp_fftw`または`cufft` |
+| `petersen_livescu.k_cutoff` | `low_wavenumber`で保持する物理波数。条件は`abs(k) < k_cutoff` |
+| `petersen_livescu.target_dissipation` | ソレノイダルとダイラテーショナルを合わせた目標注入率 |
+| `petersen_livescu.dilatational_ratio` | 目標値`epsilon_d / epsilon_s` |
+| `petersen_livescu.denominator_floor` | 係数計算でゼロ割を防ぐ下限 |
+| `petersen_livescu.max_coefficient` | 係数の絶対値上限。`0`は制限なし |
+| `petersen_livescu.report_interval` | Forcing評価回数ごとの診断間隔。`0`は非表示 |
+
+`scheme`は既存caseとの後方互換用エイリアスとしてのみ残している。新しい
+case設計では`type`を使用する。
+
+目標注入率は`dilatational_ratio=r`から次のように分ける。
+
+```text
+epsilon_s = target_dissipation / (1 + r)
+epsilon_d = target_dissipation - epsilon_s
+```
+
+圧力膨張相関は`PD=<p div(u)>`として6次中心差分で評価し、係数は次式で計算する。
+
+```text
+c_s = epsilon_s / <w_s . w>
+c_d = (epsilon_d - PD) / <w_d . w>
+```
+
+`full_spectrum`では分母がそれぞれ`2 K_s`、`2 K_d`に一致する。
+
+## プロファイル
+
+environment設計書ではMPI/CUDAの使用有無だけを選ぶ。生成環境には互換profileが
+同梱され、`forcing.type: petersen_livescu`を検出した`run_case.py`が、CPUでは
+`cpu_mpi_2decomp_fftw`、単一GPUでは`cuda_single`を自動選択する。
+`solver.profile`を重複指定する必要はない。
+
+Windowsでは`python .\tools\run_case.py --prepare`、Linuxでは
+`python3 ./tools/run_case.py --prepare`で`input.dat`へ展開される。MPIプロセス数と
+OpenMPスレッド数は従来どおり`case.yaml`または実行時オプションで指定する。
+
+## cuFFTMp実装
+
+`cuda_mpi_cufftmp`ではGPU常駐、root集約禁止、3成分分散FFT、局所スペクトル
+射影、係数の全ランク縮約、局所RHS加算を実装している。現在のWindows開発機には
+cuFFTMp/NVSHMEMがないため、ここでは契約・構文と既存バックエンドの回帰を検証し、
+分散FFTの実機検証はLinuxマルチGPU計算機で行う。
+
+## 診断出力
+
+`# forcing`行には次を出力する。
+
+```text
+評価回数 c_s c_d 分母_s 分母_d PD epsilon_s epsilon_d
+```
+
+CPUとGPUの同一小規模ケースでは、この値が丸め誤差の範囲で一致することを確認する。
