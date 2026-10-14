@@ -1868,8 +1868,8 @@ def _validate_nonuniform_nse(common: dict[str, Any], nse: dict[str, Any]) -> Non
         raise CaseInputError("Nonuniform restart requires SLF with grid metadata")
     if common.get("output_format", "slf") not in {"slf", "vtr"}:
         raise CaseInputError("Nonuniform output requires SLF or VTR")
-    if nse.get("fh_enabled", False) or nse.get("forcing_scheme", "none") != "none":
-        raise CaseInputError("Nonuniform forcing and fluctuating hydrodynamics are not supported yet")
+    if nse.get("forcing_scheme", "none") != "none":
+        raise CaseInputError("Nonuniform forcing is not supported")
     scheme = nse.get("convective_scheme", "keep6")
     if scheme not in {"keep2", "keep6", "weno5z_roe", "hybrid"}:
         raise CaseInputError("Nonuniform production supports KEEP2, KEEP6, WENO5Z_ROE or KEEP2/WENO HYBRID")
@@ -1878,7 +1878,7 @@ def _validate_nonuniform_nse(common: dict[str, Any], nse: dict[str, Any]) -> Non
         raise CaseInputError("Nonuniform HYBRID requires smooth_scheme: KEEP2/KEEP6 and shock_scheme: WENO5Z_ROE")
     if nse.get("viscous_scheme", "none") not in {"none", "fv2", "central6"}:
         raise CaseInputError("Unsupported nonuniform viscous scheme")
-    if nse.get("viscous_scheme") == "central6" and not (scheme == "keep6" or
+    if nse.get("viscous_scheme") == "central6" and not nse.get("fh_enabled", False) and not (scheme == "keep6" or
             (scheme == "hybrid" and nse.get("hybrid_smooth_scheme", "keep6") == "keep6")):
         raise CaseInputError("Mapped CENTRAL6 requires KEEP6 or KEEP6/WENO HYBRID")
 

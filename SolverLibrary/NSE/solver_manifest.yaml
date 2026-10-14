@@ -212,6 +212,7 @@ components:
       - tests/test_cuda_positivity.f90
       - tests/input_positivity_retry.dat
       - tests/test_fluctuating.f90
+      - tests/test_mapped_fluctuating.f90
       - tests/input_fluctuating.dat
       - tests/test_imported_turbulence.f90
       - tests/test_cuda_keep.f90
@@ -245,6 +246,7 @@ components:
       - tests/check_cuda_mpi_transport_reject.cmake
       - tests/test_cuda_fluctuating_mpi.f90
       - tests/test_fluctuating.f90
+      - tests/test_mapped_fluctuating.f90
       - tests/input_fluctuating.dat
       - tests/test_hit_parameter_resolution.f90
       - tests/test_imported_turbulence.f90
@@ -262,6 +264,8 @@ components:
       - tests/test_nse_positivity.f90
       - tests/input_positivity_retry.dat
       - tests/test_fluctuating.f90
+      - tests/test_mapped_fluctuating.f90
+      - tests/check_mapped_fh.py
       - tests/input_fluctuating.dat
       - tests/test_imported_turbulence.f90
       - tests/test_prepare_imported_turbulence.py

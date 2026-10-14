@@ -107,7 +107,7 @@ class GridMappingTests(unittest.TestCase):
             with self.subTest(updates=updates), self.assertRaises(CaseInputError):
                 _validate_nonuniform_nse(common | updates, dict(convective_scheme="keep2"))
         for updates in (dict(convective_scheme="unsupported"), dict(viscous_scheme="central6"),
-                        dict(fh_enabled=True), dict(forcing_scheme="petersen_livescu"),
+                        dict(forcing_scheme="petersen_livescu"),
                         dict(convective_scheme="hybrid", hybrid_smooth_scheme="unsupported")):
             with self.subTest(updates=updates), self.assertRaises(CaseInputError):
                 _validate_nonuniform_nse(common, dict(convective_scheme="keep2") | updates)

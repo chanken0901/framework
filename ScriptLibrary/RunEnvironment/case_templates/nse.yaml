@@ -152,7 +152,7 @@ grid:
   # HYBRID smooth=KEEP2 or KEEP6, shock=WENO5Z_ROE. KEEP6 paths use mapped integration weights.
   # Viscosity FV2/NONE; CENTRAL6 for KEEP6 or KEEP6 hybrid (six ghosts set automatically).
   # Output slf supports restart with grid metadata; vtr remains a visualization option.
-  # FH/forcing are not yet supported on stretched grids.
+  # FH supports stretched grids with all-periodic boundaries; forcing is unsupported.
   # Omit mapping for the existing uniform calculation.
   # mapping:
   #   type: sinh

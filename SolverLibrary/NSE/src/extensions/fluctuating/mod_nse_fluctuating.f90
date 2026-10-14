@@ -1,4 +1,4 @@
-! Optional LLNS baseline. D+ gradients and -D+^T divergences form a matched
+! Optional LLNS baseline. Gradients and weighted-adjoint divergences form a matched
 ! dissipative/noise pair. This changes transport ONLY when explicitly enabled.
 module mod_nse_fluctuating
   use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
@@ -6,11 +6,27 @@ module mod_nse_fluctuating
   use mod_common_config, only: simulation_config
   use mod_model_config, only: nse_config
   use mod_fh_random, only: fh_normal
+  use mod_grid_fvm, only: axis_x,axis_y,axis_z
   implicit none
   private
-  public :: validate_fh, add_fh_transport, add_fh_noise, fh_sample
+  public :: validate_fh, add_fh_transport, add_fh_noise, fh_sample,fh_spacing
   real(dp), allocatable, save :: flux(:,:,:,:,:)
 contains
+  pure function fh_spacing(i,j,k,sim) result(h)
+    integer, intent(in) :: i,j,k
+    type(simulation_config), intent(in) :: sim
+    real(dp) :: h(3)
+    integer :: ii,jj,kk
+    h=[sim%dx,sim%dy,sim%dz]
+    if(sim%grid_mapping=='uniform') return
+    ii=modulo(i-1,sim%nx)+1;jj=modulo(j-1,sim%ny)+1;kk=modulo(k-1,sim%nz)+1
+    if(sim%mapped_keep6) then
+      h=[axis_x%keep6_metric(ii),axis_y%keep6_metric(jj),axis_z%keep6_metric(kk)]
+    else
+      h=[axis_x%width(ii),axis_y%width(jj),axis_z%width(kk)]
+    end if
+  end function
+
   subroutine validate_fh(sim,nse)
     type(simulation_config), intent(in) :: sim
     type(nse_config), intent(in) :: nse
@@ -56,7 +72,7 @@ contains
     type(nse_config), intent(in) :: nse
     real(dp), intent(in) :: t,dt
     real(dp), intent(out) :: stress(3,3),heat(3)
-    real(dp) :: z(9),a,b,mu,kappa
+    real(dp) :: z(9),a,b,mu,kappa,h(3)
     integer :: c,ii,jj,kk
     ii=modulo(i-1,sim%nx); jj=modulo(j-1,sim%ny); kk=modulo(k-1,sim%nz)
     do c=1,9
@@ -64,7 +80,8 @@ contains
     end do
     mu=1.0_dp/nse%reynolds
     kappa=mu*nse%gamma/((nse%gamma-1)*nse%prandtl)
-    a=sqrt(2*nse%fh_boltzmann_number*mu*t/(sim%dx*sim%dy*sim%dz*dt))
+    h=fh_spacing(i,j,k,sim)
+    a=sqrt(2*nse%fh_boltzmann_number*mu*t/(product(h)*dt))
     b=sum(z(1:3))/3
     stress=0
     do c=1,3
@@ -73,7 +90,7 @@ contains
     stress(1,2)=a*z(4); stress(2,1)=stress(1,2)
     stress(1,3)=a*z(5); stress(3,1)=stress(1,3)
     stress(2,3)=a*z(6); stress(3,2)=stress(2,3)
-    heat=sqrt(2*nse%fh_boltzmann_number*kappa*t*t/(sim%dx*sim%dy*sim%dz*dt))*z(7:9)
+    heat=sqrt(2*nse%fh_boltzmann_number*kappa*t*t/(product(h)*dt))*z(7:9)
   end subroutine
 
   subroutine add_fh_transport(q,rhs,sim,nse,js,je,ks,ke)
@@ -117,6 +134,7 @@ contains
     do k=ks-1,ke+1
       do j=js-1,je+1
         do i=0,sim%nx+1
+          h=fh_spacing(i,j,k,sim)
           call primitive(q(i,j,k,:),nse%gamma,u,t)
           do d=1,3
             offset=0; offset(d)=1; p=[i,j,k]+offset
@@ -146,6 +164,7 @@ contains
     do k=ks,ke
       do j=js,je
         do i=1,sim%nx
+          h=fh_spacing(i,j,k,sim)
           rhs(i,j,k,2:5)=rhs(i,j,k,2:5)+(flux(i,j,k,:,1)-flux(i-1,j,k,:,1))/h(1) &
             +(flux(i,j,k,:,2)-flux(i,j-1,k,:,2))/h(2)+(flux(i,j,k,:,3)-flux(i,j,k-1,:,3))/h(3)
         end do

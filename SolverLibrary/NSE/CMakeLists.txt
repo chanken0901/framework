@@ -1150,6 +1150,14 @@ if(BUILD_TESTING)
   add_test(NAME nse_grid_axis_reject_duplicate COMMAND $<TARGET_FILE:nse_test_grid_axis> duplicate)
   set_tests_properties(nse_grid_axis_reject_duplicate PROPERTIES WILL_FAIL TRUE)
   add_executable(nse_test_fluctuating tests/test_fluctuating.f90)
+  add_executable(nse_test_mapped_fluctuating tests/test_mapped_fluctuating.f90)
+  target_link_libraries(nse_test_mapped_fluctuating PRIVATE NSE::core)
+  set_target_properties(nse_test_mapped_fluctuating PROPERTIES
+    Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/mapped_fh_test"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+  nse_apply_fortran_options(nse_test_mapped_fluctuating)
+  add_test(NAME nse_mapped_fluctuating COMMAND $<TARGET_FILE:nse_test_mapped_fluctuating>)
+  set_tests_properties(nse_mapped_fluctuating PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=2" TIMEOUT 120)
   target_link_libraries(nse_test_fluctuating PRIVATE NSE::core)
   set_target_properties(nse_test_fluctuating PROPERTIES
     Fortran_MODULE_DIRECTORY "${NSE_MODULE_DIR}/fh_test"

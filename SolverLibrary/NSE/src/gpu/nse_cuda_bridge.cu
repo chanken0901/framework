@@ -3331,7 +3331,7 @@ NSE_CUDA_EXPORT int nse_cuda_upload_axis(void* handle, int axis, int n,
   const bool mapped_norm=c->convective_scheme==convective_keep6 ||
       (c->convective_scheme==convective_hybrid && c->hybrid_smooth_scheme==convective_keep6);
   if(c->grid.nghost<3) {set_error("mapped geometry requires three ghost cells");return 1;}
-  if(c->viscous_enabled && !c->viscous_fv2) {
+  if(c->viscous_enabled && !c->viscous_fv2 && !c->fh_enabled) {
     if(!mapped_norm || c->grid.nghost<6) {
       set_error("mapped CENTRAL6 requires KEEP6 norm and six ghosts");return 1;
     }

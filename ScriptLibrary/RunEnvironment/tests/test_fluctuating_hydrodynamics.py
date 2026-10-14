@@ -30,6 +30,23 @@ class FluctuatingTests(unittest.TestCase):
             self.assertIn("fh_enabled = .true.", text)
             self.assertIn("fh_seed = 42", text)
 
+    def test_mapped_convection_profiles_and_boundary_guard(self):
+        for profile in ('cpu_mpi', 'cuda_single', 'cuda_mpi'):
+            for scheme in ('keep2', 'keep6', 'weno5z_roe', 'hybrid'):
+                case = copy.deepcopy(self.case)
+                case['grid']['mapping'] = {'type':'sinh', 'strength':[.4, 1., 1.5]}
+                case['numerics']['convective_scheme'] = scheme
+                text = render_nse(case, self.manifest, profile)
+                self.assertIn('grid_mapping = "sinh"', text)
+                self.assertIn('fh_enabled = .true.', text)
+        case['numerics'].pop('boundary_condition', None)
+        case['physics']['nse'].pop('boundary_condition', None)
+        case['boundary'] = {'faces': {'x_min': {'type':'reflective'}, 'x_max': {'type':'reflective'}}}
+        for face in ('y_min', 'y_max', 'z_min', 'z_max'):
+            case['boundary']['faces'][face] = {'type': 'periodic'}
+        with self.assertRaisesRegex(CaseInputError, 'periodic'):
+            render_nse(case, self.manifest, 'cpu_mpi')
+
     def test_disabled_and_legacy(self):
         del self.case["physics"]["fluctuating_hydrodynamics"]
         self.assertNotIn("fh_enabled", render_nse(self.case, self.manifest, "cpu_mpi"))

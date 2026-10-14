@@ -629,8 +629,7 @@ contains
     end if
     if (trim(sim%output_format)/='vtr'.and.trim(sim%output_format)/='slf') &
       error stop 'Nonuniform output requires SLF or VTR'
-    if (nse%fh_enabled.or.trim(nse%forcing_scheme)/='none') &
-      error stop 'Nonuniform forcing and fluctuating hydrodynamics are not supported yet'
+    if (trim(nse%forcing_scheme)/='none') error stop 'Nonuniform forcing is not supported'
     select case(trim(nse%convective_scheme))
     case('keep2','keep6','weno5z_roe')
     case('hybrid')
@@ -643,8 +642,9 @@ contains
     if (trim(nse%viscous_scheme)/='none'.and.trim(nse%viscous_scheme)/='fv2'.and. &
         trim(nse%viscous_scheme)/='central6') error stop 'Unsupported nonuniform viscosity'
     if(trim(nse%viscous_scheme)=='central6') then
-      if(.not.sim%mapped_keep6) error stop 'Mapped CENTRAL6 requires KEEP6 or KEEP6/WENO hybrid'
-      sim%nghost=max(6,sim%nghost)
+      if(.not.sim%mapped_keep6.and..not.nse%fh_enabled) &
+        error stop 'Mapped CENTRAL6 requires KEEP6 or KEEP6/WENO hybrid'
+      if(sim%mapped_keep6.or..not.nse%fh_enabled) sim%nghost=max(6,sim%nghost)
     end if
     do f=1,6
       select case(trim(nse%boundary_face_type(f)))

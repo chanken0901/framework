@@ -1,11 +1,11 @@
-# 単成分NSE：Landau–Lifshitz揺らぎ拡張（初版）
+# 単成分NSE：Landau–Lifshitz揺らぎ拡張
 
 ## 対応範囲
 
 単成分理想気体・一定比熱比・一定粘性／熱伝導・体積粘性ゼロのLLNS拡張。
 反応や化学種は不要。無効時は従来NSEの演算経路を維持する。
 
-- 対応：直交一様格子、全周期境界、CPU MPI/OpenMP、CUDA／MPI+CUDA、固定／CFL可変時間刻み。
+- 対応：直交一様格子・方向分離sinh不等間隔格子、全周期境界、CPU MPI/OpenMP、CUDA／MPI+CUDA、固定／CFL可変時間刻み。
 - 未対応：非周期境界、一般座標、多成分・反応流への揺らぎ追加。
 - 有効時は粘性・熱伝導を専用の前進勾配／随伴発散演算子に置換する。
   **通常の六次精度粘性演算子へ単に乱数を加える仕様ではない**。
@@ -151,10 +151,51 @@ config:
 case.yamlにはCENTRAL6、SSPRK3、正のReとPr、全周期境界を指定する。
 対流は`numerics.convective_scheme`で`keep2`、`keep6`、`weno5z_roe`、`hybrid`から選択する。
 固定刻みでは`time.use_fixed_dt: true`と正の`time.dt`を指定する。
-可変刻みでは`time.use_fixed_dt: false`と`numerics.cfl`を指定する。
+可変刻みでは`time.use_fixed_dt: false`と`time.cfl`を指定する。
 無効化または拡張参照の省略で従来NSEへ戻る。
 `enabled: true, boltzmann_number: 0`は専用輸送のまま雑音をゼロにする比較用であり、
 拡張無効時のCENTRAL6計算とは異なる。
+
+## 不等間隔格子（2026-10-13）
+
+上記の拡張参照・設定を維持し、case.yamlの既存grid節に次を追加する。
+初期条件は`uniform_flow`または`taylor_green`。全6面を周期にし、
+`viscous_scheme: central6`を指定する（実際の輸送は専用随伴対に置換）。
+
+```yaml
+grid:
+  mapping:
+    type: sinh
+    strength: [0.4, 1.0, 1.5]
+```
+
+既存grid節の格子数・領域長は残す。KEEP2、KEEP6、WENO5Z＋Roe、
+KEEP2/KEEP6のHYBRID、固定／CFL可変刻みを使用可能。
+不等間隔HIT・乱流取り込み・forcing、非周期境界は今回の対象外。
+噴流入口／無反射境界と熱浴の揺らぎは未実装であり、TNTI実用条件の検証完了ではない。
+
+各方向の重みをh_d、対角積分重みをW=h_x*h_y*h_zとする。
+KEEP6およびKEEP6をsmooth側に指定したHYBRIDではh_d=D6(x_d)、
+その他は物理セル幅を用いる。したがってKEEP6のWは物理セル体積そのものではない。
+周期境界で次の重み付き随伴対を使用する。
+
+```text
+G_d f_i = (f_(i+1) - f_i) / h_d(i)
+D_d F_i = (F_i - F_(i-1)) / h_d(i)
+D = -W^(-1) G^T W
+stress amplitude = sqrt(2 beta mu theta / (W dt))
+heat amplitude   = sqrt(2 beta kappa theta^2 / (W dt))
+```
+
+輸送・雑音の両方を同じ重みで離散化し、周期領域のsum(W Q)を保存する。
+上の一様格子でのFDT式は、非一様格子では重み付き内積に読み替える。
+KEEP6対流を使っても揺らぎ輸送が六次精度になるわけではない。
+GPUでは常駐している格子幅・metricを参照し、この拡張による全配列のCPU往復は追加しない。
+
+SLF再スタートでは全体stepを引き継ぎ、seed・beta・輸送／対流・格子・時間刻み設定を
+元計算と一致させる。SLFを指定するだけで拡張設定が自動継承されるわけではない。
+CPU出力からCPU/CUDA/MPI/MPI＋CUDAへの継続を短時間試験で確認した。
+長時間平衡分布、強い格子伸長、非線形非平衡統計は別途収束試験が必要。
 
 ## WindowsとLinuxの実行手順
 
@@ -199,6 +240,20 @@ MPI有効時はMPIライブラリも用意する。生成後の`run_case.py`の�
 GPUの選択・MPI起動設定は[NSEビルド手順](NSE_BUILD_AND_RUN.md)も参照する。
 
 ## テスト
+
+`nse_mapped_fluctuating`はセル幅／KEEP6 metricの両方について、重み付き保存則と
+線形化した運動量・熱の散逸／雑音共分散を検証する。
+`tests/check_mapped_fh.py`は5対流構成×2刻み方式×4実行構成の短時間比較・
+CPU保存SLFからの再スタート（計80実行）を行う。Pythonは試験ドライバのみで、
+流体演算は既存のFortran/CUDAソルバーで実行する。
+FrameWork直下からの例（Linuxではpython3および実際の実行ファイル名に変更）：
+
+```text
+python SolverLibrary/NSE/tests/check_mapped_fh.py --cpu build/nse-positivity-cpu/bin/solver.exe --cuda build/nse-positivity-cuda/bin/nse_cuda.exe --mpi build/nse-positivity-mpi/bin/solver.exe --mpi-cuda build/nse-positivity-mpi-cuda/bin/nse_mpi_cuda.exe --work-dir build
+```
+
+MPI起動コマンドがPATHにない場合は`--mpiexec`に絶対パスを渡す。
+4rankを1GPUで共有した開発試験であり、複数物理GPUやCUDA-aware直接通信の実機検証とは区別する。
 
 `nse_fluctuating`は乱数既知解、平均・共分散・応力対称性・トレース、周期保存、
 分割再現性、dtスケーリング、無効時不変性、線形化した運動量／熱の離散FDTを検証。

@@ -433,6 +433,11 @@ contains
       nse%forcing_denominator_floor, nse%forcing_max_coefficient, &
       nse%hybrid_sensor_onset, nse%hybrid_sensor_full)
     call require_success(status, "initialize NSE CUDA context")
+    if(nse%fh_enabled) then
+      status=c_nse_cuda_configure_fh(context%handle,nse%fh_boltzmann_number, &
+        int(nse%fh_seed,c_int),int(sim%step,c_int))
+      call require_success(status,"configure resident Landau-Lifshitz extension")
+    end if
     if(sim%grid_mapping=='sinh') then
       call pack_axis_geometry(axis_x,0,sim%nx,centers,widths,coefficients)
       status=c_upload_axis(context%handle,0_c_int,int(sim%nx,c_int),centers,widths,coefficients,sim%x_max-sim%x_min)
@@ -443,11 +448,6 @@ contains
       call pack_axis_geometry(axis_z,cuda_global_z_start,cuda_nz,centers,widths,coefficients)
       status=c_upload_axis(context%handle,2_c_int,int(cuda_nz,c_int),centers,widths,coefficients,sim%z_max-sim%z_min)
       call require_success(status,'upload resident z geometry')
-    end if
-    if(nse%fh_enabled) then
-      status=c_nse_cuda_configure_fh(context%handle,nse%fh_boltzmann_number, &
-        int(nse%fh_seed,c_int),int(sim%step,c_int))
-      call require_success(status,"configure resident Landau-Lifshitz extension")
     end if
   end subroutine nse_gpu_initialize
 
