@@ -2,6 +2,9 @@
 
 ## 普段参照する手順書
 
+- [ライブラリ構成・保存場所の整理方針](development/REPOSITORY_LAYOUT.md)
+- [NSE用途別資料一覧](../SolverLibrary/NSE/docs/README.md)
+- [ReactingFlow用途別資料一覧](../SolverLibrary/ReactingFlow/docs/README.md)
 - [学生向け導入・Git開発](guides/学生向け_FrameWork導入・Git開発手順書.md)
 - [Git運用](guides/GIT運用マニュアル.md)
 - [実行環境の生成・ビルド・実行](guides/外部実行環境_生成・ビルド・実行手順書.md)

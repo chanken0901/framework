@@ -1,41 +1,15 @@
 # ReactingFlow：独立反応流ライブラリ
 
-2026-10-02追加：[2D非一様初期条件](docs/INITIAL2D.md)。
-衝撃波管用split、局所領域box、任意分布profileと初期場書出しを実装。実行検証は保留中。
+詳細反応機構を扱う独立Fortranライブラリです。単成分NSEの任意拡張とは分けて開発しています。
+[用途別資料一覧](docs/README.md)と[残作業・判定基準](docs/R4_REMAINING.md)を入口にしてください。
 
-2026-10-02追加：[2D反応Euler実行入口](docs/FLOW2D.md)を追加。
-時間積分・反応分割・境界・CSV出力を接続。ビルドのみ確認、実行テストは保留。
-以下の格子追加時点の記録と異なり時間発展は実装されたが、分子輸送・高次化・物理検証は未完了。
+- 1D反応Euler、輸送、MUSCL、反応器、CJ/ZND参照計算などを実装しています。
+- 2D反応Euler・格子・初期条件の入口も追加済みですが、実行・物理検証は保留の項目があります。
+- **R4は未完了です。6 µs反応波試験も定常波保持の基準には未達です。**
+- 旧NSE多成分系列との自動切替や、既存環境の移行は行いません。
 
-2026-10-02追加：[2D構造格子・ノズル生成](docs/GRID2D.md)をFortranに実装。
-`rf_mesh2d` で壁面座標から可視化用格子を出力する。流体時間発展は未接続、実行検証は保留中。
-
-2026-10-02：[多次元有限体積基盤](docs/FINITE_VOLUME.md)の先行実装を追加。
-任意方向面流束・すべり壁・静止メッシュ残差を提供する。実行検証は保留中で、
-多次元反応流・ノズルの実行ソルバーはまだ未完成。既存1Dは変更しない。
-
-2026-10-01：CFDの[試行段の範囲違反回復](docs/OPERATOR_RECOVERY.md)と
-[旧NSE実コードとの非反応／一段反応比較](docs/LEGACY_COMPARISON.md)を追加。
-[6 µs反応波検証](docs/ACOUSTIC_RETURN_VALIDATION.md)は定常波保持の基準に未達。
-短時間合格とは区別し、R4全体は未完了としている。
-
-定常分布の移流・反応釣合いを調べる[Fortran離散残差診断](docs/FLOW_BALANCE.md)を追加。
-化学種MUSCLを修正し、1.0 µsの過駆動波試験は512セルで合格。
-
-追加検証：[1.0 µsの過駆動反応波・格子比較と成果物保存](docs/EXTENDED_WAVE_VALIDATION.md)。
-同一格子幅での[下流境界距離比較](docs/BOUNDARY_DISTANCE_VALIDATION.md)も明示的に実行できる。
-
-長時間反応波検証用の任意出力：[波面位置・速度履歴](docs/WAVE_HISTORY.md)（Fortran、1D）。
-
-反応流入境界・任意初期分布・CFD反応波比較：[入力と検証範囲](docs/REACTIVE_BOUNDARIES.md)。
-CFD反応波の[格子・時間・化学誤差の検証結果](docs/CFD_WAVE_VALIDATION.md)：一次精度・MUSCLとも短時間試験合格。MUSCLの物性下限付近の停止は修正済み。
-
-実在機構の輸送データ生成・Fortran評価：[テーブル輸送の手順](docs/TABULATED_TRANSPORT.md)。
-
-化学平衡・CJ速度探索とCJ連動ZND：[入力・検証範囲](docs/CJ_REFERENCE.md)。
-指定速度ZNDの従来入力も維持：[基本仕様](docs/ZND_REFERENCE.md)。R4全体は未完了。
-
-凍結組成の衝撃波基準計算を追加：[入力・実行・制限](docs/SHOCK_REFERENCE.md)。CJ/ZNDではない。
+日付順の追加記録は[開発履歴](docs/DEVELOPMENT_HISTORY.md)へ分離しました。
+以下の各機能の説明は、その機能の検証範囲と併せて参照してください。
 
 状態：**R1〜R3、R4aの1次元反応Euler、R4bの定係数輸送、R4cのMUSCL、R4dの再試行、R4eの種別定係数拡散をFortranで実装済み。R4全体は進行中。**
 従来NSEのStage 0〜10とは別の移行段階で管理する。

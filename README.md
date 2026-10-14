@@ -1,6 +1,6 @@
 # FrameWork
 
-NSE（Navier-Stokes equations）およびGPE（Gross-Pitaevskii equation）のソルバー、ケース生成、ビルド、実行環境、後処理をまとめた研究用モノレポです。
+NSE、GPE、および開発中の独立反応流ライブラリReactingFlowと、ケース生成・ビルド・実行・後処理をまとめた研究用モノレポです。
 
 ## 最初に読む文書
 
@@ -21,8 +21,10 @@ NSE（Navier-Stokes equations）およびGPE（Gross-Pitaevskii equation）の�
 ### ソルバー別
 
 - [NSE](SolverLibrary/NSE/README.md)
+- [NSEの用途別資料一覧](SolverLibrary/NSE/docs/README.md)
 - [NSEのビルドと実行](SolverLibrary/NSE/docs/NSE_BUILD_AND_RUN.md)
-- [NSE多成分・反応流拡張](SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_ROADMAP.md)
+- [ReactingFlow：詳細反応機構の独立ライブラリ（開発中）](SolverLibrary/ReactingFlow/README.md)
+- [旧NSE多成分系列：互換・比較用](SolverLibrary/NSE/docs/NSE_MULTICOMPONENT_ROADMAP.md)
 - [GPE](SolverLibrary/GPE/README.md)
 - [GP3D](SolverLibrary/GPE/gp3d/README.md)
 - [共通ビルドランナー](ScriptLibrary/BuildSolver/README.md)
@@ -33,7 +35,7 @@ NSE（Navier-Stokes equations）およびGPE（Gross-Pitaevskii equation）の�
 ```text
 FrameWork/
 ├─ ScriptLibrary/   ケース生成、ビルド、実行環境、補助ツール
-├─ SolverLibrary/   NSE・GPEソルバー、設定、テスト
+├─ SolverLibrary/   NSE・GPE・ReactingFlow、共通資産、設定、テスト
 ├─ docs/            guides（手順書）、office（Word版）、tables（台帳）、開発資料
 └─ build/           ローカル生成物（Git管理外）
 ```

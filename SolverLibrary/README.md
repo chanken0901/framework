@@ -1,6 +1,6 @@
 # SolverLibrary
 
-NSEとGPEの再利用可能なソルバー本体を管理するリポジトリです。ビルド条件は
+FrameWorkモノレポ内でNSE・GPE・ReactingFlowを管理するディレクトリです。NSE/GPEのビルド条件は
 各ソルバーの`solver_manifest.yaml`と`ScriptLibrary/BuildSolver`が管理し、計算ケースは
 `ScriptLibrary/RunEnvironment`から`FrameWork`外の実行環境へ生成します。
 
@@ -10,10 +10,14 @@ NSEとGPEの再利用可能なソルバー本体を管理するリポジトリ�
 |---|---|---|
 | `NSE` | 圧縮性Navier-Stokesソルバー | [`NSE/README.md`](NSE/README.md) |
 | `GPE` | Gross-Pitaevskiiソルバー | [`GPE/gp3d/README.md`](GPE/gp3d/README.md) |
-| `ReactingFlow` | 独立反応流ライブラリ（R0基盤・R1熱力学・R2反応速度、CFD未移植） | [状態・移行計画](ReactingFlow/README.md) |
+| `ReactingFlow` | 独立Fortran反応流ライブラリ。1D CFD等を実装、R4検証は未完了。2Dも開発中 | [状態・移行計画](ReactingFlow/README.md) |
 | `Shared` | 複数ソルバーから利用する共通資産 | 各マニフェストから参照 |
 
 ## 標準運用
+
+以下はNSE/GPEおよび旧NSE多成分系列の共通運用です。
+ReactingFlowは専用CMake・実行入口を使用し、現段階で共通環境生成へ自動切替しません。
+各入口と保存場所の区別は[リポジトリ整理方針](../docs/development/REPOSITORY_LAYOUT.md)を参照してください。
 
 1. `SolverLibrary`と`ScriptLibrary`をローカル`FrameWork`で編集する。
 2. `ScriptLibrary/RunEnvironment/environment.<model>.yaml`から外部実行環境を生成する。
