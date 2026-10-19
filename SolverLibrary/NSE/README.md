@@ -3,7 +3,7 @@
 単成分・5保存変数の圧縮性NSEを扱います。資料は[用途別一覧](docs/README.md)から選んでください。
 
 - 不等間隔格子は本計算・SLF再スタート・後処理に接続済みです。[対応範囲](docs/numerics/NSE_NONUNIFORM_GRID.md)を確認してください。
-- Landau–Lifshitz揺らぎはNSEの任意拡張です。不等間隔にも対応しますが、現在は全周期境界に限ります。[仕様](docs/physics/NSE_FLUCTUATING_HYDRODYNAMICS.md)
+- Landau–Lifshitz揺らぎはNSEの任意拡張です。不等間隔・周期／無反射境界に対応し、無反射面では外部雑音なし／粘性・熱伝導の熱浴モデルを選択できます。音響的な熱平衡の保証とは区別します。[仕様](docs/physics/NSE_FLUCTUATING_HYDRODYNAMICS.md)
 - 詳細反応機構の新規開発先は独立した[ReactingFlow](../ReactingFlow/README.md)です。
 - 既存の多成分Stage 0〜10は互換・比較用として維持しています。下記の多成分profile表はこの旧系列のものです。[旧系列の案内](docs/legacy-multicomponent/NSE_MULTICOMPONENT_ROADMAP.md)
 - Windows／Linuxの操作は[コマンド対応表](../../docs/WINDOWS_LINUX_COMMANDS.md)を参照してください。

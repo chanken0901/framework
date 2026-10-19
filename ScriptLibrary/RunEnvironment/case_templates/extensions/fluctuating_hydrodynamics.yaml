@@ -7,3 +7,13 @@ config:
   # This is NOT the dimensional Boltzmann constant 1.380649e-23.
   boltzmann_number: 1.0e-8
   seed: 13579
+  # Optional per NON_REFLECTING face only. Omitted faces use no_external_noise.
+  # Uses boundary.faces.<face>.reference_state (rho, velocity, pressure).
+  # thermal_reservoir matches viscous/thermal transport, not acoustic damping.
+  # boundary_models:
+  #   x_min: no_external_noise
+  #   x_max: thermal_reservoir
+  #   y_min: thermal_reservoir
+  #   y_max: thermal_reservoir
+  #   z_min: thermal_reservoir
+  #   z_max: thermal_reservoir

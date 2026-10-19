@@ -14,6 +14,9 @@ def main():
     for option in ('cpu', 'cuda', 'mpi', 'mpi-cuda', 'mpiexec'):
         parser.add_argument('--'+option, type=Path, required=option == 'cpu')
     parser.add_argument('--work-dir', type=Path, required=True)
+    parser.add_argument('--boundary-case', choices=('periodic','no_external_noise','thermal_reservoir','mixed'), default='periodic')
+    parser.add_argument('--open-axis', choices=('x','y','z','all'), default='all')
+    parser.add_argument('--uniform', action='store_true')
     args = parser.parse_args()
     mpi_launcher = str(args.mpiexec.resolve()) if args.mpiexec else shutil.which('mpiexec')
     if (args.mpi or args.mpi_cuda) and not mpi_launcher:
@@ -31,6 +34,22 @@ def main():
     text = text.replace('nsteps=20', 'nsteps=4').replace('output_frequency=20', 'output_frequency=2')
     text = text.replace("viscous_scheme='fv2'", "viscous_scheme='central6'")
     text = text.replace('&nse', '&nse\n fh_enabled=.true.,fh_boltzmann_number=1.e-8,fh_seed=13579')
+    if args.uniform:
+        text = text.replace("grid_mapping='sinh', grid_stretch=0.4,1.0,1.5", "grid_mapping='uniform'")
+    if args.boundary_case != 'periodic':
+        faces = ('x_min','x_max','y_min','y_max','z_min','z_max')
+        lines = []
+        modes = []
+        for index, face in enumerate(faces):
+            opened = args.open_axis == 'all' or face.startswith(args.open_axis)
+            lines.append("boundary_%s='%s'" % (face, 'non_reflecting' if opened else 'periodic'))
+            modes.append(int(opened and (args.boundary_case == 'thermal_reservoir' or
+                                        (args.boundary_case == 'mixed' and index % 2 == 1))))
+            if opened:
+                for key, value in (('rho',1),('u',0),('v',0),('w',0),('p',1)):
+                    lines.append('boundary_%s_reference_%s=%s' % (face,key,value))
+        lines.append('fh_boundary_model='+','.join(map(str,modes)))
+        text = text.replace("boundary_condition='periodic'", '\n'.join(lines))
     env = dict(os.environ, OMP_NUM_THREADS='2', NSE_CUDA_DEVICE_POLICY='fixed')
 
     def run(name, cmd, content):

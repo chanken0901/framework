@@ -18,7 +18,7 @@
 
 ## 物理設定・数値計算
 
-- [揺らぎ拡張：周期境界に限定](physics/NSE_FLUCTUATING_HYDRODYNAMICS.md)
+- [揺らぎ拡張：周期／無反射、外部雑音なし／輸送熱浴](physics/NSE_FLUCTUATING_HYDRODYNAMICS.md)
 - [HITと分散FFT](physics/NSE_HIT_DISTRIBUTED_FFT.md)
 - [Forcing](physics/NSE_FORCING.md)／[ターゲットの指定](physics/NSE_FORCING_TARGET.md)
 - [保存乱流の読み込み・配置](physics/NSE_IMPORTED_TURBULENCE.md)

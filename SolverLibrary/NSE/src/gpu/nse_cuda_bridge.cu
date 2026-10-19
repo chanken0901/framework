@@ -108,6 +108,7 @@ struct NseCudaContext {
   bool fh_enabled = false;
   double fh_beta = 0.0;
   int fh_seed = 0, fh_step = 0, fh_begin_step = 0;
+  int fh_boundary_model[6]{};
   double* fh_flux = nullptr;
   double* fh_noise = nullptr;
   bool forcing_enabled = false;
@@ -3384,14 +3385,19 @@ NSE_CUDA_EXPORT int nse_cuda_upload_axis(void* handle, int axis, int n,
   return 0;
 }
 
-NSE_CUDA_EXPORT int nse_cuda_configure_fh(void* handle, double beta, int seed, int step) {
+NSE_CUDA_EXPORT int nse_cuda_configure_fh(void* handle, double beta, int seed, int step, const int* modes) {
   auto* c=static_cast<NseCudaContext*>(handle);
   if(!c || !std::isfinite(beta) || beta<0 || seed<0 || step<0 || c->fh_enabled ||
       !c->viscous_enabled) {
     set_error("invalid LLNS CUDA configuration"); return 1;
   }
-  for(int face=0;face<boundary_face_count;++face) if(c->boundary.type[face]!=0) {
-    set_error("LLNS requires periodic boundaries"); return 1;
+  if(!modes) { set_error("Missing LLNS boundary models"); return 1; }
+  for(int face=0;face<boundary_face_count;++face) {
+    if((c->boundary.type[face]!=boundary_periodic && c->boundary.type[face]!=boundary_non_reflecting) ||
+       modes[face]<0 || modes[face]>1 || (c->boundary.type[face]==boundary_periodic && modes[face]!=0)) {
+      set_error("LLNS requires periodic/non-reflecting faces and valid reservoir modes"); return 1;
+    }
+    c->fh_boundary_model[face]=modes[face];
   }
   if(c->grid.cell_count>std::numeric_limits<std::size_t>::max()/(12*sizeof(double))) {
     set_error("LLNS allocation size overflow"); return 1;

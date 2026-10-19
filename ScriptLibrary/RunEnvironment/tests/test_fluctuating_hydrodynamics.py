@@ -53,6 +53,37 @@ class FluctuatingTests(unittest.TestCase):
         self.case["physics"]["fluctuating_hydrodynamics"] = {"enabled": False}
         self.assertIn("fh_enabled = .false.", render_nse(self.case, self.manifest, "cpu_mpi"))
 
+    def test_open_boundary_models_all_faces_and_profiles(self):
+        faces = ('x_min','x_max','y_min','y_max','z_min','z_max')
+        for axis in ('x','y','z'):
+            for mode in ('no_external_noise','thermal_reservoir'):
+                case = copy.deepcopy(self.case)
+                case['numerics'].pop('boundary_condition', None)
+                case['physics']['nse'].pop('boundary_condition', None)
+                case['grid']['mapping'] = {'type':'sinh','strength':[.4,1.,1.5]}
+                case['boundary'] = {'faces':{}, 'reference_states':{'ambient':{
+                    'density':1.,'pressure':1.,'velocity':[0.,0.,0.]}}}
+                models = {}
+                for face in faces:
+                    case['boundary']['faces'][face] = {'type':'periodic'}
+                    if face.startswith(axis):
+                        case['boundary']['faces'][face] = {'type':'non_reflecting','reference_state':'ambient'}
+                        models[face] = mode
+                case['physics']['fluctuating_hydrodynamics']['boundary_models'] = models
+                for profile in ('cpu_mpi','cuda_single','cuda_mpi'):
+                    rendered = render_nse(case,self.manifest,profile)
+                    self.assertIn('fh_boundary_model = ',rendered)
+                    expected = [int(face.startswith(axis) and mode == 'thermal_reservoir') for face in faces]
+                    self.assertIn('fh_boundary_model = '+', '.join(map(str,expected)),rendered)
+                models[axis+'_min'] = 'typo'
+                with self.assertRaises(CaseInputError):
+                    render_nse(case,self.manifest,'cpu_mpi')
+
+    def test_reservoir_rejects_periodic_faces(self):
+        self.case['physics']['fluctuating_hydrodynamics']['boundary_models'] = {'x_min':'thermal_reservoir'}
+        with self.assertRaisesRegex(CaseInputError,'non_reflecting'):
+            render_nse(self.case,self.manifest,'cpu_mpi')
+
     def test_standard_controls_are_preserved(self):
         from profile_selection import select_case_profile
         case = copy.deepcopy(self.case)

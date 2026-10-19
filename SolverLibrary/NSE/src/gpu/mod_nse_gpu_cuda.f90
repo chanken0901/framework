@@ -75,11 +75,12 @@ module mod_nse_gpu
       integer(c_int), value :: direction,low,high,comm,tag
       integer(c_int) :: status
     end function
-    function c_nse_cuda_configure_fh(handle,beta,seed,step) bind(C,name="nse_cuda_configure_fh") result(status)
+    function c_nse_cuda_configure_fh(handle,beta,seed,step,modes) bind(C,name="nse_cuda_configure_fh") result(status)
       import :: c_ptr,c_int,c_double
       type(c_ptr), value :: handle
       real(c_double), value :: beta
       integer(c_int), value :: seed,step
+      integer(c_int), intent(in) :: modes(6)
       integer(c_int) :: status
     end function
     function c_nse_cuda_set_device(device) &
@@ -435,7 +436,7 @@ contains
     call require_success(status, "initialize NSE CUDA context")
     if(nse%fh_enabled) then
       status=c_nse_cuda_configure_fh(context%handle,nse%fh_boltzmann_number, &
-        int(nse%fh_seed,c_int),int(sim%step,c_int))
+        int(nse%fh_seed,c_int),int(sim%step,c_int),int(nse%fh_boundary_model,c_int))
       call require_success(status,"configure resident Landau-Lifshitz extension")
     end if
     if(sim%grid_mapping=='sinh') then

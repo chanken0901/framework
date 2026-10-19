@@ -5,7 +5,8 @@
 揺らぎ用ケースは通常NSEテンプレートを継承し、HIT・forcingなどの設定欄を保持する。
 `case_templates/nse_fluctuating.yaml`は生成時の差分定義で、生成後は自己完結した通常のcase.yamlになる。
 詳細は[揺らぎと既存機能の関係](../../SolverLibrary/NSE/docs/physics/NSE_FLUCTUATING_HYDRODYNAMICS.md)を参照。
-CPU MPI/OpenMPおよびGPU常駐CUDA／MPI＋CUDA・全周期境界・固定dtに対応し、非周期境界は未対応。
+CPU MPI/OpenMPおよびGPU常駐CUDA／MPI＋CUDA・周期／無反射境界・固定／可変dtに対応。
+無反射面の外部雑音なし／輸送熱浴を拡張YAMLで選ぶ。音響散逸の補償雑音は未実装。
 CUDA用設計書は`environment.nse_fluctuating.cuda.yaml`。`parallel.use_mpi: true`でMPI＋CUDAを選択する。
 有効時には専用の揺動散逸整合輸送演算子を使う（通常の六次精度粘性ではない）。
 物理量の設定と精度上の制約は[LLNS仕様書](../../SolverLibrary/NSE/docs/physics/NSE_FLUCTUATING_HYDRODYNAMICS.md)を参照。

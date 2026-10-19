@@ -12,14 +12,20 @@ module mod_nse_fluctuating
   public :: validate_fh, add_fh_transport, add_fh_noise, fh_sample,fh_spacing
   real(dp), allocatable, save :: flux(:,:,:,:,:)
 contains
-  pure function fh_spacing(i,j,k,sim) result(h)
+  pure function fh_spacing(i,j,k,sim,nse) result(h)
     integer, intent(in) :: i,j,k
     type(simulation_config), intent(in) :: sim
+    type(nse_config), optional, intent(in) :: nse
     real(dp) :: h(3)
     integer :: ii,jj,kk
     h=[sim%dx,sim%dy,sim%dz]
     if(sim%grid_mapping=='uniform') return
     ii=modulo(i-1,sim%nx)+1;jj=modulo(j-1,sim%ny)+1;kk=modulo(k-1,sim%nz)+1
+    if(present(nse)) then
+      if(nse%boundary_face_type(1)/='periodic') ii=i
+      if(nse%boundary_face_type(3)/='periodic') jj=j
+      if(nse%boundary_face_type(5)/='periodic') kk=k
+    end if
     if(sim%mapped_keep6) then
       h=[axis_x%keep6_metric(ii),axis_y%keep6_metric(jj),axis_z%keep6_metric(kk)]
     else
@@ -30,12 +36,26 @@ contains
   subroutine validate_fh(sim,nse)
     type(simulation_config), intent(in) :: sim
     type(nse_config), intent(in) :: nse
+    integer :: face
     if (.not. nse%fh_enabled) return
     if (sim%use_fixed_dt) then
       if (.not. ieee_is_finite(sim%dt) .or. sim%dt<=0) error stop 'FH requires finite positive dt'
     end if
-    if (any(nse%boundary_face_type/='periodic') .or. nse%boundary_condition/='periodic') &
-      error stop 'fluctuating hydrodynamics requires all-periodic boundaries'
+    do face=1,6
+      if(nse%boundary_face_type(face)/='periodic'.and.nse%boundary_face_type(face)/='non_reflecting') &
+        error stop 'FH requires periodic or non_reflecting boundaries'
+      if(nse%fh_boundary_model(face)<0.or.nse%fh_boundary_model(face)>1) error stop 'Invalid FH boundary model'
+      if(nse%boundary_face_type(face)=='periodic'.and.nse%fh_boundary_model(face)/=0) &
+        error stop 'FH reservoir requires non_reflecting face'
+      if(nse%boundary_face_type(face)=='non_reflecting') then
+        if(.not.ieee_is_finite(nse%boundary_reference_rho(face)).or. &
+           .not.ieee_is_finite(nse%boundary_reference_p(face))) error stop 'Invalid FH reservoir state'
+        if(min(nse%boundary_reference_rho(face),nse%boundary_reference_p(face))<=0) &
+          error stop 'FH open boundary requires positive reference density and pressure'
+      end if
+    end do
+    if(nse%boundary_condition/='periodic'.and.all(nse%boundary_face_type=='periodic')) &
+      error stop 'Inconsistent FH face boundary configuration'
     if (nse%nv/=5 .or. sim%nghost<2) error stop 'FH requires five variables and at least two ghosts'
     if (min(sim%nx,sim%ny,sim%nz)<2 .or. min(sim%dx,sim%dy,sim%dz)<=0 .or. &
         .not. all(ieee_is_finite([sim%dx,sim%dy,sim%dz]))) error stop 'FH requires a positive 3D grid'
@@ -75,12 +95,16 @@ contains
     real(dp) :: z(9),a,b,mu,kappa,h(3)
     integer :: c,ii,jj,kk
     ii=modulo(i-1,sim%nx); jj=modulo(j-1,sim%ny); kk=modulo(k-1,sim%nz)
+    mu=1.0_dp/nse%reynolds
+    kappa=mu*nse%gamma/((nse%gamma-1)*nse%prandtl)
+    ! Exterior low-face anchors have independent counters, never periodic aliases.
+    if(i==0.and.nse%boundary_face_type(1)/='periodic') ii=sim%nx
+    if(j==0.and.nse%boundary_face_type(3)/='periodic') jj=sim%ny
+    if(k==0.and.nse%boundary_face_type(5)/='periodic') kk=sim%nz
     do c=1,9
       z(c)=fh_normal(ii,jj,kk,sim%step,nse%fh_seed,c)
     end do
-    mu=1.0_dp/nse%reynolds
-    kappa=mu*nse%gamma/((nse%gamma-1)*nse%prandtl)
-    h=fh_spacing(i,j,k,sim)
+    h=fh_spacing(i,j,k,sim,nse)
     a=sqrt(2*nse%fh_boltzmann_number*mu*t/(product(h)*dt))
     b=sum(z(1:3))/3
     stress=0
@@ -121,7 +145,8 @@ contains
     real(dp), intent(in) :: dt
     real(dp), intent(in) :: q(1-sim%nghost:,js-sim%nghost:,ks-sim%nghost:,:)
     real(dp), intent(inout) :: rhs(1-sim%nghost:,js-sim%nghost:,ks-sim%nghost:,:)
-    integer :: i,j,k,d,offset(3),p(3)
+    integer :: i,j,k,d,offset(3),p(3),idx(3),dims(3),outside,lowface,face
+    logical :: active(3)
     real(dp) :: u(3),up(3),t,tp,h(3),grad(3,3),heat(3),stress(3,3),vel(3,3),mu,kappa,divu
     if (.not. nse%fh_enabled) return
     h=[sim%dx,sim%dy,sim%dz]; mu=1/nse%reynolds
@@ -134,11 +159,40 @@ contains
     do k=ks-1,ke+1
       do j=js-1,je+1
         do i=0,sim%nx+1
-          h=fh_spacing(i,j,k,sim)
-          call primitive(q(i,j,k,:),nse%gamma,u,t)
+          h=fh_spacing(i,j,k,sim,nse)
+          idx=[i,j,k];dims=[sim%nx,sim%ny,sim%nz];outside=0;lowface=0
           do d=1,3
+            if(nse%boundary_face_type(2*d-1)=='periodic') cycle
+            if(idx(d)<1.or.idx(d)>dims(d)) then
+              outside=outside+1
+              if(idx(d)==0) lowface=2*d-1
+            end if
+          end do
+          flux(i,j,k,:,:)=0
+          ! Only interior anchors and a single exterior low-face anchor can
+          ! contribute to the divergence. No artificial corner reservoirs.
+          if(outside>1.or.(outside==1.and.lowface==0)) cycle
+          call primitive(q(i,j,k,:),nse%gamma,u,t)
+          if(lowface>0) then
+            u=nse%boundary_reference_velocity(:,lowface)
+            t=nse%boundary_reference_p(lowface)/nse%boundary_reference_rho(lowface)
+          end if
+          grad=0;heat=0;vel=0;active=.false.
+          do d=1,3
+            if(outside==1.and.lowface/=2*d-1) cycle
+            face=0
+            if(lowface>0) face=lowface
+            if(outside==0.and.idx(d)==dims(d).and.nse%boundary_face_type(2*d)/='periodic') face=2*d
+            if(face>0) then
+              if(nse%fh_boundary_model(face)==0) cycle
+            end if
+            active(d)=.true.
             offset=0; offset(d)=1; p=[i,j,k]+offset
             call primitive(q(p(1),p(2),p(3),:),nse%gamma,up,tp)
+            if(face>0.and.lowface==0) then
+              up=nse%boundary_reference_velocity(:,face)
+              tp=nse%boundary_reference_p(face)/nse%boundary_reference_rho(face)
+            end if
             grad(:,d)=(up-u)/h(d)
             heat(d)=kappa*(tp-t)/h(d)
             vel(:,d)=0.5_dp*(up+u)
@@ -153,6 +207,7 @@ contains
             end do
           end if
           do d=1,3
+            if(.not.active(d)) cycle
             flux(i,j,k,1:3,d)=stress(:,d)
             flux(i,j,k,4,d)=dot_product(vel(:,d),stress(:,d))+heat(d)
           end do
@@ -164,7 +219,7 @@ contains
     do k=ks,ke
       do j=js,je
         do i=1,sim%nx
-          h=fh_spacing(i,j,k,sim)
+          h=fh_spacing(i,j,k,sim,nse)
           rhs(i,j,k,2:5)=rhs(i,j,k,2:5)+(flux(i,j,k,:,1)-flux(i-1,j,k,:,1))/h(1) &
             +(flux(i,j,k,:,2)-flux(i,j-1,k,:,2))/h(2)+(flux(i,j,k,:,3)-flux(i,j,k-1,:,3))/h(3)
         end do

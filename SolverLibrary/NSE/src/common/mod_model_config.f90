@@ -25,6 +25,8 @@ module mod_model_config
     logical :: fh_enabled = .false.
     real(dp) :: fh_boltzmann_number = 0.0_dp
     integer :: fh_seed = 13579
+    ! Per face: 0 = no external stochastic/transport flux, 1 = thermal reservoir.
+    integer :: fh_boundary_model(6) = 0
     integer :: nv = 5
     real(dp) :: gamma = 1.4_dp
     real(dp) :: cfl = 0.5_dp
@@ -233,7 +235,8 @@ contains
     if (cfg%fh_enabled) then
       write(u,'(A,ES16.8)') 'fh_boltzmann_number = ', cfg%fh_boltzmann_number
       write(u,'(A,I0)') 'fh_seed = ', cfg%fh_seed
-      write(u,'(A)') 'FH: forward/adjoint transport, SSPRK3 + Ito kick (weak order 1), periodic CPU/CUDA'
+      write(u,'(A,6I3)') 'fh_boundary_model (xmin,xmax,ymin,ymax,zmin,zmax) = ', cfg%fh_boundary_model
+      write(u,'(A)') 'FH: matched transport, SSPRK3 + Ito kick; open-boundary acoustic equilibrium not guaranteed'
       write(u,'(A)') 'FH: fixed or pre-step CFL dt; stochastic retries disabled'
       if (cfg%convective_scheme=='weno5z_roe' .or. cfg%convective_scheme=='hybrid') &
         write(u,'(A)') 'WARNING: numerical convection dissipation is not balanced by thermal noise'

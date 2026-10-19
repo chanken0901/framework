@@ -157,6 +157,7 @@ contains
     logical :: fh_enabled
     real(dp) :: fh_boltzmann_number
     integer :: fh_seed
+    integer :: fh_boundary_model(6)
     real(dp) :: gamma, cfl, small_rho, small_p, rho0, mach, reynolds, prandtl
     real(dp) :: uniform_state(5)
     real(dp) :: hit_turbulent_mach, hit_turbulent_reynolds
@@ -233,7 +234,7 @@ contains
     character(len=32) :: forcing_scheme, forcing_spectrum, forcing_fft_backend
     integer :: u, ios
     logical :: exists, any_boundary_face, all_boundary_faces
-    namelist /nse/ uniform_state, fh_enabled, fh_boltzmann_number, fh_seed, &
+    namelist /nse/ uniform_state, fh_enabled, fh_boltzmann_number, fh_seed, fh_boundary_model, &
       nv, nghost, gamma, cfl, small_rho, small_p, rho0, mach, &
       reynolds, prandtl, convective_scheme, hybrid_smooth_scheme, &
       hybrid_shock_scheme, hybrid_sensor, hybrid_sensor_onset, &
@@ -301,6 +302,7 @@ contains
     fh_enabled = cfg%fh_enabled
     fh_boltzmann_number = cfg%fh_boltzmann_number
     fh_seed = cfg%fh_seed
+    fh_boundary_model = cfg%fh_boundary_model
     convective_scheme = cfg%convective_scheme
     hybrid_smooth_scheme = cfg%hybrid_smooth_scheme
     hybrid_shock_scheme = cfg%hybrid_shock_scheme
@@ -446,6 +448,7 @@ contains
     cfg%fh_enabled = fh_enabled
     cfg%fh_boltzmann_number = fh_boltzmann_number
     cfg%fh_seed = fh_seed
+    cfg%fh_boundary_model = fh_boundary_model
     cfg%convective_scheme = convective_scheme
     cfg%hybrid_smooth_scheme = hybrid_smooth_scheme
     cfg%hybrid_shock_scheme = hybrid_shock_scheme

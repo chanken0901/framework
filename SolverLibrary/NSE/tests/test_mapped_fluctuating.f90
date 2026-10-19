@@ -11,19 +11,28 @@ program test_mapped_fluctuating
   real(dp) :: q(1-g:n+g,1-g:n+g,1-g:n+g,5),rhs(1-g:n+g,1-g:n+g,1-g:n+g,5)
   real(dp) :: w(n,n,n,3),weight(n,n,n),probe(n,n,n),h(3),x,u(3),work,thermal_work
   real(dp) :: dt,expected,variance,average,projection,tvar,tavg,tp,beta,pi
-  integer :: i,j,k,v,t,mode
+  integer :: i,j,k,v,t,mode,bc
   sim%nx=n;sim%ny=n;sim%nz=n;sim%nghost=g;sim%grid_mapping='sinh'
   sim%grid_stretch=[.4_dp,1._dp,1.5_dp];sim%mapped_keep6=.true.
   call update_derived_config(sim)
-  call build_stretched_grid(sim,1,n,1,n,[.true.,.true.,.true.])
+  call build_stretched_grid(sim,1,n,1,n,[.false.,.false.,.false.])
   nse%fh_enabled=.true.;nse%fh_boltzmann_number=1.e-5_dp;nse%reynolds=100
   nse%viscous_scheme='central6';dt=.001_dp;beta=nse%fh_boltzmann_number;pi=acos(-1._dp)
   do mode=0,1
     sim%mapped_keep6=mode==1
+    do bc=0,4
+    nse%boundary_face_type='periodic';nse%fh_boundary_model=0
+    nse%boundary_reference_rho=1;nse%boundary_reference_p=1;nse%boundary_reference_velocity=0
+    if(bc>0) nse%boundary_face_type='non_reflecting'
+    if(bc==2) nse%fh_boundary_model=1
+    if(bc==3) nse%fh_boundary_model=[0,1,1,0,0,1]
+    if(bc==4) then
+      nse%boundary_face_type(3:6)='periodic';nse%fh_boundary_model(1:2)=1
+    end if
     do k=1,n
       do j=1,n
         do i=1,n
-          h=fh_spacing(i,j,k,sim);weight(i,j,k)=product(h)
+          h=fh_spacing(i,j,k,sim,nse);weight(i,j,k)=product(h)
           x=2*pi*real(i+2*j+3*k,dp)/n
           w(i,j,k,:)=[sin(x),cos(x),sin(x+.7_dp)];probe(i,j,k)=cos(x)
         end do
@@ -38,9 +47,11 @@ program test_mapped_fluctuating
       end do
     end do
     rhs=0;call add_fh_transport(q,rhs,sim,nse,1,n,1,n)
+    if(bc<=1) then
     do v=1,5
       if(abs(sum(weight*rhs(1:n,1:n,1:n,v)))>1.e-11_dp) error stop 'mapped transport conservation'
     end do
+    end if
     work=0
     do v=1,3
       work=work+sum(weight*w(:,:,:,v)*rhs(1:n,1:n,1:n,v+1))
@@ -62,9 +73,11 @@ program test_mapped_fluctuating
     average=0;variance=0;tavg=0;tvar=0
     do t=1,nt
       sim%step=t;rhs=0;call add_fh_noise(q,rhs,dt,sim,nse,1,n,1,n)
+      if(bc<=1) then
       do v=1,5
         if(abs(sum(weight*rhs(1:n,1:n,1:n,v)))>1.e-11_dp) error stop 'mapped noise conservation'
       end do
+      end if
       projection=0
       do v=1,3
         projection=projection+sum(weight*w(:,:,:,v)*rhs(1:n,1:n,1:n,v+1))
@@ -73,9 +86,10 @@ program test_mapped_fluctuating
       average=average+projection;variance=variance+projection**2;tavg=tavg+tp;tvar=tvar+tp**2
     end do
     variance=variance/nt-(average/nt)**2;tvar=tvar/nt-(tavg/nt)**2
-    print *, 'mapped FDT norm, momentum, heat:',mode,variance/expected,tvar/(-2*beta*thermal_work/dt)
+    print *, 'mapped FDT norm, boundary, momentum, heat:',mode,bc,variance/expected,tvar/(-2*beta*thermal_work/dt)
     if(abs(variance/expected-1)>0.12_dp) error stop 'mapped momentum FDT'
     if(abs(tvar/(-2*beta*thermal_work/dt)-1)>0.12_dp) error stop 'mapped thermal FDT'
+    end do
   end do
   print *, 'Mapped fluctuation dissipation tests passed'
 end program

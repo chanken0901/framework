@@ -117,7 +117,7 @@ GPE_KEYS = (
 )
 
 NSE_KEYS = (
-    "fh_enabled", "fh_boltzmann_number", "fh_seed",
+    "fh_enabled", "fh_boltzmann_number", "fh_seed", "fh_boundary_model",
     "nv",
     "nghost",
     "gamma",
@@ -1825,7 +1825,7 @@ def _resolve_nse_fh(case, nse, backend):
     if raw is None:
         return {}
     config = _mapping(raw, label)
-    unknown = set(config) - {"enabled", "model", "boltzmann_number", "seed"}
+    unknown = set(config) - {"enabled", "model", "boltzmann_number", "seed", "boundary_models"}
     if unknown:
         raise CaseInputError(f"unknown {label} keys: {sorted(unknown)}")
     enabled = config.get("enabled", True)
@@ -1839,11 +1839,20 @@ def _resolve_nse_fh(case, nse, backend):
         _positive_float(nested(case, "time.dt"), "time.dt")
     if nse.get("viscous_scheme") != "central6":
         raise CaseInputError("Landau-Lifshitz extension requires CENTRAL6 (matched transport override)")
+    boundary_models = _mapping(config.get("boundary_models", {}), f"{label}.boundary_models")
+    if set(boundary_models) - set(NSE_BOUNDARY_FACES):
+        raise CaseInputError(f"unknown {label}.boundary_models face")
+    modes = []
     for face in NSE_BOUNDARY_FACES:
-        if nse.get(f"boundary_{face}", "periodic") != "periodic":
-            raise CaseInputError("Landau-Lifshitz extension requires periodic boundaries")
-    if nse.get("boundary_condition", "periodic") != "periodic":
-        raise CaseInputError("Landau-Lifshitz extension requires periodic boundaries")
+        kind = nse.get(f"boundary_{face}", nse.get("boundary_condition", "periodic"))
+        if kind not in {"periodic", "non_reflecting"}:
+            raise CaseInputError("Landau-Lifshitz extension requires periodic or non_reflecting boundaries")
+        mode = boundary_models.get(face, "no_external_noise")
+        if mode not in {"no_external_noise", "thermal_reservoir"}:
+            raise CaseInputError(f"invalid {label}.boundary_models.{face}")
+        if face in boundary_models and kind != "non_reflecting":
+            raise CaseInputError(f"{label}.boundary_models.{face} requires non_reflecting")
+        modes.append(int(mode == "thermal_reservoir"))
     _positive_float(nse.get("reynolds"), "physics.nse.reynolds")
     _positive_float(nse.get("prandtl", 0.72), "physics.nse.prandtl")
     beta = config.get("boltzmann_number")
@@ -1853,7 +1862,10 @@ def _resolve_nse_fh(case, nse, backend):
     seed = config.get("seed", 13579)
     if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 2147483647:
         raise CaseInputError(f"{label}.seed must be an integer in [0, 2147483647]")
-    return {"fh_enabled": True, "fh_boltzmann_number": beta, "fh_seed": seed}
+    result = {"fh_enabled": True, "fh_boltzmann_number": beta, "fh_seed": seed}
+    if boundary_models or any(nse.get(f"boundary_{face}", "periodic") != "periodic" for face in NSE_BOUNDARY_FACES):
+        result["fh_boundary_model"] = modes
+    return result
 
 
 def _validate_nonuniform_nse(common: dict[str, Any], nse: dict[str, Any]) -> None:

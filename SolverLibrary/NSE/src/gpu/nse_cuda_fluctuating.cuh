@@ -4,6 +4,8 @@ struct FhView {
   double beta, gamma, mu, kappa, h[3];
   bool mapped_norm;
   int global_ny, global_nz, y_start, z_start, step, seed;
+  BoundaryView boundary;
+  int modes[6];
 };
 
 __device__ inline double fh_spacing_cuda(GridView g,FhView f,int d,int coordinate) {
@@ -44,20 +46,44 @@ __global__ void fh_flux_kernel(const double* q,double* flux,GridView g,FhView f,
       k<g.nghost-1 || k>g.nghost+g.nz) return;
   const std::size_t stride[3]={1,static_cast<std::size_t>(g.nx_total),
       static_cast<std::size_t>(g.nx_total)*g.ny_total};
-  double u[3],t,vel[3][3],grad[3][3],heat[3],s[3][3];
+  double u[3],t,vel[3][3]{},grad[3][3]{},heat[3]{},s[3][3];
   const int xyz[3]={i,j,k};
   double h[3];
   for(int d=0;d<3;++d) h[d]=fh_spacing_cuda(g,f,d,xyz[d]);
-  fh_primitive(q,g,c,f.gamma,u,t);
+  const int idx[3]={i-g.nghost+1,j-g.nghost+f.y_start+1,k-g.nghost+f.z_start+1};
+  const int dims[3]={g.nx,f.global_ny,f.global_nz};
+  int outside=0,lowface=-1;
   for(int d=0;d<3;++d) {
+    if(f.boundary.type[2*d]==boundary_periodic) continue;
+    if(idx[d]<1 || idx[d]>dims[d]) { ++outside; if(idx[d]==0) lowface=2*d; }
+  }
+  for(int v=0;v<12;++v) flux[c+v*g.cell_count]=0;
+  if(outside>1 || (outside==1 && lowface<0)) return;
+  bool active[3]{};
+  fh_primitive(q,g,c,f.gamma,u,t);
+  if(lowface>=0) {
+    for(int v=0;v<3;++v) u[v]=f.boundary.reference[lowface][v+1];
+    t=f.boundary.reference[lowface][4]/f.boundary.reference[lowface][0];
+  }
+  for(int d=0;d<3;++d) {
+    if(outside==1 && lowface!=2*d) continue;
+    int face=lowface;
+    if(outside==0 && idx[d]==dims[d] && f.boundary.type[2*d+1]!=boundary_periodic) face=2*d+1;
+    if(face>=0 && f.modes[face]==0) continue;
+    active[d]=true;
     double up[3],tp; fh_primitive(q,g,c+stride[d],f.gamma,up,tp);
+    if(face>=0 && lowface<0) {
+      for(int v=0;v<3;++v) up[v]=f.boundary.reference[face][v+1];
+      tp=f.boundary.reference[face][4]/f.boundary.reference[face][0];
+    }
     for(int v=0;v<3;++v) { grad[v][d]=(up[v]-u[v])/h[d]; vel[v][d]=0.5*(up[v]+u[v]); }
     heat[d]=f.kappa*(tp-t)/h[d];
   }
   if(noise) {
     double z[9];
-    for(int v=0;v<9;++v) z[v]=fh_normal_cuda(fh_wrap(i-g.nghost,g.nx),
-        fh_wrap(j-g.nghost+f.y_start,f.global_ny),fh_wrap(k-g.nghost+f.z_start,f.global_nz),
+    int rng[3];
+    for(int d=0;d<3;++d) rng[d]=(idx[d]==0 && f.boundary.type[2*d]!=boundary_periodic)?dims[d]:fh_wrap(idx[d]-1,dims[d]);
+    for(int v=0;v<9;++v) z[v]=fh_normal_cuda(rng[0],rng[1],rng[2],
         f.step,f.seed,v+1);
     const double scale=2*f.beta/(h[0]*h[1]*h[2]*dt);
     const double a=sqrt(scale*f.mu*t),mean=(z[0]+z[1]+z[2])/3.0;
@@ -69,6 +95,7 @@ __global__ void fh_flux_kernel(const double* q,double* flux,GridView g,FhView f,
       s[v][d]=f.mu*(grad[v][d]+grad[d][v])-(v==d?2*f.mu*div/3.0:0.0);
   }
   for(int d=0;d<3;++d) {
+    if(!active[d]) continue;
     double energy=heat[d];
     for(int v=0;v<3;++v) { flux[c+(4*d+v)*g.cell_count]=s[v][d]; energy+=vel[v][d]*s[v][d]; }
     flux[c+(4*d+3)*g.cell_count]=energy;
@@ -102,7 +129,8 @@ bool launch_fh(NseCudaContext* c,bool noise,double dt) {
   FhView f{c->fh_beta,c->gamma,1.0/c->reynolds,
       c->gamma/((c->gamma-1)*c->reynolds*c->prandtl),{c->dx,c->dy,c->dz},
       c->convective_scheme==convective_keep6 || (c->convective_scheme==convective_hybrid && c->hybrid_smooth_scheme==convective_keep6),
-      c->global_ny,c->global_nz,c->global_y_start,c->global_z_start,c->fh_step,c->fh_seed};
+      c->global_ny,c->global_nz,c->global_y_start,c->global_z_start,c->fh_step,c->fh_seed,c->boundary,{}};
+  for(int face=0;face<6;++face) f.modes[face]=c->fh_boundary_model[face];
   fh_flux_kernel<<<block_count(c->grid.cell_count),256>>>(c->q,c->fh_flux,c->grid,f,noise,dt);
   if(!check_cuda(cudaGetLastError(),"LLNS stress/heat flux")) return false;
   fh_divergence_kernel<<<block_count(c->physical_count),256>>>(c->fh_flux,noise?c->fh_noise:c->rhs,c->grid,f,noise);

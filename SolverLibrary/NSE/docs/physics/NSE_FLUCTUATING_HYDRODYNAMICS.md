@@ -5,8 +5,9 @@
 単成分理想気体・一定比熱比・一定粘性／熱伝導・体積粘性ゼロのLLNS拡張。
 反応や化学種は不要。無効時は従来NSEの演算経路を維持する。
 
-- 対応：直交一様格子・方向分離sinh不等間隔格子、全周期境界、CPU MPI/OpenMP、CUDA／MPI+CUDA、固定／CFL可変時間刻み。
-- 未対応：非周期境界、一般座標、多成分・反応流への揺らぎ追加。
+- 対応：直交一様格子・方向分離sinh不等間隔格子、周期／無反射境界、CPU MPI/OpenMP、CUDA／MPI+CUDA、固定／CFL可変時間刻み。
+- 未対応：鏡像／固定値境界との揺らぎ、一般座標、多成分・反応流への揺らぎ追加。
+- 無反射面の熱浴は粘性・熱伝導演算に対するもの。特性無反射による音響散逸の補償雑音は未実装。
 - 有効時は粘性・熱伝導を専用の前進勾配／随伴発散演算子に置換する。
   **通常の六次精度粘性演算子へ単に乱数を加える仕様ではない**。
   交差微分を含む輸送全体は空間一次精度（軸方向単独の拡散は二次精度）。
@@ -108,7 +109,8 @@ MPI版は既存のy-z分割と保存変数のhalo交換を使用する。乱数�
 `nse_fluctuating.yaml`は拡張参照とデモ既定値だけを変更する差分定義になった。
 HIT、保存乱流、forcing、境界、hybrid、出力等の設定欄と説明は共通元から継承する。
 欄が存在することと、揺らぎ有効時にその組合せが対応済みであることは区別する。
-全周期境界は現実装の制約。KEEP6・固定dtはデモ既定値であり必須条件ではない。
+当初は全周期境界が制約だったが、2026-10-15に無反射面を追加した。
+KEEP6・固定dtはデモ既定値であり必須条件ではない。
 
 差分定義は`prepare_environment.py`で通常の自己完結型`templates/case_template.yaml`へ展開する。
 元の差分ファイルをSetupCaseへ直接渡さない。生成後のcase編集に継承処理は介在せず、
@@ -148,7 +150,7 @@ config:
   seed: 13579
 ```
 
-case.yamlにはCENTRAL6、SSPRK3、正のReとPr、全周期境界を指定する。
+case.yamlにはCENTRAL6、SSPRK3、正のReとPr、周期または下記の無反射境界を指定する。
 対流は`numerics.convective_scheme`で`keep2`、`keep6`、`weno5z_roe`、`hybrid`から選択する。
 固定刻みでは`time.use_fixed_dt: true`と正の`time.dt`を指定する。
 可変刻みでは`time.use_fixed_dt: false`と`time.cfl`を指定する。
@@ -159,7 +161,7 @@ case.yamlにはCENTRAL6、SSPRK3、正のReとPr、全周期境界を指定す�
 ## 不等間隔格子（2026-10-13）
 
 上記の拡張参照・設定を維持し、case.yamlの既存grid節に次を追加する。
-初期条件は`uniform_flow`または`taylor_green`。全6面を周期にし、
+初期条件は`uniform_flow`または`taylor_green`。境界は周期または下記の無反射にし、
 `viscous_scheme: central6`を指定する（実際の輸送は専用随伴対に置換）。
 
 ```yaml
@@ -171,8 +173,8 @@ grid:
 
 既存grid節の格子数・領域長は残す。KEEP2、KEEP6、WENO5Z＋Roe、
 KEEP2/KEEP6のHYBRID、固定／CFL可変刻みを使用可能。
-不等間隔HIT・乱流取り込み・forcing、非周期境界は今回の対象外。
-噴流入口／無反射境界と熱浴の揺らぎは未実装であり、TNTI実用条件の検証完了ではない。
+不等間隔HIT・乱流取り込み・forcingは対象外。
+無反射境界と輸送熱浴は下記のとおり追加したが、噴流入口分布の追加やTNTI実用条件の検証完了ではない。
 
 各方向の重みをh_d、対角積分重みをW=h_x*h_y*h_zとする。
 KEEP6およびKEEP6をsmooth側に指定したHYBRIDではh_d=D6(x_d)、
@@ -194,8 +196,88 @@ GPUでは常駐している格子幅・metricを参照し、この拡張によ�
 
 SLF再スタートでは全体stepを引き継ぎ、seed・beta・輸送／対流・格子・時間刻み設定を
 元計算と一致させる。SLFを指定するだけで拡張設定が自動継承されるわけではない。
+無反射面ではboundary_modelsとreference_stateも同じ設定を維持する。
 CPU出力からCPU/CUDA/MPI/MPI＋CUDAへの継続を短時間試験で確認した。
 長時間平衡分布、強い格子伸長、非線形非平衡統計は別途収束試験が必要。
+
+## 無反射面と外部の揺らぎ（2026-10-15）
+
+6面を独立に指定する。周期は同一方向の両端をペアにする必要がある。
+同じ方向の両端を無反射にして、片側を外部雑音なし、反対側を熱浴にすることも可能。
+既存の特性緩和型無反射処理は対流・音響に使用し、以下は別途、輸送と雑音の境界閉包を選ぶ。
+
+| boundary_modelsの値 | 粘性・熱伝導と雑音の境界処理 |
+|---|---|
+| `no_external_noise`（省略時） | 境界を横切る決定論的な粘性応力・熱流束と、それに対応するランダム流束をともにゼロにする。領域内部の熱雑音は残る。対流による流出入は止めない |
+| `thermal_reservoir` | reference_stateを固定した外部状態として粘性・熱伝導で結合し、同じ輸送演算に対応するランダム応力・熱流束を加える |
+
+両者で粘性・熱伝導の境界条件自体も異なる。単に境界の乱数だけをON/OFFする比較ではない。
+比較には各モデルでbeta>0とbeta=0の計4条件を用意すると、平均輸送の違いと雑音の寄与を
+分けて調べやすい。beta=0でもenabledはtrueのままとし、専用輸送を維持する。
+外部静止流体はreference_stateの`velocity: [0,0,0]`で設定する。
+熱浴温度は無次元の`theta_ref = pressure / density`から得る。
+以下の圧力・密度は例であり、実際の計算の無次元基準と背景状態に合わせて変更する。
+
+case.yamlの既存boundary節を置き換える例（全6面無反射）：
+
+```yaml
+boundary:
+  reference_states:
+    ambient:
+      density: 1.0
+      velocity: [0.0, 0.0, 0.0]
+      pressure: 0.7142857142857143
+  faces:
+    x_min: {type: non_reflecting, reference_state: ambient}
+    x_max: {type: non_reflecting, reference_state: ambient}
+    y_min: {type: non_reflecting, reference_state: ambient}
+    y_max: {type: non_reflecting, reference_state: ambient}
+    z_min: {type: non_reflecting, reference_state: ambient}
+    z_max: {type: non_reflecting, reference_state: ambient}
+  non_reflecting:
+    formulation: characteristic_relaxation
+    relaxation_strength: 0.1
+    length_scale: auto
+```
+
+config/fluctuating_hydrodynamics.yamlの既存`config`内へ追加する：
+
+```yaml
+  boundary_models:
+    x_min: thermal_reservoir
+    x_max: thermal_reservoir
+    y_min: thermal_reservoir
+    y_max: thermal_reservoir
+    z_min: thermal_reservoir
+    z_max: thermal_reservoir
+```
+
+外部雑音なしの比較では値を`no_external_noise`に切り替える。
+周期面を指定した場合、その面のboundary_modelsは省略する。
+旧numerics.boundary_conditionと面別boundary節を併記しない。
+再スタート時もこの選択・reference_stateを明示的に維持する。SLFからの自動継承はしない。
+input.datでは`fh_boundary_model`の6整数（0/1、xmin,xmax,ymin,ymax,zmin,zmax）に変換される。
+
+### 離散化と保証範囲
+
+内部と境界の同じ勾配・発散対を用いる。外部雑音なしでは境界を横切る勾配の行と
+流束を除去する。熱浴では外部ゴースト位置に固定したreference_stateとの勾配を追加する。
+差分距離はその流束起点のh_dであり、物理面からセル中心までの半幅を使う方式ではない。
+外部low側起点の乱数番号は内部セル・反対側と独立にする。MPI分割面は物理境界と扱わない。
+角では複数方向の外部状態を混合した仮想熱浴を作らず、各面に対応する勾配のみを使う。
+非周期方向の格子幅／metricは鏡映延長された値を使い、周期折返しはしない。
+
+均一温度・静止状態で線形化した粘性・熱伝導について、重み付き随伴関係と雑音共分散を検証する。
+境界熱浴は保存量を領域外と交換するため、領域全体の運動量・エネルギーが一定とは限らない。
+外部雑音なしの場合でも対流流束があるため、全ソルバーの総量は閉鎖系のようには保存されない。
+
+**これは熱平衡を厳密に保つ完全な確率的無反射境界ではない。**
+特性緩和による音響散逸・WENO人工散逸の補償雑音や、入射音響特性の熱浴モデルは未実装。
+したがって、密度・音響を含む開放領域全体の平衡分布や無反射率は保証しない。
+境界距離・緩和係数・格子幅・dtを変えた比較が必要。両モデルを同じ初期状態から比較し、
+境界近傍の違いをTNTIそのものの物理効果と取り違えないこと。
+参考：[開放系の揺らぎと無反射境界](https://journals.aps.org/pre/abstract/10.1103/PhysRevE.78.046708)。
+本実装はこの論文の音響熱浴方式を実装したものではない。
 
 ## WindowsとLinuxの実行手順
 
@@ -243,6 +325,8 @@ GPUの選択・MPI起動設定は[NSEビルド手順](../usage/NSE_BUILD_AND_RUN
 
 `nse_mapped_fluctuating`はセル幅／KEEP6 metricの両方について、重み付き保存則と
 線形化した運動量・熱の散逸／雑音共分散を検証する。
+周期・全6面外部雑音なし・全6面熱浴・面別混在・x熱浴/yz周期を含む。
+保存則の検査は閉じた輸送系に限り、熱浴では領域外との交換を許す。
 `tests/check_mapped_fh.py`は5対流構成×2刻み方式×4実行構成の短時間比較・
 CPU保存SLFからの再スタート（計80実行）を行う。Pythonは試験ドライバのみで、
 流体演算は既存のFortran/CUDAソルバーで実行する。
@@ -253,7 +337,17 @@ python SolverLibrary/NSE/tests/check_mapped_fh.py --cpu build/nse-positivity-cpu
 ```
 
 MPI起動コマンドがPATHにない場合は`--mpiexec`に絶対パスを渡す。
+無反射試験は同コマンドへ`--boundary-case no_external_noise`、
+`--boundary-case thermal_reservoir`または`--boundary-case mixed`を追加する。
+`--open-axis x`（y/zも可）でその方向のみ無反射、他は周期にできる。
+既定の`--open-axis all`は全6面無反射。`--uniform`で等間隔版も試験できる。
 4rankを1GPUで共有した開発試験であり、複数物理GPUやCUDA-aware直接通信の実機検証とは区別する。
+
+2026-10-15検証：不等間隔の全周期、全6面外部雑音なし、全6面混在、x/y/z各方向のみ熱浴、
+等間隔の全6面熱浴の計7条件で、各80実行（計560）の比較・再開が合格。
+各条件は5対流構成×2時間刻み方式×4backend×通常/再開を含む。
+CPU回帰37件、CUDA関連22件、MPI＋CUDA関連4件、FH入力・環境生成14件も合格。
+これは短時間の数値一致と輸送FDTの検証であり、噴流の長時間統計・音響反射率の物理検証ではない。
 
 `nse_fluctuating`は乱数既知解、平均・共分散・応力対称性・トレース、周期保存、
 分割再現性、dtスケーリング、無効時不変性、線形化した運動量／熱の離散FDTを検証。

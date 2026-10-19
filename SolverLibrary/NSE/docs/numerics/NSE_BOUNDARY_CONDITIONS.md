@@ -1,7 +1,13 @@
 # NSE境界条件仕様
 
-更新日: 2026-09-01  
+更新日: 2026-10-15  
 状態: CPU/MPI/OpenMP、単一GPU CUDA、MPI＋CUDA版で実装済み
+
+Landau–Lifshitz揺らぎ有効時も、周期／無反射を6面ごとに指定できる。
+無反射面は外部雑音なし／粘性・熱伝導の熱浴を別途選択する。
+静止外部流体はreference_stateの速度をゼロにする。
+揺らぎ有効時の鏡像・Dirichletは未対応。音響散逸まで含む熱平衡も保証しない。
+詳しくは[揺らぎの境界仕様](../physics/NSE_FLUCTUATING_HYDRODYNAMICS.md)を参照。
 
 ## 1. 目的
 
