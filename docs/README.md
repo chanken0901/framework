@@ -6,6 +6,7 @@ NSE／ReactingFlowの仕様本文は、各ライブラリ内で内容別フォ�
 
 ## 普段参照する手順書
 
+- [コードを自分で拡張する開発手順書](guides/コード拡張_開発手順書.md)
 - [ライブラリ構成・保存場所の整理方針](development/REPOSITORY_LAYOUT.md)
 - [NSE用途別資料一覧](../SolverLibrary/NSE/docs/README.md)
 - [ReactingFlow用途別資料一覧](../SolverLibrary/ReactingFlow/docs/README.md)
