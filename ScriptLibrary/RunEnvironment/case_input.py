@@ -232,6 +232,10 @@ NSE_KEYS = (
     "shock_tube_driven_w",
     "shock_tube_driven_p",
     "forcing_scheme",
+    "forcing_target_velocity_variance",
+    "forcing_feedback_exponent",
+    "forcing_target_integral_reynolds",
+    "forcing_target_integral_length",
     "forcing_spectrum",
     "forcing_fft_backend",
     "forcing_k_cutoff",
@@ -289,6 +293,10 @@ NSE_HIT_SPECTRUM_SCHEMAS: dict[str, dict[str, Any]] = {
 NSE_HIT_SPECTRUM_TYPES = set(NSE_HIT_SPECTRUM_SCHEMAS)
 
 NSE_FORCING_SCHEMAS: dict[str, dict[str, Any]] = {
+    "watanabe2021": {
+        "parameters": ("turbulent_mach_number", "taylor_reynolds_number", "mean_density",
+                       "mean_pressure", "feedback_exponent", "fft_backend", "report_interval"),
+    },
     "petersen_livescu": {
         "parameters": (
             "spectrum",
@@ -1483,7 +1491,7 @@ def _resolve_nse_forcing(case: dict[str, Any], resolved_nse: dict[str, Any] | No
         raise CaseInputError(
             "unknown forcing key(s): "
             f"{', '.join(unknown_root)}; available root keys are "
-            "type and petersen_livescu"
+            "type, petersen_livescu and watanabe2021"
         )
 
     if "type" in forcing and "scheme" in forcing:
@@ -1531,6 +1539,9 @@ def _resolve_nse_forcing(case: dict[str, Any], resolved_nse: dict[str, Any] | No
             f"forcing.type={forcing_type!r} requires the "
             f"forcing.{forcing_type} mapping"
         )
+
+    if forcing_type == "watanabe2021":
+        return _resolve_watanabe_forcing(selected, resolved_nse)
 
     if "target" in selected:
         flat_keys = {"target_mode", "target_dissipation", "target_turbulent_mach_number",
@@ -1611,6 +1622,43 @@ def _resolve_nse_forcing(case: dict[str, Any], resolved_nse: dict[str, Any] | No
         if value not in {None, ""}:
             values[target] = value
     return values
+
+
+def _resolve_watanabe_forcing(selected: dict[str, Any], nse: dict[str, Any] | None) -> dict[str, Any]:
+    """Watanabe/Tanaka/Nagata (2021), Eqs. (8)-(14), in existing solver units."""
+    if nse is None:
+        raise CaseInputError("watanabe2021 requires resolved NSE transport parameters")
+    if int(nse.get("nv", 5)) != 5:
+        raise CaseInputError("watanabe2021 currently supports single-component NSE only")
+    mt = _positive_float(selected.get("turbulent_mach_number"), "turbulent_mach_number")
+    re_lambda = _positive_float(selected.get("taylor_reynolds_number"), "taylor_reynolds_number")
+    re_input = _positive_float(nse.get("reynolds"), "physics.nse.reynolds")
+    gamma = _positive_float(nse.get("gamma", 1.4), "physics.nse.gamma")
+    rho = _positive_float(selected.get("mean_density", nse.get("rho0", 1.0)), "mean_density")
+    pressure = _positive_float(selected.get("mean_pressure", rho/gamma), "mean_pressure")
+    exponent = _positive_float(selected.get("feedback_exponent", 4.0), "feedback_exponent", allow_zero=True)
+    backend = _canonical_selector(str(selected.get("fft_backend", "auto")))
+    if backend not in {"auto", "2decomp_fftw", "cufft", "cufftmp"}:
+        raise CaseInputError("watanabe2021 requires auto, 2decomp_fftw, cufft or cufftmp")
+    interval = selected.get("report_interval", 100)
+    if isinstance(interval, bool) or not isinstance(interval, int) or interval < 0:
+        raise CaseInputError("report_interval must be a non-negative integer")
+    try:
+        # u0 is ONE-component rms; L0 here is u0**3/epsilon, not the HIT spectrum scale.
+        re_l = _positive_float(re_lambda**2/15.0, "derived integral Reynolds number")
+        u0 = mt*math.sqrt(gamma*pressure/(3.0*rho))
+        nu = 1.0/(re_input*rho)
+        length = _positive_float(re_l*nu/u0, "derived integral length")
+        target = _positive_float(rho*u0**3/length, "derived target_dissipation")
+        variance = _positive_float(3.0*u0**2, "derived target_velocity_variance")
+    except (OverflowError, ZeroDivisionError) as exc:
+        raise CaseInputError("watanabe2021 target overflow/underflow") from exc
+    return {"forcing_scheme": "watanabe2021", "forcing_spectrum": "full_spectrum",
+            "forcing_fft_backend": backend, "forcing_target_dissipation": target,
+            "forcing_target_velocity_variance": variance, "forcing_feedback_exponent": exponent,
+            "forcing_target_integral_reynolds": re_l, "forcing_target_integral_length": length,
+            "forcing_dilatational_ratio": 0.0, "forcing_max_coefficient": 0.0,
+            "forcing_report_interval": interval}
 
 
 def _profile_settings(
@@ -2047,6 +2095,11 @@ def render_nse(
         profile_cmake.get("NSE_FORCING_FFT_BACKEND", "none")
     ).strip().lower()
     forcing_scheme = str(nse.get("forcing_scheme", "none"))
+    if forcing_scheme == "watanabe2021":
+        if forcing_backend not in {"2decomp_fftw", "cufft", "cufftmp"}:
+            raise CaseInputError("watanabe2021 requires a forcing FFT profile")
+        if str(nse.get("viscous_scheme", "")).lower() != "central6" or nse.get("fh_enabled", False):
+            raise CaseInputError("watanabe2021 currently requires CENTRAL6 viscosity without fluctuating hydrodynamics")
     requested_forcing_backend = str(nse.get("forcing_fft_backend", "auto"))
     if forcing_scheme != "none":
         face_types = [

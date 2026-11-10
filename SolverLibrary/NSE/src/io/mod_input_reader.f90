@@ -195,6 +195,8 @@ contains
     real(dp) :: shock_tube_driven_v, shock_tube_driven_w
     real(dp) :: shock_tube_driven_p
     real(dp) :: forcing_k_cutoff, forcing_target_dissipation
+    real(dp) :: forcing_target_velocity_variance, forcing_feedback_exponent
+    real(dp) :: forcing_target_integral_reynolds, forcing_target_integral_length
     real(dp) :: forcing_dilatational_ratio, forcing_denominator_floor
     real(dp) :: forcing_max_coefficient
     real(dp) :: hybrid_sensor_onset, hybrid_sensor_full
@@ -290,6 +292,8 @@ contains
       forcing_scheme, &
       forcing_spectrum, forcing_fft_backend, forcing_k_cutoff, &
       forcing_target_dissipation, forcing_dilatational_ratio, &
+      forcing_target_velocity_variance, forcing_feedback_exponent, &
+      forcing_target_integral_reynolds, forcing_target_integral_length, &
       forcing_denominator_floor, forcing_max_coefficient, &
       forcing_report_interval
 
@@ -424,6 +428,10 @@ contains
     forcing_fft_backend = cfg%forcing_fft_backend
     forcing_k_cutoff = cfg%forcing_k_cutoff
     forcing_target_dissipation = cfg%forcing_target_dissipation
+    forcing_target_velocity_variance = cfg%forcing_target_velocity_variance
+    forcing_feedback_exponent = cfg%forcing_feedback_exponent
+    forcing_target_integral_reynolds = cfg%forcing_target_integral_reynolds
+    forcing_target_integral_length = cfg%forcing_target_integral_length
     forcing_dilatational_ratio = cfg%forcing_dilatational_ratio
     forcing_denominator_floor = cfg%forcing_denominator_floor
     forcing_max_coefficient = cfg%forcing_max_coefficient
@@ -586,6 +594,10 @@ contains
     cfg%forcing_fft_backend = forcing_fft_backend
     cfg%forcing_k_cutoff = forcing_k_cutoff
     cfg%forcing_target_dissipation = forcing_target_dissipation
+    cfg%forcing_target_velocity_variance = forcing_target_velocity_variance
+    cfg%forcing_feedback_exponent = forcing_feedback_exponent
+    cfg%forcing_target_integral_reynolds = forcing_target_integral_reynolds
+    cfg%forcing_target_integral_length = forcing_target_integral_length
     cfg%forcing_dilatational_ratio = forcing_dilatational_ratio
     cfg%forcing_denominator_floor = forcing_denominator_floor
     cfg%forcing_max_coefficient = forcing_max_coefficient

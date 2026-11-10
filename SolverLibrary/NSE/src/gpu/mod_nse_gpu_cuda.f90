@@ -55,6 +55,12 @@ module mod_nse_gpu
   public :: validate_nse_gpu_configuration
 
   interface
+    integer(c_int) function c_nse_cuda_configure_watanabe(handle, variance, exponent) &
+        bind(C, name='nse_cuda_configure_watanabe')
+      import :: c_int, c_ptr, c_double
+      type(c_ptr), value :: handle
+      real(c_double), value :: variance, exponent
+    end function
     function c_upload_axis(handle,axis,n,centers,widths,coefficients,domain_length) &
         bind(C,name="nse_cuda_upload_axis") result(status)
       import :: c_ptr,c_int,c_double
@@ -434,6 +440,11 @@ contains
       nse%forcing_denominator_floor, nse%forcing_max_coefficient, &
       nse%hybrid_sensor_onset, nse%hybrid_sensor_full)
     call require_success(status, "initialize NSE CUDA context")
+    if (trim(nse%forcing_scheme) == 'watanabe2021') then
+      status = c_nse_cuda_configure_watanabe(context%handle, nse%forcing_target_velocity_variance, &
+        nse%forcing_feedback_exponent)
+      call require_success(status, "configure Watanabe forcing")
+    end if
     if(nse%fh_enabled) then
       status=c_nse_cuda_configure_fh(context%handle,nse%fh_boltzmann_number, &
         int(nse%fh_seed,c_int),int(sim%step,c_int),int(nse%fh_boundary_model,c_int))

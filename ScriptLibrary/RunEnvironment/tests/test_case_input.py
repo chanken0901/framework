@@ -130,6 +130,40 @@ class GridMappingTests(unittest.TestCase):
 
 
 class ForcingTargetTests(unittest.TestCase):
+    def test_watanabe_conversion_and_render(self):
+        parameters = dict(turbulent_mach_number=0.3, taylor_reynolds_number=100)
+        case = {"forcing": {"type": "watanabe2021", "watanabe2021": parameters}}
+        nse = {"reynolds": 7000, "rho0": 1, "gamma": 1.4}
+        result = _resolve_nse_forcing(case, nse)
+        self.assertAlmostEqual(result["forcing_target_velocity_variance"], 0.09)
+        self.assertAlmostEqual(result["forcing_target_dissipation"], 0.00945)
+        self.assertAlmostEqual(result["forcing_target_integral_reynolds"], 10000/15)
+        self.assertAlmostEqual(result["forcing_target_integral_length"], (10000/15)/(7000*(0.03**0.5)))
+        self.assertEqual(result["forcing_spectrum"], "full_spectrum")
+        self.assertEqual(nse["reynolds"], 7000)
+        template = NseCaseInputTests.case()
+        template["physics"]["nse"]["reynolds_number"] = 7000
+        template["forcing"] = case["forcing"]
+        template["numerics"]["viscous_scheme"] = "central6"
+        template["solver"]["profile"] = "cpu_mpi_2decomp_fftw"
+        rendered = render_nse(template, load_yaml(NSE_MANIFEST), "cpu_mpi_2decomp_fftw")
+        self.assertIn('forcing_scheme = "watanabe2021"', rendered)
+        self.assertIn('forcing_target_velocity_variance = ', rendered)
+        self.assertIn('forcing_feedback_exponent = 4', rendered)
+        template["solver"]["profile"] = "cuda_single"
+        template["solver"].update(use_mpi=False, use_cuda=True, mpi_processes=1)
+        self.assertIn('forcing_scheme = "watanabe2021"',
+                      render_nse(template, load_yaml(NSE_MANIFEST), "cuda_single"))
+
+    def test_watanabe_invalid_parameters(self):
+        for overrides in ({"taylor_reynolds_number": 0}, {"turbulent_mach_number": float("nan")},
+                          {"feedback_exponent": -1}, {"fft_backend": "bad"},
+                          {"dilatational_ratio": 0.1}, {"report_interval": 1.5}):
+            params = dict(turbulent_mach_number=0.3, taylor_reynolds_number=100) | overrides
+            with self.subTest(overrides=overrides), self.assertRaises(CaseInputError):
+                _resolve_nse_forcing({"forcing": {"type": "watanabe2021", "watanabe2021": params}},
+                                     {"reynolds": 7000})
+
     def test_nested_selection(self):
         target = {"type": "direct", "direct": {"dissipation": 0.1},
                   "mach_reynolds": {"turbulent_mach_number": 0.3, "taylor_reynolds_number": 100}}

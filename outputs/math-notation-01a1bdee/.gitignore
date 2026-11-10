@@ -1,0 +1,3 @@
+# Workbook generation dependencies and visual checks are local support files.
+support/
+*.inspect.ndjson

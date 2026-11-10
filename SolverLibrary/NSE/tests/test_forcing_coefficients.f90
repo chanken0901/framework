@@ -1,7 +1,7 @@
 program test_forcing_coefficients
   use mod_precision, only : dp
   use mod_model_config, only : nse_config, init_nse_config
-  use mod_nse_forcing_common, only : compute_forcing_coefficients
+  use mod_nse_forcing_common, only : compute_forcing_coefficients, compute_watanabe_coefficient
   implicit none
 
   type(nse_config) :: nse
@@ -24,6 +24,17 @@ program test_forcing_coefficients
     coefficient_s, coefficient_d, target_s, target_d)
   call assert_close(coefficient_s, 0.25_dp, 'clipped solenoidal coefficient')
   call assert_close(coefficient_d, 0.25_dp, 'clipped dilatational coefficient')
+  nse%forcing_target_velocity_variance = 0.09_dp
+  nse%forcing_feedback_exponent = 4.0_dp
+  call compute_watanabe_coefficient(nse, 0.4_dp, 0.02_dp, 0.09_dp, coefficient_s)
+  call assert_close(coefficient_s, 0.7_dp, 'Watanabe stationary coefficient')
+  call compute_watanabe_coefficient(nse, 0.4_dp, 0.02_dp, 0.18_dp, coefficient_s)
+  call assert_close(coefficient_s, 0.7_dp/16.0_dp, 'Watanabe feedback above target')
+  call compute_watanabe_coefficient(nse, 0.4_dp, 0.02_dp, 0.045_dp, coefficient_s)
+  call assert_close(coefficient_s, 0.7_dp*16.0_dp, 'Watanabe feedback below target')
+  nse%forcing_feedback_exponent = 0.0_dp
+  call compute_watanabe_coefficient(nse, 0.4_dp, 0.02_dp, 0.18_dp, coefficient_s)
+  call assert_close(coefficient_s, 0.7_dp, 'Watanabe no feedback')
   write(*,'(A)') 'Petersen-Livescu forcing coefficient test passed'
 
 contains

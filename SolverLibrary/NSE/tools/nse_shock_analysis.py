@@ -3,6 +3,7 @@
 import argparse
 import csv
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -196,6 +197,33 @@ def write_csv(path, rows):
         writer.writeheader(); writer.writerows(rows)
 
 
+def atomic_text(path, write):
+    """Keep the last published file intact if writing its replacement fails."""
+    temporary = path.with_name(path.name+'.tmp')
+    with temporary.open('w', newline='', encoding='utf-8') as stream:
+        write(stream)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
+def save_progress(output, records, metadata):
+    if records:
+        times = np.array([r['time'] for r in records])
+        positions = np.array([r['shock_x'] for r in records])
+        speeds = np.gradient(positions, times) if len(records)>1 else [float('nan')]
+        rows = [dict(row, shock_speed=float(speed)) for row, speed in zip(records, speeds)]
+        def write_history(stream):
+            writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
+        atomic_text(output/'shock_history.csv', write_history)
+    metadata['completed_steps'] = [r['step'] for r in records]
+    metadata['completed_count'] = len(records)
+    atomic_text(output/'analysis.json', lambda stream: stream.write(
+        json.dumps(metadata, indent=2, allow_nan=False)+'\n'))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('input', type=Path)
@@ -211,6 +239,9 @@ def main(argv=None):
     parser.add_argument('--steps', default='all')
     parser.add_argument('--layout', choices=('auto','global','rank'), default='auto')
     args = parser.parse_args(argv)
+    progress = None
+    records = []
+    current_step = None
     try:
         for limits in (args.search, args.upstream, args.downstream):
             if not np.all(np.isfinite(limits)) or limits[1] <= limits[0]:
@@ -229,8 +260,15 @@ def main(argv=None):
         if not groups:
             raise ValueError('No complete selected SLF steps')
         args.output_dir.mkdir(parents=True, exist_ok=False)
+        progress = dict(status='running',
+            parameters={k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()},
+            selected_steps=sorted(groups),
+            source_files=[str(p.resolve()) for s in sorted(groups) for p in groups[s]],
+            shock_speed_note='Recomputed over completed times; last endpoint is one-sided and may change at the next checkpoint. Single time: NaN.')
+        save_progress(args.output_dir, records, progress)
         records = []; previous = None; geometry = None; previous_surface = None
         for step in sorted(groups):
+            current_step = step
             step_read,time,profile,spacing,pressure = plane_statistics(groups[step],meta,args.gamma,include_pressure=True)
             if records and time <= records[-1]['time']:
                 raise ValueError('Selected times must be strictly increasing')
@@ -252,14 +290,10 @@ def main(argv=None):
             del first
             np.savez_compressed(args.output_dir/f'shock_surface_{step_read:08d}.npz',
                                 step=step_read,time=time,y=y,z=z,**surface)
-            previous = record['shock_x']; records.append(record)
             write_csv(args.output_dir/f'planes_{step_read:08d}.csv',
                 [dict(zip(profile,values)) for values in zip(*profile.values())])
-        times = np.array([r['time'] for r in records]); positions = np.array([r['shock_x'] for r in records])
-        speeds = np.gradient(positions,times) if len(records)>1 else [float('nan')]
-        for row,speed in zip(records,speeds):
-            row['shock_speed'] = float(speed)
-        write_csv(args.output_dir/'shock_history.csv',records)
+            save_progress(args.output_dir, records+[record], progress)
+            previous = record['shock_x']; records.append(record)
         definitions = dict(status='complete', parameters={k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()},
             source_files=[str(p.resolve()) for s in sorted(groups) for p in groups[s]],
             definitions={
@@ -275,12 +309,22 @@ def main(argv=None):
                 'amplification':'Simultaneous downstream/upstream ratio, not matched fluid parcels. Denominator <=1e-30 yields NaN.',
                 'units':'Same coordinates, time and velocity normalization as SLF; no SI conversion.',
                 'limitations':'Uniform Cartesian x-directed single-valued front only. Mean-profile and linewise fronts are separate. Region turbulence statistics still use the mean-profile front, not a surface-fitted window. Search must isolate shock from other waves.'})
-        (args.output_dir/'analysis.json').write_text(json.dumps(definitions,indent=2,allow_nan=False)+'\n',encoding='utf-8')
+        progress.update(definitions)
+        save_progress(args.output_dir, records, progress)
         print('[OK] Shock analysis completed:',args.output_dir)
         return 0
-    except (OSError,ValueError,EOFError) as exc:
+    except (Exception, KeyboardInterrupt) as exc:
+        if progress is not None:
+            progress.update(status='interrupted' if isinstance(exc,KeyboardInterrupt) else 'failed',
+                            failed_step=current_step, error=f'{type(exc).__name__}: {exc}')
+            try:
+                # History was already saved after each completed step; do not risk it here.
+                atomic_text(args.output_dir/'analysis.json', lambda stream: stream.write(
+                    json.dumps(progress,indent=2,allow_nan=False)+'\n'))
+            except OSError as save_error:
+                print('[ERROR] Could not save failure status:',save_error)
         print('[ERROR]',exc)
-        return 1
+        return 130 if isinstance(exc,KeyboardInterrupt) else 1
 
 
 if __name__ == '__main__':

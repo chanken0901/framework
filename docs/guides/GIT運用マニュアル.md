@@ -1,6 +1,6 @@
 # FrameWork Git運用マニュアル
 
-更新日: 2026年9月2日
+更新日: 2026年11月9日
 対象: `chanken0901/framework`の管理者、教員、共同開発者、学生開発者  
 運用形態: ScriptLibrary・SolverLibrary統合モノレポ
 
@@ -9,6 +9,15 @@
 > コマンド表記: GitコマンドはWindowsとLinuxで共通です。ディレクトリ移動、Python、パス表記などOS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。共通の対応表は[`docs/WINDOWS_LINUX_COMMANDS.md`](../WINDOWS_LINUX_COMMANDS.md)を参照してください。
 
 ## 1. 目的
+
+初回の操作は[学生向け手順書](学生向け_FrameWork導入・Git開発手順書.md)、
+端末・ファイル操作は[操作の基本](README.md)から始めてください。
+本書の第11・12・18章は主に管理者向けです。学生が初回にタグ作成やGitHub設定変更を行う必要はありません。
+
+![fork方式でPCとGitHubの間を変更が移動する流れ](images/git-fork.png)
+
+これはfork方式の図です。`origin`と`upstream`は接続先に付ける名前で、フォルダ名ではありません。
+公式を直接クローンする方式では`origin`が公式を指します。`git remote -v`で自分の方式を確認してください。
 
 本書は、研究用FrameWorkのソース、設定、テスト、文書を1つのGitHubリポジトリで安全に共同開発するための標準運用を定めます。
 
@@ -82,7 +91,8 @@ Gitで差分レビューできるMarkdown版を文書内容の正本とします
 | Git全体運用 | `GIT運用マニュアル.md` | 同名`.docx` |
 | ビルド・実行 | `外部実行環境_生成・ビルド・実行手順書.md` | 同名`.docx` |
 
-同じ変更内でMarkdown版とWord版を更新します。不一致が見つかった場合は、Pull RequestでレビューできるMarkdown版を基にWord版を再生成します。
+現状の`docs/office`は[資料一覧](../README.md)に記載した保管資料で、現行Markdownとの同期は保証されません。
+現行手順はMarkdown版を参照します。Word版を新たに配布する場合は、Markdownから再生成し、内容・図・更新日を照合してから配布します。
 
 ## 4. 権限と役割
 
@@ -193,6 +203,9 @@ git clone https://github.com/chanken0901/framework.git FrameWork
 ## 7. 標準変更フロー
 
 ### 7.1 開始前確認
+
+以下は1行ずつ実行します。`git status`で`working tree clean`を確認できなければ、
+後続の`switch`や`merge`へ進まず第15.1節を確認します。
 
 fork方式:
 
@@ -493,19 +506,22 @@ git remote -v
 
 ### 15.3 一時退避
 
+最初に`git branch --show-current`で作業ブランチ名を控えます。
+stashは編集途中の変更をPC内に一時保存する仕組みで、GitHubへのバックアップにはなりません。
+
 ```powershell
 git stash push -u -m "同期前の一時退避"
 git stash list
 ```
 
-同期後:
+同期後、控えた元の作業ブランチへ`git switch`で戻ってから次を実行します。共有`main`へ変更を戻しません。
 
 ```powershell
 git stash pop
 git status
 ```
 
-競合した場合、stashを消す前にすべての変更が戻ったことを確認します。
+競合した場合は操作を止め、担当者と差分を確認します。stashを消す前にすべての変更が戻ったことを確認します。
 
 ### 15.4 誤コミット
 

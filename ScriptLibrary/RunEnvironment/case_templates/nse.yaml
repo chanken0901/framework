@@ -122,8 +122,19 @@ flow:
 # staged CPU/MPI 2DECOMP&FFT, single-GPU cuFFT, or MPI+CUDA cuFFTMp
 # profile automatically.
 forcing:
-  # choices: none, petersen_livescu
+  # choices: none, petersen_livescu, watanabe2021
   type: none
+  watanabe2021:
+    # FFT backend: CPU/MPI 2decomp_fftw, CUDA cufft, MPI+CUDA cufftmp.
+    # Uniform periodic grid and CENTRAL6 viscosity only; thermal compensation is mandatory.
+    # Re_L = Re_lambda**2/15; does not change the resolved viscosity (Reinput).
+    turbulent_mach_number: 0.3
+    taylor_reynolds_number: 100.0
+    feedback_exponent: 4.0
+    fft_backend: auto
+    report_interval: 100
+    # mean_density: 1.0  # default: resolved rho0
+    # mean_pressure: 0.7142857142857143  # default: mean_density/gamma
   petersen_livescu:
     # choices: full_spectrum, low_wavenumber
     spectrum: low_wavenumber

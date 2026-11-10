@@ -8,6 +8,7 @@ module mod_nse_forcing_common
   public :: forcing_is_enabled
   public :: validate_forcing_parameters
   public :: compute_forcing_coefficients
+  public :: compute_watanabe_coefficient
 
 contains
 
@@ -17,7 +18,7 @@ contains
     select case (trim(adjustl(nse%forcing_scheme)))
     case ('none')
       enabled = .false.
-    case ('petersen_livescu')
+    case ('petersen_livescu', 'watanabe2021')
       enabled = .true.
     case default
       write(*,'(A,A)') 'ERROR: unsupported forcing_scheme: ', &
@@ -32,6 +33,23 @@ contains
     character(len=32) :: requested_backend
 
     if (.not. forcing_is_enabled(nse)) return
+
+    if (trim(nse%forcing_scheme) == 'watanabe2021') then
+      if (nse%nv /= 5) error stop 'watanabe2021 requires single-component NSE'
+      if (trim(compiled_backend) /= '2decomp_fftw' .and. trim(compiled_backend) /= 'cufft' .and. &
+          trim(compiled_backend) /= 'cufftmp') error stop 'watanabe2021 requires a forcing FFT backend'
+      if (trim(nse%forcing_spectrum) /= 'full_spectrum') &
+        error stop 'watanabe2021 requires full_spectrum'
+      if (.not. all(ieee_is_finite([nse%forcing_target_velocity_variance, &
+          nse%forcing_feedback_exponent, nse%forcing_target_dissipation, nse%reynolds]))) &
+        error stop 'non-finite watanabe2021 parameter'
+      if (nse%forcing_target_velocity_variance <= 0.0_dp .or. &
+          nse%forcing_feedback_exponent < 0.0_dp) error stop 'invalid watanabe2021 feedback parameter'
+      if (nse%forcing_dilatational_ratio /= 0.0_dp .or. nse%forcing_max_coefficient /= 0.0_dp) &
+        error stop 'watanabe2021 does not allow dilatational forcing or coefficient clipping'
+      if (nse%reynolds <= 0.0_dp .or. trim(nse%viscous_scheme) /= 'central6' .or. nse%fh_enabled) &
+        error stop 'watanabe2021 currently requires CENTRAL6 viscosity without fluctuating hydrodynamics'
+    end if
 
     if (trim(adjustl(nse%boundary_condition)) /= 'periodic') then
       error stop 'Petersen-Livescu forcing requires periodic boundaries'
@@ -116,5 +134,22 @@ contains
         min(nse%forcing_max_coefficient, coefficient_d))
     end if
   end subroutine compute_forcing_coefficients
+
+  subroutine compute_watanabe_coefficient(nse, denominator_s, pressure_dilatation, &
+      variance, coefficient_s)
+    type(nse_config), intent(in) :: nse
+    real(dp), intent(in) :: denominator_s, pressure_dilatation, variance
+    real(dp), intent(out) :: coefficient_s
+    real(dp) :: alpha
+
+    if (.not. all(ieee_is_finite([denominator_s, pressure_dilatation, variance]))) &
+      error stop 'non-finite watanabe2021 statistics'
+    if (denominator_s <= nse%forcing_denominator_floor .or. variance <= 0.0_dp) &
+      error stop 'watanabe2021 requires nonzero solenoidal energy and velocity variance'
+    ! Eq. (10),(12), in solver units. <u.grad(p)> = -<p.div(u)> on a periodic grid.
+    alpha = (variance / nse%forcing_target_velocity_variance)**(-nse%forcing_feedback_exponent)
+    coefficient_s = alpha * (nse%forcing_target_dissipation-pressure_dilatation) / denominator_s
+    if (.not. ieee_is_finite(coefficient_s)) error stop 'non-finite watanabe2021 coefficient'
+  end subroutine compute_watanabe_coefficient
 
 end module mod_nse_forcing_common

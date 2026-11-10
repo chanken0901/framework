@@ -112,6 +112,9 @@ struct NseCudaContext {
   double* fh_flux = nullptr;
   double* fh_noise = nullptr;
   bool forcing_enabled = false;
+  bool forcing_watanabe = false;
+  double forcing_target_variance = 0.0;
+  double forcing_exponent = 4.0;
   int forcing_spectrum = 0;
   int forcing_report_interval = 0;
   int forcing_evaluations = 0;
@@ -1332,6 +1335,7 @@ __global__ void forcing_add_kernel(
     double coefficient,
     double normalization,
     double small_rho,
+    bool energy_work,
     std::size_t physical_count) {
   const std::size_t linear =
       static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -1346,8 +1350,10 @@ __global__ void forcing_add_kernel(
   const double scale = coefficient * normalization
       * sqrt(fmax(q[cell], small_rho));
   for (int component = 0; component < 3; ++component) {
-    rhs[cell + grid.cell_count * (component + 1)] += scale
-        * physical[linear + physical_count * component].x;
+    const double force = scale * physical[linear + physical_count * component].x;
+    rhs[cell + grid.cell_count * (component + 1)] += force;
+    if (energy_work) rhs[cell + 4*grid.cell_count] +=
+        force*q[cell + grid.cell_count*(component+1)]/q[cell];
   }
 }
 
@@ -1521,6 +1527,7 @@ __global__ void forcing_add_component_kernel(
     double coefficient,
     double normalization,
     double small_rho,
+    bool energy_work,
     std::size_t count) {
   const std::size_t linear =
       static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -1530,11 +1537,56 @@ __global__ void forcing_add_component_kernel(
   const int j = static_cast<int>(yz % grid.ny) + grid.nghost;
   const int k = static_cast<int>(yz / grid.ny) + grid.nghost;
   const std::size_t cell = cell_index(grid, i, j, k);
-  rhs[cell + grid.cell_count * static_cast<std::size_t>(component + 1)] +=
-      coefficient * normalization * sqrt(fmax(q[cell], small_rho))
-      * physical[linear].x;
+  const double force = coefficient * normalization * sqrt(fmax(q[cell], small_rho)) * physical[linear].x;
+  rhs[cell + grid.cell_count * static_cast<std::size_t>(component + 1)] += force;
+  if (energy_work) rhs[cell + 4*grid.cell_count] +=
+      force*q[cell + grid.cell_count*(component+1)]/q[cell];
 }
 #endif
+#endif
+
+#if defined(NSE_FORCING_CUFFT) || defined(NSE_FORCING_CUFFTMP)
+__global__ void watanabe_statistics_kernel(const double* q, double* values, GridView grid,
+    int statistic, double mean_x, double mean_y, double mean_z,
+    double idx, double idy, double idz, double reynolds, double small_rho, std::size_t count) {
+  const std::size_t n = static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+  if (n >= count) return;
+  const int i = n%grid.nx+grid.nghost;
+  const int j = (n/grid.nx)%grid.ny+grid.nghost;
+  const int k = n/(static_cast<std::size_t>(grid.nx)*grid.ny)+grid.nghost;
+  const auto cell = cell_index(grid,i,j,k);
+  const double rho = q[cell];
+  if (!(rho > 0.0) || !isfinite(rho)) { values[n] = nan(""); return; }
+  if (statistic < 3) {
+    values[n] = q[cell+(statistic+1)*grid.cell_count]/rho;
+  } else if (statistic == 3) {
+    const double u = q[cell+grid.cell_count]/rho-mean_x;
+    const double v = q[cell+2*grid.cell_count]/rho-mean_y;
+    const double w = q[cell+3*grid.cell_count]/rho-mean_z;
+    values[n] = u*u+v*v+w*w;
+  } else {
+    const double spacing[3] = {idx,idy,idz};
+    double gradient[3][3];
+    for (int a=0;a<3;++a) for (int b=0;b<3;++b)
+      gradient[a][b] = velocity_derivative(q,grid,i,j,k,a+1,b,spacing[b],small_rho);
+    const double div = gradient[0][0]+gradient[1][1]+gradient[2][2];
+    double dissipation = 0.0;
+    for (int a=0;a<3;++a) for (int b=0;b<3;++b) {
+      const double strain = 0.5*(gradient[a][b]+gradient[b][a])-(a==b ? div/3.0 : 0.0);
+      dissipation += 2.0*strain*strain/reynolds;
+    }
+    values[n] = dissipation;
+  }
+}
+
+__global__ void watanabe_heat_kernel(double* rhs, GridView grid, double heat, std::size_t count) {
+  const std::size_t n = static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+  if (n >= count) return;
+  const auto cell = cell_index(grid, n%grid.nx+grid.nghost,
+      (n/grid.nx)%grid.ny+grid.nghost,
+      n/(static_cast<std::size_t>(grid.nx)*grid.ny)+grid.nghost);
+  rhs[cell+4*grid.cell_count] += heat;
+}
 #endif
 
 __global__ void ssprk_stage_kernel(
@@ -1574,6 +1626,48 @@ dim3 block_count(std::size_t count) {
   constexpr unsigned int threads = 256;
   return dim3(static_cast<unsigned int>((count + threads - 1) / threads));
 }
+
+#if defined(NSE_FORCING_CUFFT) || defined(NSE_FORCING_CUFFTMP)
+#if defined(NSE_FORCING_CUFFTMP)
+bool reduce_forcing_sum_distributed(NseCudaContext*, const double*, double*, const char*);
+#else
+bool reduce_forcing_sum(NseCudaContext*, const double*, double*, const char*);
+#endif
+
+bool evaluate_watanabe(NseCudaContext* context, double point_count, double denominator,
+    double pressure_dilatation, double& coefficient) {
+  double statistics[5] = {};
+  for (int s=0;s<5;++s) {
+    watanabe_statistics_kernel<<<block_count(context->physical_count),256>>>(
+        context->q,context->speed,context->grid,s,statistics[0],statistics[1],statistics[2],
+        1.0/context->dx,1.0/context->dy,1.0/context->dz,context->reynolds,
+        context->small_rho,context->physical_count);
+    if (!check_cuda(cudaGetLastError(),"Watanabe statistics")) return false;
+#if defined(NSE_FORCING_CUFFTMP)
+    if (!reduce_forcing_sum_distributed(context,context->speed,&statistics[s],"Watanabe global sum")) return false;
+#else
+    if (!reduce_forcing_sum(context,context->speed,&statistics[s],"Watanabe sum")) return false;
+#endif
+    statistics[s] /= point_count;
+    if (!std::isfinite(statistics[s])) { set_error("non-finite Watanabe statistic"); return false; }
+  }
+  if (!(statistics[3]>0.0)) { set_error("zero Watanabe velocity variance"); return false; }
+  coefficient = std::pow(statistics[3]/context->forcing_target_variance,-context->forcing_exponent)
+      *(context->forcing_target_dissipation-pressure_dilatation)/denominator;
+  if (!std::isfinite(coefficient)) { set_error("non-finite Watanabe coefficient"); return false; }
+  const double heat = pressure_dilatation-statistics[4];
+  watanabe_heat_kernel<<<block_count(context->physical_count),256>>>(
+      context->rhs,context->grid,heat,context->physical_count);
+  if (context->forcing_report_interval>0 && (context->forcing_evaluations==0 ||
+      (context->forcing_evaluations+1)%context->forcing_report_interval==0)
+#if defined(NSE_FORCING_CUFFTMP)
+      && context->forcing_rank==0
+#endif
+      ) std::printf("# forcing variance dissipation thermal_source %.8e %.8e %.8e\n",
+          statistics[3],statistics[4],heat);
+  return check_cuda(cudaGetLastError(),"Watanabe heat source");
+}
+#endif
 
 #if defined(NSE_FORCING_CUFFT)
 bool reduce_forcing_sum(
@@ -1698,8 +1792,12 @@ bool launch_forcing(NseCudaContext* context) {
   }
   double coefficient_s = target_s / denominator_s;
   const double numerator_d = target_d - pressure_dilatation;
+  if (context->forcing_watanabe && !evaluate_watanabe(context,point_count,denominator_s,
+      pressure_dilatation,coefficient_s)) return false;
   double coefficient_d = 0.0;
-  if (denominator_d <= context->forcing_denominator_floor) {
+  if (context->forcing_watanabe) {
+    coefficient_d = 0.0;
+  } else if (denominator_d <= context->forcing_denominator_floor) {
     if (target_d > context->forcing_denominator_floor) {
       set_error("dilatational forcing denominator is too small");
       return false;
@@ -1739,11 +1837,13 @@ bool launch_forcing(NseCudaContext* context) {
       coefficient_s,
       normalization,
       context->small_rho,
+      context->forcing_watanabe,
       context->physical_count);
   if (!check_cuda(cudaGetLastError(), "add solenoidal forcing")) {
     return false;
   }
 
+  if (!context->forcing_watanabe) {
   forcing_build_dilatational_kernel<<<
       block_count(context->physical_count), 256>>>(
       context->forcing_spectral,
@@ -1775,9 +1875,11 @@ bool launch_forcing(NseCudaContext* context) {
       coefficient_d,
       normalization,
       context->small_rho,
+      false,
       context->physical_count);
   if (!check_cuda(cudaGetLastError(), "add dilatational forcing")) {
     return false;
+  }
   }
 
   ++context->forcing_evaluations;
@@ -1952,7 +2054,9 @@ bool launch_forcing_distributed(NseCudaContext* context) {
   }
   double coefficient_s = target_s / denominator_s;
   double coefficient_d = 0.0;
-  if (denominator_d <= context->forcing_denominator_floor) {
+  if (context->forcing_watanabe) {
+    if (!evaluate_watanabe(context,point_count,denominator_s,pressure_dilatation,coefficient_s)) return false;
+  } else if (denominator_d <= context->forcing_denominator_floor) {
     if (target_d > context->forcing_denominator_floor) {
       set_error("distributed dilatational forcing denominator is too small");
       return false;
@@ -1989,6 +2093,7 @@ bool launch_forcing_distributed(NseCudaContext* context) {
         block_count(context->physical_count), 256>>>(
         physical[component], context->q, context->rhs, context->grid,
         component, coefficient_s, normalization, context->small_rho,
+        context->forcing_watanabe,
         context->physical_count);
     if (!check_cuda(
             cudaGetLastError(), "add distributed solenoidal forcing")) {
@@ -1996,6 +2101,7 @@ bool launch_forcing_distributed(NseCudaContext* context) {
     }
   }
 
+  if (!context->forcing_watanabe) {
   forcing_build_dilatational_distributed_kernel<<<
       block_count(context->physical_count), 256>>>(
       spectral[0], spectral[1], spectral[2], context->forcing_phi,
@@ -2024,11 +2130,13 @@ bool launch_forcing_distributed(NseCudaContext* context) {
         block_count(context->physical_count), 256>>>(
         physical[component], context->q, context->rhs, context->grid,
         component, coefficient_d, normalization, context->small_rho,
+        false,
         context->physical_count);
     if (!check_cuda(
             cudaGetLastError(), "add distributed dilatational forcing")) {
       return false;
     }
+  }
   }
 
   ++context->forcing_evaluations;
@@ -2465,6 +2573,20 @@ bool make_cufftmp_pencil_plan(
           "allocate cuFFTMp spectral descriptor");
 }
 #endif
+
+NSE_CUDA_EXPORT int nse_cuda_configure_watanabe(void* handle, double variance, double exponent) {
+  auto* context = static_cast<NseCudaContext*>(handle);
+  if (!context || !context->forcing_enabled || context->forcing_spectrum!=1 ||
+      !(variance>0.0) || !std::isfinite(variance) || !(exponent>=0.0) || !std::isfinite(exponent) ||
+      !(context->reynolds>0.0) || context->forcing_dilatational_ratio!=0.0 ||
+      context->forcing_max_coefficient!=0.0) {
+    set_error("invalid Watanabe CUDA configuration"); return 1;
+  }
+  context->forcing_watanabe = true;
+  context->forcing_target_variance = variance;
+  context->forcing_exponent = exponent;
+  return 0;
+}
 
 NSE_CUDA_EXPORT int nse_cuda_set_device(int device) {
   last_error.clear();

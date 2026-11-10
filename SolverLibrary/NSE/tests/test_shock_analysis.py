@@ -3,10 +3,11 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import numpy as np
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
-from nse_shock_analysis import plane_statistics, diagnose, main, shock_surface, surface_summary
+from nse_shock_analysis import plane_statistics, diagnose, main, shock_surface, surface_summary, atomic_text
 def write_slf(path,data,rank=0,nprocs=1,global_shape=None,time=.1):
     import struct
     names=['rho','rho_u','rho_v','rho_w','rho_E']
@@ -33,6 +34,55 @@ def state(nx=40,shock=20,direction=1):
 
 
 class ShockTests(unittest.TestCase):
+    def test_partial_history_survives_failure_and_interrupt(self):
+        import csv
+        import struct
+        for failure in (ValueError('bad next snapshot'), KeyboardInterrupt()):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as d:
+                root=Path(d); out=root/'analysis'; meta=root/'meta.json'
+                meta.write_text(json.dumps(dict(grid=[40,4,4],spacing=[1,1,1])))
+                for step,shock,time in [(10,20,1.),(20,21,1.5),(30,24,2.5),(40,25,3.)]:
+                    path=root/f'field_{step:06d}.slf'
+                    write_slf(path,state(shock=shock),time=time)
+                    with path.open('r+b') as f:
+                        f.seek(36);f.write(struct.pack('<i',step))
+                calls=[]
+                def process(*args,**kwargs):
+                    if calls:
+                        with (out/'shock_history.csv').open() as f:
+                            self.assertEqual(len(list(csv.DictReader(f))),len(calls))
+                        self.assertEqual(json.loads((out/'analysis.json').read_text())['status'],'running')
+                    if len(calls)==3:
+                        raise failure
+                    calls.append(True)
+                    return plane_statistics(*args,**kwargs)
+                args=[str(root),'--output-dir',str(out),'--meta',str(meta),'--gamma','1.4',
+                      '--direction','1','--search','10','30','--upstream','2','8','--downstream','2','8']
+                with patch('nse_shock_analysis.plane_statistics',side_effect=process):
+                    self.assertEqual(main(args),130 if isinstance(failure,KeyboardInterrupt) else 1)
+                with (out/'shock_history.csv').open() as f: rows=list(csv.DictReader(f))
+                self.assertEqual([int(r['step']) for r in rows],[10,20,30])
+                np.testing.assert_allclose([float(r['shock_speed']) for r in rows],
+                                           np.gradient([20.,21.,24.],[1.,1.5,2.5]))
+                info=json.loads((out/'analysis.json').read_text())
+                self.assertEqual(info['completed_steps'],[10,20,30])
+                self.assertEqual(info['failed_step'],40)
+                self.assertEqual(info['status'],'interrupted' if isinstance(failure,KeyboardInterrupt) else 'failed')
+                before=(out/'shock_history.csv').read_bytes()
+                self.assertEqual(main(args),1)  # Existing results remain protected.
+                self.assertEqual((out/'shock_history.csv').read_bytes(),before)
+
+    def test_atomic_write_failure_keeps_previous_history(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/'shock_history.csv'
+            path.write_text('previous valid result')
+            def failing_write(stream):
+                stream.write('incomplete replacement')
+                raise OSError('disk full')
+            with self.assertRaises(OSError):
+                atomic_text(path,failing_write)
+            self.assertEqual(path.read_text(),'previous valid result')
+
     def test_corrugated_surface_both_directions_and_missing_lines(self):
         x=np.arange(40)+.5
         exact=np.array([[17,18,19,20],[18,19,20,21],[19,20,21,22],[20,21,22,23]],dtype=float)

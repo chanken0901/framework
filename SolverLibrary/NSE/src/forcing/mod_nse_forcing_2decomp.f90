@@ -1,9 +1,10 @@
 module mod_nse_forcing
+  use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
   use mod_precision, only : dp
   use mod_common_config, only : simulation_config
   use mod_model_config, only : nse_config
   use mod_nse_forcing_common, only : forcing_is_enabled, &
-    validate_forcing_parameters, compute_forcing_coefficients
+    validate_forcing_parameters, compute_forcing_coefficients, compute_watanabe_coefficient
   use module_mpi, only : my_rank, root, nprocs, ndiv_ny, ndiv_nz, &
     jjsta, jjend, kksta, kkend, mp_allsumr8, MPI_COMM_WORLD, &
     MPI_INTEGER, MPI_DOUBLE_PRECISION
@@ -45,6 +46,7 @@ contains
     call validate_nse_forcing(nse)
     if (.not. forcing_is_enabled(nse)) return
     if (initialized) error stop 'NSE forcing backend is already initialized'
+    if (sim%nghost < 3) error stop 'NSE forcing requires at least three ghost cells'
     if (storage_size(0.0_mytype) /= storage_size(0.0_dp)) then
       error stop '2DECOMP&FFT precision must match mod_precision dp'
     end if
@@ -69,7 +71,7 @@ contains
     initialized = .true.
     evaluation_count = 0
     if (my_rank == root) then
-      write(*,'(A)') '# Petersen-Livescu forcing initialized'
+      write(*,'(A,A)') '# forcing initialized: ', trim(nse%forcing_scheme)
       write(*,'(A)') '# forcing FFT backend: 2DECOMP&FFT + FFTW3'
       write(*,'(A,A)') '# forcing spectrum: ', trim(nse%forcing_spectrum)
       write(*,'(A,I0,A,I0)') '# forcing process grid: ', ndiv_ny, ' x ', ndiv_nz
@@ -113,6 +115,9 @@ contains
       ks-sim%nghost:, :)
     real(dp) :: denominator_s, denominator_d, pressure_dilatation
     real(dp) :: coefficient_s, coefficient_d, target_s, target_d
+    real(dp) :: variance, dissipation, cooling
+    logical :: watanabe
+    integer :: i, j, k
 
     call forward_weighted_velocity(q, 2, ws_x, sim, nse, js, je, ks, ke)
     call forward_weighted_velocity(q, 3, ws_y, sim, nse, js, je, ks, ke)
@@ -120,8 +125,26 @@ contains
     call project_helmholtz(sim, nse, denominator_s, denominator_d)
     pressure_dilatation = compute_pressure_dilatation(q, sim, nse, &
       js, je, ks, ke)
-    call compute_forcing_coefficients(nse, denominator_s, denominator_d, &
-      pressure_dilatation, coefficient_s, coefficient_d, target_s, target_d)
+    watanabe = trim(nse%forcing_scheme) == 'watanabe2021'
+    if (watanabe) then
+      call watanabe_statistics(q, sim, nse, js, je, ks, ke, variance, dissipation)
+      call compute_watanabe_coefficient(nse, denominator_s, pressure_dilatation, variance, coefficient_s)
+      coefficient_d = 0.0_dp
+      target_s = nse%forcing_target_dissipation
+      target_d = 0.0_dp
+      ! Eq. (14) is for rho*T. The total-energy source is u.f + fe/(gamma-1).
+      cooling = pressure_dilatation - dissipation
+      do k = ks, ke
+        do j = js, je
+          do i = 1, sim%nx
+            rhs(i,j,k,5) = rhs(i,j,k,5) + cooling
+          end do
+        end do
+      end do
+    else
+      call compute_forcing_coefficients(nse, denominator_s, denominator_d, &
+        pressure_dilatation, coefficient_s, coefficient_d, target_s, target_d)
+    end if
 
     call inverse_and_add(ws_x, rhs, 2, coefficient_s, q, sim, nse, &
       js, je, ks, ke)
@@ -129,12 +152,14 @@ contains
       js, je, ks, ke)
     call inverse_and_add(ws_z, rhs, 4, coefficient_s, q, sim, nse, &
       js, je, ks, ke)
+    if (.not. watanabe) then
     call inverse_and_add(wd_x, rhs, 2, coefficient_d, q, sim, nse, &
       js, je, ks, ke)
     call inverse_and_add(wd_y, rhs, 3, coefficient_d, q, sim, nse, &
       js, je, ks, ke)
     call inverse_and_add(wd_z, rhs, 4, coefficient_d, q, sim, nse, &
       js, je, ks, ke)
+    end if
 
     evaluation_count = evaluation_count + 1
     if (my_rank == root .and. nse%forcing_report_interval > 0) then
@@ -143,9 +168,63 @@ contains
         write(*,'(A,I0,7(1X,ES13.5))') '# forcing', evaluation_count, &
           coefficient_s, coefficient_d, denominator_s, denominator_d, &
           pressure_dilatation, target_s, target_d
+        if (watanabe) write(*,'(A,3(1X,ES13.5))') &
+          '# forcing variance dissipation thermal_source', variance, dissipation, cooling
       end if
     end if
   end subroutine evaluate_and_add_forcing
+
+  subroutine watanabe_statistics(q, sim, nse, js, je, ks, ke, variance, dissipation)
+    type(simulation_config), intent(in) :: sim
+    type(nse_config), intent(in) :: nse
+    integer, intent(in) :: js, je, ks, ke
+    real(dp), intent(in) :: q(1-sim%nghost:, js-sim%nghost:, ks-sim%nghost:, :)
+    real(dp), intent(out) :: variance, dissipation
+    real(dp) :: mean_u(3), u(3), grad(3,3), spacing(3), count, divergence, strain(3,3)
+    integer :: i, j, k, a, b
+
+    count = real(sim%nx,dp)*real(sim%ny,dp)*real(sim%nz,dp)
+    spacing = [sim%dx, sim%dy, sim%dz]
+    mean_u = 0.0_dp
+    do k = ks, ke
+      do j = js, je
+        do i = 1, sim%nx
+          if (.not. all(ieee_is_finite(q(i,j,k,1:5)))) error stop 'non-finite watanabe2021 state'
+          if (q(i,j,k,1) <= 0.0_dp) error stop 'nonpositive watanabe2021 density'
+          mean_u = mean_u + q(i,j,k,2:4)/q(i,j,k,1)
+        end do
+      end do
+    end do
+    do a = 1, 3
+      call mp_allsumr8(mean_u(a))
+    end do
+    mean_u = mean_u/count
+    variance = 0.0_dp
+    dissipation = 0.0_dp
+    do k = ks, ke
+      do j = js, je
+        do i = 1, sim%nx
+          u = q(i,j,k,2:4)/q(i,j,k,1)-mean_u
+          variance = variance + sum(u*u)
+          do b = 1, 3
+            do a = 1, 3
+              grad(a,b) = derivative_velocity(q,a+1,i,j,k,b,spacing(b),sim,nse,js,ks)
+            end do
+          end do
+          divergence = grad(1,1)+grad(2,2)+grad(3,3)
+          strain = 0.5_dp*(grad+transpose(grad))
+          do a = 1, 3
+            strain(a,a) = strain(a,a)-divergence/3.0_dp
+          end do
+          dissipation = dissipation + 2.0_dp*sum(strain*strain)/nse%reynolds
+        end do
+      end do
+    end do
+    call mp_allsumr8(variance)
+    call mp_allsumr8(dissipation)
+    variance = variance/count
+    dissipation = dissipation/count
+  end subroutine watanabe_statistics
 
   subroutine forward_weighted_velocity(q, variable, field_hat, sim, nse, &
       js, je, ks, ke)
@@ -324,6 +403,10 @@ contains
         do i = 1, sim%nx
           rhs(i,j,k,variable) = rhs(i,j,k,variable) + coefficient * &
             sqrt(max(q(i,j,k,1), nse%small_rho)) * local_component(i,j,k)
+          if (trim(nse%forcing_scheme) == 'watanabe2021') then
+            rhs(i,j,k,5) = rhs(i,j,k,5) + coefficient * &
+              q(i,j,k,variable)/sqrt(q(i,j,k,1)) * local_component(i,j,k)
+          end if
         end do
       end do
     end do

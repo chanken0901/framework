@@ -117,6 +117,10 @@ module mod_model_config
     character(len=32) :: forcing_fft_backend = 'auto'
     real(dp) :: forcing_k_cutoff = 2.5_dp
     real(dp) :: forcing_target_dissipation = 0.0_dp
+    real(dp) :: forcing_target_velocity_variance = 0.0_dp
+    real(dp) :: forcing_feedback_exponent = 4.0_dp
+    real(dp) :: forcing_target_integral_reynolds = 0.0_dp
+    real(dp) :: forcing_target_integral_length = 0.0_dp
     real(dp) :: forcing_dilatational_ratio = 0.0_dp
     real(dp) :: forcing_denominator_floor = 1.0e-14_dp
     real(dp) :: forcing_max_coefficient = 0.0_dp
@@ -357,6 +361,12 @@ contains
         cfg%shock_tube_driven_p
     end if
     write(u,'(A,A)') 'forcing_scheme    = ', trim(cfg%forcing_scheme)
+    if (trim(cfg%forcing_scheme) == 'watanabe2021') then
+      write(u,'(A,ES16.8)') 'forcing_target_velocity_variance = ', cfg%forcing_target_velocity_variance
+      write(u,'(A,ES16.8)') 'forcing_feedback_exponent = ', cfg%forcing_feedback_exponent
+      write(u,'(A,ES16.8)') 'forcing_target_integral_reynolds = ', cfg%forcing_target_integral_reynolds
+      write(u,'(A,ES16.8)') 'forcing_target_integral_length = ', cfg%forcing_target_integral_length
+    end if
     write(u,'(A,A)') 'forcing_spectrum  = ', trim(cfg%forcing_spectrum)
     write(u,'(A,A)') 'forcing_fft_backend = ', trim(cfg%forcing_fft_backend)
     write(u,'(A,ES16.8)') 'forcing_k_cutoff = ', cfg%forcing_k_cutoff

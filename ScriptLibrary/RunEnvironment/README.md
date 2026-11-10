@@ -673,6 +673,12 @@ CPU/MPI/OpenMP、単一GPU CUDA、MPI＋CUDAの各版で、各物理面を`perio
 を参照してください。
 
 Forcingも流れ場と同様に`type`で選択し、方式固有の設定を同名のブロックへ
+配置します。追加方式`watanabe2021`はMt/Re_lambdaを入力し、Re_L=Re_lambda²/15で換算します。
+CPU/MPI 2decomp_fftw、単一CUDA/cuFFT、MPI+CUDA/cuFFTMpに実装し、等間隔周期・CENTRAL6粘性に限定します。
+単一CUDAの短時間温度検証は実施済み、cuFFTMp実機検証と長時間定常統計は未完了です。揺らぎ併用は未対応です。
+平均内部エネルギー上昇を補償する熱源項は常に適用し、無効化の設定は設けません。
+式・設定・未検証範囲は[Forcing仕様](../../SolverLibrary/NSE/docs/physics/NSE_FORCING.md)を参照してください。
+従来の`petersen_livescu`の設定例を以下に示します。方式固有の設定は同名のブロックへ
 まとめます。無効化するときは`type: none`のままにします。
 
 ```yaml

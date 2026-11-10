@@ -1,6 +1,6 @@
 # 学生向け FrameWork導入・Git開発手順書
 
-更新日: 2026年9月2日
+更新日: 2026年11月9日
 対象リポジトリ: `https://github.com/chanken0901/framework.git`  
 対象: FrameWorkを用いて計算する学生、およびソースコード・設定・文書の開発に参加する学生
 
@@ -8,9 +8,21 @@
 
 > コマンド表記: OS固有の操作はWindows（PowerShell）とLinux（bash）を併記します。Gitコマンドだけのブロックは両OS共通です。パスやシェル操作の読み替えは[`docs/WINDOWS_LINUX_COMMANDS.md`](../WINDOWS_LINUX_COMMANDS.md)も参照してください。
 
+## はじめて読む方へ
+
+パソコン操作に不慣れな方は、先に[操作の基本](README.md)を確認してください。
+本書の第5・6・7章は**別々の取得方法**です。目的に合う一つだけを実施します。
+取得できたら計算利用者は実行手順書へ、開発参加者は第8章へ進みます。
+
+![編集・保存・コミットから公式版への取り込みまで](images/git-changes.png)
+
+保存、コミット、pushは別の操作です。`Ctrl+S`だけではGitの履歴やGitHubへ反映されません。
+`git add`は記録対象の選択であり、ファイルを別フォルダへ移動する操作ではありません。
+Pull Requestは確認依頼なので、作成しただけでは公式版は変更されません。
+
 ## 1. この手順書でできること
 
-本書を上から順に実行すると、次の作業ができるようになります。
+本書で自分の目的に合う章を選ぶと、次の作業ができるようになります。
 
 - 安定版を取得して計算に使用する
 - 開発用のリポジトリを自分のPCへクローンする
@@ -62,7 +74,7 @@ Gitリポジトリは最上位の`FrameWork/.git`だけです。`ScriptLibrary`�
 
 ### 4.1 計算だけを行う
 
-安定版タグ`v1.0.0-student`を使用します。ソースを変更せず、入力ファイルや計算結果はリポジトリ外の実行環境へ置きます。第5章へ進んでください。
+担当者が指定した配布タグを使用します。本書の`v1.0.0-student`は配布タグ名の例であり、取得先に存在することを第5章で確認します。ソースを変更せず、入力ファイルや計算結果はリポジトリ外の実行環境へ置きます。第5章へ進んでください。
 
 ### 4.2 開発にも参加する（推奨）
 
@@ -76,6 +88,9 @@ Gitリポジトリは最上位の`FrameWork/.git`だけです。`ScriptLibrary`�
 
 ### 5.1 必要なもの
 
+ソフトが未導入のPCでは、[PC別の環境構築手順書](開発環境_構築・ソフトウェア導入手順書.md)から準備します。
+Git・Python・コンパイラ・MPI等の役割と、OS別のインストール方法を確認できます。
+
 WindowsではGit for WindowsとPowerShellを用意します。LinuxではGitと端末を用意します。ソルバーのコンパイラ、MPI、CUDA、FFTWなどは、使用する計算方式に応じて別途必要です。
 
 Git for Windowsの公式入手先:
@@ -84,7 +99,9 @@ Git for Windowsの公式入手先:
 https://git-scm.com/downloads/win
 ```
 
-Gitが使えるか確認します。
+インストーラーを保存しただけでは導入は完了していません。研究室の導入方針に従ってインストールを完了し、PowerShellを開き直します。共有PCでインストールの権限がない場合は、計算機管理者に準備を依頼してください。
+
+Gitが使えるか、端末で確認します。
 
 ```console
 git --version
@@ -103,18 +120,29 @@ New-Item -ItemType Directory -Path C:\Research -Force
 Set-Location C:\Research
 git clone https://github.com/chanken0901/framework.git FrameWork
 Set-Location C:\Research\FrameWork
-git switch --detach v1.0.0-student
+git tag --list
 ```
 
 ### 5.3 Linuxで安定版を取得する
 
 ```bash
-mkdir -p ~/research
-cd ~/research
+mkdir -p "$HOME/Research"
+cd "$HOME/Research"
 git clone https://github.com/chanken0901/framework.git FrameWork
 cd FrameWork
+git tag --list
+```
+
+一覧に担当者から指定されたタグがあることを確認してから、次を実行します。
+以下は指定タグが`v1.0.0-student`の場合の例です。別の名前なら置き換えます。
+
+```console
 git switch --detach v1.0.0-student
 ```
+
+タグが見つからない場合はそこで止め、取得先と指定版を担当者に確認します。
+タグを自分で作ったり、代わりに`main`で計算を始めたりしません。
+上記はWindows・Linuxのどちらで取得した場合も必要です。
 
 ### 5.4 取得結果を確認する
 
@@ -128,7 +156,7 @@ git remote -v
 
 期待する状態は次のとおりです。
 
-- `git describe`に`v1.0.0-student`が表示される
+- `git describe`に指定したタグ名が表示される
 - `ScriptLibrary`と`SolverLibrary`の両方が存在する
 - `git status`に意図しない変更が表示されない
 
@@ -150,7 +178,7 @@ test -f ./SolverLibrary/NSE/CMakeLists.txt && echo "NSE: OK"
 test -f ./SolverLibrary/GPE/gp3d/CMakeLists.txt && echo "GPE: OK"
 ```
 
-3行とも`True`なら基本ファイルは取得できています。具体的なビルド・実行方法は次を参照してください。
+Windowsでは3行とも`True`、Linuxでは`BuildSolver: OK`、`NSE: OK`、`GPE: OK`が表示されれば基本ファイルは取得できています。具体的なビルド・実行方法は[実行手順書](外部実行環境_生成・ビルド・実行手順書.md)を参照してください。配布タグが古い場合は、その版に含まれる手順書を使用し、現在の手順と混ぜないでください。
 
 - `外部実行環境_生成・ビルド・実行手順書.md`
 - `ScriptLibrary/BuildSolver/README.md`
@@ -163,6 +191,9 @@ test -f ./SolverLibrary/GPE/gp3d/CMakeLists.txt && echo "GPE: OK"
 
 GitHubアカウントを作成し、教員へGitHubユーザー名を連絡します。大学・研究室の規則に従って二要素認証を設定してください。パスワード、アクセストークン、秘密鍵をチャット、YAML、ソースコードへ貼り付けてはいけません。
 
+GitHubユーザー名はプロフィールや自分のリポジトリのURLに使われる名前です。メールアドレスとは異なります。
+以降はそのアカウントでブラウザからGitHubへログインして操作します。Gitの準備は第5.1節を参照してください。
+
 ### 6.2 公式リポジトリをforkする
 
 ブラウザで次を開きます。
@@ -172,6 +203,9 @@ https://github.com/chanken0901/framework
 ```
 
 画面右上の`Fork`を押し、自分のアカウントに`framework`を作成します。`Copy the main branch only`は通常オンのままで構いません。
+
+作成後、ブラウザのURLが自分のユーザー名を含むことを確認します。
+`Fork`が使えない場合やリポジトリが見えない場合は、ログイン中のアカウントとアクセス権を担当者に確認します。
 
 GitHub公式のfork説明:
 
@@ -263,13 +297,17 @@ cd FrameWork
 git remote -v
 ```
 
-この場合、`origin`が公式リポジトリです。権限があっても`main`へ直接pushしません。必ず次章の作業ブランチを使用します。
+この場合、`origin`が公式リポジトリです。第6.5節の名前・メールアドレス設定も行います。権限があっても`main`へ直接pushしません。必ず次章の作業ブランチを使用します。
 
 ## 8. 日常の標準開発手順
 
-以下はfork運用を基準に説明します。公式リポジトリを直接クローンした人は、`upstream`を`origin`に読み替えてください。
+以下はfork運用を基準に説明します。公式リポジトリを直接クローンした人は、第8.1節の同期に限り、`git status`で未保存の変更がないことを確認した後、`git switch main`、`git pull --ff-only origin main`の順に実行します。`git push origin main`は行いません。それ以降は作業ブランチで同じ流れを使います。
 
 ### 8.1 作業開始前に`main`を最新化する
+
+まず`git status`を実行し、`nothing to commit, working tree clean`と表示されることを確認します。
+`modified`、`Untracked files`などが出た場合は、下の更新操作へ進む前に第13.4節を確認してください。
+`clean`は「保存済みの履歴に対する未記録の変更がない」という意味で、テスト成功を意味するものではありません。
 
 ```powershell
 Set-Location C:\Research\FrameWork
@@ -301,7 +339,7 @@ git push origin main
 git switch -c feature/github-id-short-description
 ```
 
-例:
+以下の例は候補です。作業内容に合う名前を一つだけ選び、3行すべては実行しません。
 
 ```powershell
 git switch -c feature/tanaka-add-gpe-test
@@ -319,7 +357,7 @@ git switch -c docs/yamada-update-build-guide
 
 ### 8.3 ファイルを編集する
 
-編集対象は通常、`ScriptLibrary`、`SolverLibrary`、ルート文書のいずれかです。計算結果、ビルド生成物、個人用パス、資格情報をリポジトリへ置かないでください。
+編集対象は通常、`ScriptLibrary`、`SolverLibrary`、`docs`内の文書などです。[ファイルの開き方と保存方法](README.md)に従って編集し、`Ctrl+S`で保存してから差分を確認します。計算結果、ビルド生成物、個人用パス、資格情報をリポジトリへ置かないでください。
 
 編集途中でも定期的に状態を確認します。
 
@@ -330,6 +368,8 @@ git diff
 ```
 
 `git diff`を終了するには`q`を押します。
+
+表示がスクロールする閲覧画面のときに`q`を押します。既に入力待ちへ戻っていれば、`q`の入力は不要です。
 
 ### 8.4 必要なテストを実行する
 
@@ -356,6 +396,10 @@ NSE・GPEのビルドやテストは、各READMEと`外部実行環境_生成・
 ### 8.5 変更ファイルを明示してステージする
 
 最初は`git add -A`や`git add .`を使わず、必要なファイルを明示します。
+
+以下の「変更したファイル.f90」「追加したテスト.f90」は架空の名前です。
+`git status --short`に表示された自分の変更ファイルのパスへ置き換えます。
+`git diff`の`-`行は変更前、`+`行は変更後です。新規ファイルは通常の`git diff`には出ないため、ステージ後の`git diff --cached`でも確認します。
 
 ```powershell
 git add -- .\SolverLibrary\NSE\src\変更したファイル.f90
@@ -423,6 +467,9 @@ Pull Request本文には次を記載します。
 - 未確認事項や制約
 
 開発途中ならDraft Pull Requestにします。レビュー可能になったら`Ready for review`へ変更します。
+
+画面の`Files changed`で送る変更を確認し、タイトルと本文を入力して`Create pull request`を押します。
+作成後に表示されたPRのURLを控えます。差分が意図と違う場合は、作成を進めず対象ブランチを確認してください。
 
 ## 9. レビュー中の修正
 
@@ -577,16 +624,22 @@ git status --short
 git diff
 ```
 
-正式な変更なら先にコミットします。作業途中なら一時退避できます。
+正式な変更なら作業ブランチで先にコミットします。作業途中なら一時退避できます。
+以下は**既に作業ブランチにいる場合**の手順です。まず`git branch --show-current`で名前を控えます。
+`main`または空欄の場合はこの例を続けず、担当者に変更の保存先を確認してください。
 
 ```powershell
 git stash push -u -m "main更新前の一時退避"
 git fetch upstream --prune
 git switch main
 git merge --ff-only upstream/main
+git switch feature/github-id-short-description
 git stash pop
 ```
 
+`feature/github-id-short-description`は控えた元の作業ブランチ名に置き換えます。
+更新が失敗したらその場で止めます。更新できた場合も、**元の作業ブランチへ戻ってから**`stash pop`で編集を戻します。
+これは共有`main`を更新する手順で、作業ブランチへ最新変更を統合する操作は含みません。
 `stash pop`で競合した場合は、自動削除や強制復元を行わず、`git status`に表示されたファイルを確認します。
 
 ### 13.5 `non-fast-forward`でpushできない

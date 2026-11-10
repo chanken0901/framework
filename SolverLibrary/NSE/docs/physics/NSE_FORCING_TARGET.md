@@ -1,5 +1,10 @@
 # HITフォーシングの目標指定
 
+このページの`target.type`は`petersen_livescu`用。
+MtとRe_lambdaを指定し、Re_L=Re_lambda²/15から設定する論文のソレノイダル線形forcingは
+[`NSE_FORCING.md`](NSE_FORCING.md)の`watanabe2021`節を参照。
+新方式には速度分散フィードバックと熱源項があり、既存方式の目標換算とは異なる。
+
 ## 方式ごとに設定をぶら下げて選択する
 
 `target.type` の1行だけで切り替える。両方の設定を残してよく、選択した枝だけを読み込む。

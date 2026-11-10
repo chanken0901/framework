@@ -3,6 +3,7 @@
 **版:** 1.1
 
 **更新日:** 2026-09-02
+**読み方・操作案内の追補:** 2026-11-09（数式・検証記録の再検証日ではありません）
 **対象:** SolverLibrary GPE/gp3d  
 **正本:** `C:\Users\Owner\Documents\Codex\FrameWork`
 
@@ -11,6 +12,31 @@
 ---
 
 ## 1. 文書の目的
+
+### 初めて読む方のための案内
+
+本書は数式や内部構造を調べる仕様書です。パソコン操作は[操作の基本](README.md)、
+最初の計算は[実行手順書](外部実行環境_生成・ビルド・実行手順書.md)、結果表示は
+[ParaView手順書](後処理_ParaView可視化手順書.md)で行ってください。
+本書のコマンドや設定表をすべて順番に実行・入力する必要はありません。
+
+![GPEの入力条件から計算結果までの流れ](images/gpe-flow.png)
+
+人が普段変更する入口は`case.yaml`です。`input.nml`は生成されるため、直接編集すると変更が失われる場合があります。
+図中のGP3DはGPE（Gross–Pitaevskii方程式）を三次元で解くプログラム名です。
+
+| 調べたいこと | 読む章 |
+|---|---|
+| 何を計算できるか | 第2章の適用範囲、第24章の制約 |
+| 計算条件を変えたい | 第16章のcase.yaml対応、第15章の入力仕様 |
+| 保存データを知りたい | 第17章の出力、第18章の再スタート、第28章の後処理 |
+| 方程式や数値解法を理解したい | 第4〜9章。物理・数値計算の基礎知識を前提とする |
+| コードを変更したい | 第10章の構造、第25〜26章の拡張・影響範囲 |
+
+「既定値」は指定を省略した場合の値です。テンプレートに明示された値があればそちらが使われるため、
+表の既定値を自分の計算条件と決めつけず、生成入力も確認します。
+`dt`は1ステップで進む計算上の時間、格子は空間を分ける区切りです。実際にPCで待つ秒数とは異なります。
+密度は波動関数の大きさの二乗、位相は複素数の角度です。より詳しい用語は第31章を参照してください。
 
 本書は、三次元Gross–Pitaevskii方程式ソルバーGP3Dの現行実装を、物理モデル、数値解法、ソフトウェア構造、入力、出力、並列化、GPU化、ビルド、テスト、制約の観点から定義するコード仕様書です。
 
@@ -1026,7 +1052,7 @@ Linux（bash）:
 | `time.*` | `simulation` の時間項目 |
 | `output.*` | `simulation` の出力項目 |
 | `solver.profile` | `solver_manifest.yaml` のprofile |
-| `solver.processes` | 実行process数 |
+| `solver.mpi_processes` | 実行process数 |
 | `physics.gpe.*` | `gpe` namelist |
 
 ### 16.2 GPEキーの互換名
@@ -1044,7 +1070,7 @@ Linux（bash）:
 2. `case_input.py` または `run_case.py --prepare` で `input.nml` を再生成する。
 3. `input.nml` を直接編集しない。
 4. `solver.profile` と実行環境のprofileを一致させる。
-5. 非MPI profileでは `solver.processes = 1` とする。
+5. 非MPI profileでは `solver.mpi_processes = 1` とする。旧`solver.processes`は現行の実行ツールでは拒否される。
 
 ---
 
@@ -1342,6 +1368,10 @@ libnvshmem_host.so
 
 ### 21.2 標準フロー
 
+以下は生成済みの実行環境のルート（`environment.lock.json`と`tools`がある場所）で実行します。
+取得したFrameWork直下ではありません。各行の成功を確認してから次へ進みます。
+`--test`はテストを含めて生成・ビルドした環境で使います。テスト未同梱の環境で結果を確認済みと扱わないでください。
+
 ```powershell
 python .\tools\run_case.py --prepare
 python .\tools\run_case.py --validate-only
@@ -1365,6 +1395,9 @@ python3 ./tools/run_case.py --run
 ### 21.3 直接CMake
 
 CPU逐次DFTの最小例:
+
+ここだけはFrameWork内の`SolverLibrary/GPE/gp3d`へ移動してから実行します。
+`-S .`の`.`は現在のフォルダを意味します。通常の計算利用者は第21.2節を使ってください。
 
 ```powershell
 cmake --fresh `
@@ -1788,4 +1821,5 @@ C:\Users\Owner\Documents\Codex\FrameWork\docs\guides\後処理_ParaView可視化
 7. テスト基準を変更した。
 8. 既知の制約を解消または追加した。
 
-Markdown版を内容の正本とし、Word版はMarkdown版から同時に再生成します。
+Markdown版を内容の正本とします。`docs/office`の既存Word版は保管資料です。
+Word版を新たに配布する場合は、Markdown版から再生成し、本文・図・更新日を確認します。

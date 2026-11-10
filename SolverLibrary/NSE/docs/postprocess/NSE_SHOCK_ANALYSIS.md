@@ -43,6 +43,8 @@ python3 tools/analyze_shock_turbulence.py --direction 1 --search 10 30 --upstrea
 
 | 引数 | 意味 |
 |---|---|
+| --input-dir PATH | 3次元SLFデータの読み込み先。省略時は選択ケースのoutput |
+| --meta PATH | 入力データに対応するmeta.json。省略時は読み込み先のmeta.json |
 | --direction 1 / -1 | +x / -xへの伝播。自動推定しない |
 | --search XMIN XMAX | 衝撃波を探す固定のx範囲。対象の全時刻の位置を含める |
 | --upstream NEAR FAR | 衝撃波から進行方向側の未通過領域までの距離 |
@@ -58,6 +60,35 @@ NEAR>0、FAR>NEARが必要。衝撃波の数値的厚さ・波面の凹凸が統
 窓の外端が計算領域外になる、または含まれる横断面が2未満の場合は停止する。
 衝撃波が対象領域に入る前の時刻は`--steps`で除く。
 
+### 読み込みディレクトリを指定する
+
+3次元データが複数の場所にある場合は、`--input-dir`で解析対象を選ぶ。
+`--output-dir`は解析結果の保存先であり、読み込み先の指定ではない。
+相対パスは実行環境ルート基準。絶対パスも使用でき、空白を含むパスは引用符で囲む。
+
+Windows PowerShell（case0038の入力を明示する例）：
+
+```powershell
+python .\tools\analyze_shock_turbulence.py --input-dir cases/case0038/output --direction 1 --search 2 28 --upstream 1 4 --downstream 1 4 --steps 500:1000 --output-dir cases/case0038/shock_analysis_v6
+```
+
+Linux bash（同じ指定）：
+
+```bash
+python3 tools/analyze_shock_turbulence.py --input-dir cases/case0038/output --direction 1 --search 2 28 --upstream 1 4 --downstream 1 4 --steps 500:1000 --output-dir cases/case0038/shock_analysis_v6
+```
+
+別の保存場所を読む場合は、例えば`--input-dir "D:\計算結果\output"`（Windows）や
+`--input-dir /data/nse_case0038/output`（Linux）に置き換える。
+`meta.json`が入力ディレクトリ以外にある場合は`--meta "対応するmeta.jsonのパス"`を追加する。
+入力先だけを変えてもcase.yamlの参照先やgammaは変わらないため、異なるケースを解析するときは
+`--case-directory cases/<対象ケース>`または必要に応じて`--gamma`も指定する。
+
+2箇所のデータは、`--input-dir`と`--output-dir`を変えてそれぞれ実行する。
+この指定は2箇所を一括結合するものではない。実行前に`--dry-run`を追加すると、
+実際に使用する入力・meta・出力のパスを確認できる。
+上の探索範囲・採取距離・ステップ範囲は例であり、各データの波の位置に合わせる。
+
 再実行時は別の出力名を使う：
 
 ```bash
@@ -72,7 +103,25 @@ python tools/analyze_shock_turbulence.py --direction 1 --search 10 30 --upstream
 - `shock_surface_<step>.npz`：各(y,z)で検出した波面位置、検出マスク、圧力勾配・前後圧力比、座標と時刻。
 
 完了判定は終了コード0とanalysis.jsonの`status=complete`。
-途中停止では一部のCSVが残ることがあるが、完了メタデータは生成しない。
+各時刻の波面NPZと横断面CSVの保存が完了するたびに、`shock_history.csv`と
+`analysis.json`を更新する。後続時刻でエラーが起きても、完了済み時刻の履歴を利用できる。
+履歴は一時ファイルへ書込み・flush/fsync後に置換し、更新途中の失敗で前回のCSVを壊さない。
+`analysis.json`の`completed_steps`・`completed_count`に完了済み時刻を記録する。
+`source_files`は選択した全入力の一覧であり、処理完了の一覧ではない。
+
+処理中は`status=running`、エラー終了では`failed`、Ctrl+Cでは`interrupted`となり、
+異常終了時には`failed_step`と`error`も記録する。終了コードは通常エラーが1、Ctrl+Cが130。
+最初の時刻が完了する前に止まった場合は履歴CSVを生成しない。
+強制終了や保存先の容量不足等では状態更新もできず`running`のまま残ることがあるが、
+直前に保存できた履歴CSVは保持する。失敗時刻のNPZ/CSVや`.tmp`が残る場合があるため、
+利用する時刻は履歴CSVと照合する。既存出力への上書き禁止は維持し、自動再開は行わない。
+
+衝撃波速度は保存済み時刻だけで毎回再計算する。1時刻のみならNaN、履歴の両端では
+片側差分を使う。新しい時刻が加わると前回の終端は内部点になり、速度値が更新される。
+正常終了時は従来と同じ全選択時刻での差分となる。
+
+既存の生成済み実行環境でこの動作を使うには、FrameWorkの
+`SolverLibrary/NSE/tools/nse_shock_analysis.py`を実行環境内の同名ファイルへ更新する。
 不完全なrank出力時刻は既存SLF選択処理に従って除外される。実際に使ったファイルはanalysis.jsonで確認する。
 
 横断面平均を< >とすると、通常平均の変動はu'=u-<u>、

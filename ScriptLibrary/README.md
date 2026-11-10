@@ -10,6 +10,8 @@ python tools/run_case.py --build
 ```
 
 実行は`python tools/run_case.py --run`、後処理は生成環境の`tools/postprocess_case.py`を使います。
+単成分NSEのFFTも`python tools/postprocess_case.py --task fft`から実行します。
+`--task all`はParaView変換・乱流統計・FFTの3処理です。
 
 | 場所 | 役割 |
 | --- | --- |
